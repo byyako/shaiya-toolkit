@@ -12,7 +12,7 @@ First foundation of the toolkit (no release yet).
 - `shaiya info [--hash] <PATH>...`: identifies SAH indexes, SAF data, SEED-encrypted and plain SData, patches and their signature files, and Windows programs (machine, link time); checks the SEED checksum; optional SHA-256 with progress.
 - `shaiya version` (text and `--json`).
 
-### Archive & Patch Studio
+### Workbench
 
 - New desktop program on the shared GUI shell: drop or open files, see what they are, compute SHA-256 as cancellable background tasks, copy a row as text or JSON.
 - Shell: menus, command palette (Ctrl+Shift+P), Activity panel (Ctrl+J) with progress and cancel, error banner with copyable details, dark/light/system theme, UI scale, recent files with pins, settings that keep unknown keys, CJK font fallback from the system.

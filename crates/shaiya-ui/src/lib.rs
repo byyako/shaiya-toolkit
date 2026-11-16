@@ -38,9 +38,9 @@ pub const RELEASES_URL: &str = "https://github.com/byyako/shaiya-toolkit/release
 
 #[derive(Clone, Copy)]
 pub struct AppInfo {
-    /// `"shaiya-studio"`: settings folder, log file, window class.
+    /// `"shaiya-workbench"`: settings folder, log file, window class.
     pub id: &'static str,
-    /// `"Shaiya Archive & Patch Studio"`
+    /// `"Shaiya Workbench"`
     pub name: &'static str,
     /// `env!("CARGO_PKG_VERSION")`
     pub version: &'static str,

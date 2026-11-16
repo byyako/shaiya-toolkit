@@ -118,12 +118,12 @@ mod tests {
 
     #[test]
     fn the_rc_names_icon_manifest_and_strings() {
-        let res = WinRes { file_description: "Shaiya \"Studio\"", original_filename: "shaiya-studio.exe", icon: Some("x.ico"), gui: true };
+        let res = WinRes { file_description: "Shaiya \"Workbench\"", original_filename: "shaiya-workbench.exe", icon: Some("x.ico"), gui: true };
         let s = rc_source(&res, "0.1.0", Some(Path::new("C:\\a\\x.ico")), Path::new("C:\\a\\app.manifest"));
         assert!(s.contains("1 ICON \"C:/a/x.ico\""), "{s}");
         assert!(s.contains("1 24 \"C:/a/app.manifest\""), "{s}");
         assert!(s.contains("FILEVERSION 0,1,0,0"), "{s}");
-        assert!(s.contains("VALUE \"FileDescription\", \"Shaiya \\\"Studio\\\"\""), "{s}");
+        assert!(s.contains("VALUE \"FileDescription\", \"Shaiya \\\"Workbench\\\"\""), "{s}");
         assert!(s.contains("VALUE \"LegalCopyright\", \"Copyright (c) 2026 byyako. MIT License.\""), "{s}");
         assert!(s.contains("VALUE \"ProductName\", \"Shaiya Toolkit\""), "{s}");
         let none = rc_source(&res, "0.1.0", None, Path::new("m"));

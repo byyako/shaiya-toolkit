@@ -6,7 +6,7 @@
 
 ## The changelog
 
-`CHANGELOG.md` follows Keep a Changelog: `## [Unreleased]`, then `## [X.Y.Z] - YYYY-MM-DD` with subsections per tool (`### shaiya (CLI)`, `### Archive & Patch Studio`, `### Libraries`, `### Breaking` as needed). `cargo xtask release-notes <version>` prints the section of a version and fails when it is missing or empty.
+`CHANGELOG.md` follows Keep a Changelog: `## [Unreleased]`, then `## [X.Y.Z] - YYYY-MM-DD` with subsections per tool (`### shaiya (CLI)`, `### Workbench`, `### Libraries`, `### Breaking` as needed). `cargo xtask release-notes <version>` prints the section of a version and fails when it is missing or empty.
 
 ## Making a release
 
@@ -19,7 +19,7 @@
 
 ## Release assets
 
-`<tool>-<version>-<platform>.zip` with `tool` in `shaiya`, `shaiya-studio` (later the other programs) and `shaiya-toolkit` (everything), and `platform` in `windows-x86_64`, `linux-x86_64`, `macos-universal`; plus `SHA256SUMS.txt`. Each zip holds a folder named like the zip with the program(s), `README.txt`, `LICENSE.txt` and `THIRD-PARTY-NOTICES.txt`. On macOS each GUI is an app bundle (`io.github.byyako.<tool>`, ad-hoc signed), the CLI a plain universal binary. Zips are deterministic (sorted entries, fixed timestamps from the commit). The workflow signs nothing with keys (there are none); a repository that is public also gets a build provenance attestation.
+`<tool>-<version>-<platform>.zip` with `tool` in `shaiya`, `shaiya-workbench` (later the other programs) and `shaiya-toolkit` (everything), and `platform` in `windows-x86_64`, `linux-x86_64`, `macos-universal`; plus `SHA256SUMS.txt`. Each zip holds a folder named like the zip with the program(s), `README.txt`, `LICENSE.txt` and `THIRD-PARTY-NOTICES.txt`. On macOS each GUI is an app bundle (`io.github.byyako.<tool>`, ad-hoc signed), the CLI a plain universal binary. Zips are deterministic (sorted entries, fixed timestamps from the commit). The workflow signs nothing with keys (there are none); a repository that is public also gets a build provenance attestation.
 
 ## Budgets
 

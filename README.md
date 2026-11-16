@@ -8,8 +8,8 @@ Command-line and desktop tools for Shaiya game data, built on one tested Rust co
 
 | Tool | What it does | CLI command | GUI program | Status |
 |---|---|---|---|---|
-| File inspector | Identify a Shaiya file (SAH index, SAF data, SData, patch, game.exe) and show what it is; SHA-256 | `shaiya info` | Shaiya Archive & Patch Studio (`shaiya-studio`) | available |
-| Archive & patches | Browse, extract and edit `data.sah`/`data.saf`; build, check and apply `psNNNN.patch` | `shaiya archive`, `shaiya patch` | Shaiya Archive & Patch Studio | planned |
+| File inspector | Identify a Shaiya file (SAH index, SAF data, SData, patch, game.exe) and show what it is; SHA-256 | `shaiya info` | Shaiya Workbench (`shaiya-workbench`) | available |
+| Archive & patches | Browse, extract and edit `data.sah`/`data.saf`; build, check and apply `psNNNN.patch` | `shaiya archive`, `shaiya patch` | Shaiya Workbench | planned |
 | SData schemas and editor | Read and edit the client's SData tables for each episode | `shaiya sdata` | Shaiya SData Editor | planned |
 | Packet log decoder | Decode game packet logs | `shaiya log` | Shaiya Log Viewer | planned |
 | Server map editor | Edit server map files | `shaiya svmap` | Shaiya SVMap Editor | planned |
@@ -22,7 +22,7 @@ No release has been published yet; the first one comes with the archive and patc
 |---|---|---|---|
 | Everything | `shaiya-toolkit-<version>-windows-x86_64.zip` | `shaiya-toolkit-<version>-linux-x86_64.zip` | `shaiya-toolkit-<version>-macos-universal.zip` |
 | `shaiya` (command line) | `shaiya-<version>-windows-x86_64.zip` | `shaiya-<version>-linux-x86_64.zip` | `shaiya-<version>-macos-universal.zip` |
-| Shaiya Archive & Patch Studio | `shaiya-studio-<version>-windows-x86_64.zip` | `shaiya-studio-<version>-linux-x86_64.zip` | `shaiya-studio-<version>-macos-universal.zip` |
+| Shaiya Workbench | `shaiya-workbench-<version>-windows-x86_64.zip` | `shaiya-workbench-<version>-linux-x86_64.zip` | `shaiya-workbench-<version>-macos-universal.zip` |
 
 All downloads: the [releases page](https://github.com/byyako/shaiya-toolkit/releases). Every release has a `SHA256SUMS.txt`.
 
@@ -44,7 +44,7 @@ With stock Rust (`rustup`, stable):
 cargo build --release
 ```
 
-The programs are `target/release/shaiya` and `target/release/shaiya-studio`. See [CONTRIBUTING.md](CONTRIBUTING.md) for tests and the development workflow, and [docs/](docs/README.md) for formats and architecture.
+The programs are `target/release/shaiya` and `target/release/shaiya-workbench`. See [CONTRIBUTING.md](CONTRIBUTING.md) for tests and the development workflow, and [docs/](docs/README.md) for formats and architecture.
 
 ## Licence
 

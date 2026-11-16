@@ -131,10 +131,10 @@ mod tests {
     #[test]
     fn graphs_follow_normal_dependencies_only() {
         let meta = serde_json::json!({
-            "workspace_members": ["cli 0.1.0", "studio 0.1.0"],
+            "workspace_members": ["cli 0.1.0", "workbench 0.1.0"],
             "packages": [
                 {"id": "cli 0.1.0", "name": "shaiya-cli", "version": "0.1.0", "license": "MIT", "manifest_path": "/w/cli/Cargo.toml"},
-                {"id": "studio 0.1.0", "name": "shaiya-studio", "version": "0.1.0", "license": "MIT", "manifest_path": "/w/studio/Cargo.toml"},
+                {"id": "workbench 0.1.0", "name": "shaiya-workbench", "version": "0.1.0", "license": "MIT", "manifest_path": "/w/workbench/Cargo.toml"},
                 {"id": "a 1.0.0", "name": "a", "version": "1.0.0", "license": "MIT", "manifest_path": "/r/a/Cargo.toml"},
                 {"id": "dev 1.0.0", "name": "dev", "version": "1.0.0", "license": "MIT", "manifest_path": "/r/dev/Cargo.toml"},
                 {"id": "build 1.0.0", "name": "build", "version": "1.0.0", "license": "MIT", "manifest_path": "/r/build/Cargo.toml"}
@@ -144,12 +144,12 @@ mod tests {
                     {"pkg": "a 1.0.0", "dep_kinds": [{"kind": null}]},
                     {"pkg": "dev 1.0.0", "dep_kinds": [{"kind": "dev"}]},
                     {"pkg": "build 1.0.0", "dep_kinds": [{"kind": "build"}]}]},
-                {"id": "studio 0.1.0", "deps": []},
+                {"id": "workbench 0.1.0", "deps": []},
                 {"id": "a 1.0.0", "deps": []}, {"id": "dev 1.0.0", "deps": []}, {"id": "build 1.0.0", "deps": []}
             ]}
         });
         let g = graph_from(&meta).unwrap();
         let names: Vec<&str> = g.shipped.iter().map(|id| g.packages[id].name.as_str()).collect();
-        assert_eq!(names, vec!["a", "shaiya-cli", "shaiya-studio"]);
+        assert_eq!(names, vec!["a", "shaiya-cli", "shaiya-workbench"]);
     }
 }

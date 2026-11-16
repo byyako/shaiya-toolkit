@@ -2707,7 +2707,23 @@ dependencies = [
 ]
 
 [[package]]
-name = "shaiya-studio"
+name = "shaiya-testkit"
+version = "0.1.0"
+
+[[package]]
+name = "shaiya-ui"
+version = "0.1.0"
+dependencies = [
+ "eframe",
+ "egui",
+ "rfd",
+ "serde",
+ "serde_json",
+ "shaiya-core",
+]
+
+[[package]]
+name = "shaiya-workbench"
 version = "0.1.0"
 dependencies = [
  "egui",
@@ -2722,22 +2738,6 @@ dependencies = [
  "shaiya-seed",
  "shaiya-testkit",
  "shaiya-ui",
-]
-
-[[package]]
-name = "shaiya-testkit"
-version = "0.1.0"
-
-[[package]]
-name = "shaiya-ui"
-version = "0.1.0"
-dependencies = [
- "eframe",
- "egui",
- "rfd",
- "serde",
- "serde_json",
- "shaiya-core",
 ]
 
 [[package]]

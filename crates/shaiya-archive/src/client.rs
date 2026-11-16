@@ -77,15 +77,15 @@ pub fn in_use(files: &ClientFiles) -> InUse {
     InUse::Unknown
 }
 
-/// `Busy` -> `Error::Refused("<reason>; close the game (and any other program using this client, Studio included) and try again")`.
+/// `Busy` -> `Error::Refused("<reason>; close the game (and any other program using this client, Workbench included) and try again")`.
 pub fn ensure_not_in_use(files: &ClientFiles) -> Result<InUse> {
     match in_use(files) {
-        InUse::Busy(why) => Err(Error::Refused(format!("{why}; close the game (and any other program using this client, Studio included) and try again"))),
+        InUse::Busy(why) => Err(Error::Refused(format!("{why}; close the game (and any other program using this client, Workbench included) and try again"))),
         other => Ok(other),
     }
 }
 
-/// Run before every write and when Studio opens a client: `compact::finish_compact`, `swap::finish_swap`, then the pending marker
+/// Run before every write and when Workbench opens a client: `compact::finish_compact`, `swap::finish_swap`, then the pending marker
 /// (spec section 5.3). Returns human notes ("finished an interrupted compaction", ...).
 pub fn recover(dir: &Path) -> Result<Vec<String>> {
     let mut notes = Vec::new();

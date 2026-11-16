@@ -461,8 +461,8 @@ mod tests {
         let home = Env { toolkit_home: Some("/h".into()), ..portable };
         assert_eq!(home.root(Os::Windows), Some(PathBuf::from("/h")));
         assert_eq!(Env::default().root(Os::Windows), None);
-        let p = Paths::new(PathBuf::from("/r"), "shaiya-studio");
-        assert_eq!(p.settings_file(), PathBuf::from("/r/shaiya-studio/settings.json"));
+        let p = Paths::new(PathBuf::from("/r"), "shaiya-workbench");
+        assert_eq!(p.settings_file(), PathBuf::from("/r/shaiya-workbench/settings.json"));
         assert_eq!(p.shared_file(), PathBuf::from("/r/shared.json"));
     }
 

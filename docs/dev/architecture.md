@@ -11,10 +11,10 @@ crates/
   shaiya-archive/     data.sah / data.saf: index, reading, add/replace/remove, compaction
   shaiya-patch/       psNNNN.patch: build, list, apply; Ed25519 signatures
   shaiya-clientdata/  read-only client readers: archive or folder source, .wld, .dg, .smod, textures, sysmsg, Monster / NpcQuest
-  shaiya-inspect/     identify a file and describe it (used by `shaiya info` and Studio)
+  shaiya-inspect/     identify a file and describe it (used by `shaiya info` and Workbench)
   shaiya-ui/          the GUI shell (egui / eframe)
   shaiya-cli/         the `shaiya` program
-  shaiya-studio/      the `shaiya-studio` program
+  shaiya-workbench/      the `shaiya-workbench` program
   shaiya-testkit/     dev-only test helpers (no game data)
   shaiya-build/       build-script helper: Windows resources, git hash, target
   shaiya-matrix-tests/  opt-in version-matrix tests over the test clients

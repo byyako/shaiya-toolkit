@@ -8,7 +8,7 @@
 | [formats/patch.md](formats/patch.md) | `psNNNN.patch`: ZIP layout, `remove.txt`, loose files, signatures |
 | [formats/sdata-wrapper.md](formats/sdata-wrapper.md) | The SEED wrapper of SData files, CRC, plain files |
 | [tools/shaiya.md](tools/shaiya.md) | The `shaiya` command line: flags, conventions, exit codes, JSON, `info`, `version` |
-| [tools/studio.md](tools/studio.md) | Shaiya Archive & Patch Studio (the file inspector) |
+| [tools/workbench.md](tools/workbench.md) | Shaiya Workbench (the file inspector) |
 | [dev/architecture.md](dev/architecture.md) | Crates, dependency rules, data flow, what later tools may assume |
 | [dev/gui-shell.md](dev/gui-shell.md) | The `shaiya-ui` shell: writing a tool on it |
 | [dev/testing.md](dev/testing.md) | Test levels, the testkit, opt-in tests on your own client, the matrix |

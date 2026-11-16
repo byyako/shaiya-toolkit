@@ -1,4 +1,4 @@
-//! Shaiya Archive & Patch Studio (T1): the archive browser with queued changes, patch builder, apply with history, signing, SData
+//! Shaiya Workbench (T1): the archive browser with queued changes, patch builder, apply with history, signing, SData
 //! shortcuts and the T0 file inspector, on the shared GUI shell. Every change to a client folder goes through the same crash-safe
 //! procedure as the command line (`shaiya_archive::edit`, `shaiya_patch::apply_with`), after a confirmation.
 
@@ -26,7 +26,7 @@ use shaiya_ui::{AppInfo, Command, Confirm, Cx, Menu, ToolApp};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-const HELP: &str = "Shaiya Archive & Patch Studio\n\nPick a client folder in the toolbar (Add client folder... remembers it for every toolkit program), or open any data.sah with Open other archive...\n\nArchive: browse, search and preview the files of the archive; extract them; queue changes (add, replace, remove) and apply them to the client with a backup. Nothing is written until you press Apply to client.\n\nPatch builder, Apply & history, Sign & verify: make, check, sign and apply patches; every applied change can be rolled back from Apply & history.\n\nSData: decrypt or encrypt SData files into a folder.\n\nInspect: identify files and compute SHA-256.\n\nKeys: Ctrl+1 to Ctrl+6 switch tabs, Ctrl+F search, Delete queues a removal, Insert adds files, Ctrl+E extracts, Ctrl+Enter applies, Ctrl+Z / Ctrl+Y undo and redo queued changes, F5 reloads. All actions are in the command palette (Ctrl+Shift+P).";
+const HELP: &str = "Shaiya Workbench\n\nPick a client folder in the toolbar (Add client folder... remembers it for every toolkit program), or open any data.sah with Open other archive...\n\nArchive: browse, search and preview the files of the archive; extract them; queue changes (add, replace, remove) and apply them to the client with a backup. Nothing is written until you press Apply to client.\n\nPatch builder, Apply & history, Sign & verify: make, check, sign and apply patches; every applied change can be rolled back from Apply & history.\n\nSData: decrypt or encrypt SData files into a folder.\n\nInspect: identify files and compute SHA-256.\n\nKeys: Ctrl+1 to Ctrl+6 switch tabs, Ctrl+F search, Delete queues a removal, Insert adds files, Ctrl+E extracts, Ctrl+Enter applies, Ctrl+Z / Ctrl+Y undo and redo queued changes, F5 reloads. All actions are in the command palette (Ctrl+Shift+P).";
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
 #[serde(default)]
@@ -40,7 +40,7 @@ pub struct KeySettings {
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 #[serde(default)]
-pub struct StudioSettings {
+pub struct WorkbenchSettings {
     pub tab: String,
     pub last_client: Option<String>,
     pub tree_width: f32,
@@ -54,9 +54,9 @@ pub struct StudioSettings {
     pub keys: BTreeMap<String, KeySettings>,
 }
 
-impl Default for StudioSettings {
+impl Default for WorkbenchSettings {
     fn default() -> Self {
-        StudioSettings {
+        WorkbenchSettings {
             tab: "archive".into(),
             last_client: None,
             tree_width: 220.0,
@@ -127,7 +127,7 @@ struct FolderPrompt {
     archive_open: bool,
 }
 
-pub struct StudioApp {
+pub struct WorkbenchApp {
     pub tab: Tab,
     pub archive: ArchiveView,
     pub patch: PatchBuilder,
@@ -144,7 +144,7 @@ pub struct StudioApp {
     was_focused: bool,
 }
 
-type StudioCx<'a> = Cx<'a, StudioSettings>;
+type WorkbenchCx<'a> = Cx<'a, WorkbenchSettings>;
 
 fn has_sah(dir: &Path) -> bool {
     dir.is_dir() && std::fs::read_dir(dir).map(|r| r.flatten().any(|e| e.file_name().to_string_lossy().eq_ignore_ascii_case("data.sah"))).unwrap_or(false)
@@ -160,11 +160,11 @@ pub fn file_url(p: &Path) -> String {
     if s.starts_with('/') { format!("file://{s}") } else { format!("file:///{s}") }
 }
 
-impl StudioApp {
+impl WorkbenchApp {
     // ---------------------------------------------------------------------------------------- client handling
 
     /// Opens a saved client by name (a missing folder is reported, not opened).
-    pub fn select_client(&mut self, name: &str, cx: &mut StudioCx<'_>) {
+    pub fn select_client(&mut self, name: &str, cx: &mut WorkbenchCx<'_>) {
         if !self.archive.pending.is_empty() {
             cx.shell.status("Apply or discard the pending changes first");
             return;
@@ -182,7 +182,7 @@ impl StudioApp {
         cx.settings.last_client = Some(c.name);
     }
 
-    fn open_client_dir(&mut self, name: &str, dir: PathBuf, cx: &mut StudioCx<'_>) {
+    fn open_client_dir(&mut self, name: &str, dir: PathBuf, cx: &mut WorkbenchCx<'_>) {
         let (check_version, current_version) = clients::version_numbers(&dir);
         self.current = Some(ClientInfo { name: name.to_string(), dir: dir.clone(), check_version, current_version });
         self.ini_stamp = None;
@@ -191,7 +191,7 @@ impl StudioApp {
     }
 
     /// Opens any archive file read only (its own folder's changes are not offered).
-    pub fn open_archive_file(&mut self, path: PathBuf, cx: &mut StudioCx<'_>) {
+    pub fn open_archive_file(&mut self, path: PathBuf, cx: &mut WorkbenchCx<'_>) {
         if !self.archive.pending.is_empty() {
             cx.shell.status("Apply or discard the pending changes first");
             return;
@@ -203,7 +203,7 @@ impl StudioApp {
     }
 
     /// Adds a client folder to the shared list (and opens it when asked).
-    pub fn add_client(&mut self, name: &str, path: &Path, open: bool, cx: &mut StudioCx<'_>) -> shaiya_core::Result<()> {
+    pub fn add_client(&mut self, name: &str, path: &Path, open: bool, cx: &mut WorkbenchCx<'_>) -> shaiya_core::Result<()> {
         clients::add_client(cx.shell, name, path)?;
         if open {
             self.select_client(name, cx);
@@ -211,7 +211,7 @@ impl StudioApp {
         Ok(())
     }
 
-    pub fn set_tab(&mut self, tab: Tab, cx: &mut StudioCx<'_>) {
+    pub fn set_tab(&mut self, tab: Tab, cx: &mut WorkbenchCx<'_>) {
         self.tab = tab;
         cx.settings.tab = tab.key().to_string();
     }
@@ -228,7 +228,7 @@ impl StudioApp {
         }
     }
 
-    fn handle_requests(&mut self, requests: Vec<TabRequest>, cx: &mut StudioCx<'_>) {
+    fn handle_requests(&mut self, requests: Vec<TabRequest>, cx: &mut WorkbenchCx<'_>) {
         for r in requests {
             match r {
                 TabRequest::PatchFromPending => {
@@ -245,7 +245,7 @@ impl StudioApp {
         }
     }
 
-    fn handle_patch_requests(&mut self, requests: Vec<PatchRequest>, cx: &mut StudioCx<'_>) {
+    fn handle_patch_requests(&mut self, requests: Vec<PatchRequest>, cx: &mut WorkbenchCx<'_>) {
         for r in requests {
             match r {
                 PatchRequest::ApplyPatch(p) => {
@@ -262,7 +262,7 @@ impl StudioApp {
 
     // ---------------------------------------------------------------------------------------- drops
 
-    fn dropped(&mut self, paths: Vec<PathBuf>, cx: &mut StudioCx<'_>) {
+    fn dropped(&mut self, paths: Vec<PathBuf>, cx: &mut WorkbenchCx<'_>) {
         let mut files: Vec<PathBuf> = Vec::new();
         let mut patches: Vec<PathBuf> = Vec::new();
         for p in paths {
@@ -296,17 +296,17 @@ impl StudioApp {
         }
     }
 
-    fn folder_prompt_ui(&mut self, cx: &mut StudioCx<'_>) {
+    fn folder_prompt_ui(&mut self, cx: &mut WorkbenchCx<'_>) {
         let Some(p) = &self.folder_prompt else { return };
         let (dir, archive_open) = (p.dir.clone(), p.archive_open);
         let second = if archive_open { "Add its files" } else { "Remember as client" };
         let c = Confirm {
             title: "Dropped folder".into(),
-            text: format!("{} holds a data.sah. What should Studio do with it?", dir.display()),
+            text: format!("{} holds a data.sah. What should Workbench do with it?", dir.display()),
             buttons: vec!["Open this client".into(), second.into(), "Cancel".into()],
             danger: None,
         };
-        match cx.shell.confirm("studio-drop-folder", &c) {
+        match cx.shell.confirm("workbench-drop-folder", &c) {
             None => {}
             Some(0) => {
                 self.folder_prompt = None;
@@ -335,7 +335,7 @@ impl StudioApp {
 
     // ---------------------------------------------------------------------------------------- drawing
 
-    fn toolbar(&mut self, ui: &mut egui::Ui, cx: &mut StudioCx<'_>) {
+    fn toolbar(&mut self, ui: &mut egui::Ui, cx: &mut WorkbenchCx<'_>) {
         enum A {
             Select(String),
             Add,
@@ -354,7 +354,7 @@ impl StudioApp {
         };
         ui.horizontal_wrapped(|ui| {
             ui.label("Client");
-            egui::ComboBox::from_id_salt("studio-client").selected_text(shown).width(220.0).show_ui(ui, |ui| {
+            egui::ComboBox::from_id_salt("workbench-client").selected_text(shown).width(220.0).show_ui(ui, |ui| {
                 for c in &clients {
                     let found = has_sah(Path::new(&c.path));
                     let label = clients::picker_label(c, found);
@@ -403,7 +403,7 @@ impl StudioApp {
         }
     }
 
-    fn tab_keys(&mut self, ctx: &egui::Context, cx: &mut StudioCx<'_>) {
+    fn tab_keys(&mut self, ctx: &egui::Context, cx: &mut WorkbenchCx<'_>) {
         if ctx.egui_wants_keyboard_input() {
             return;
         }
@@ -418,25 +418,25 @@ impl StudioApp {
     }
 }
 
-impl ToolApp for StudioApp {
-    type Settings = StudioSettings;
+impl ToolApp for WorkbenchApp {
+    type Settings = WorkbenchSettings;
 
     fn info() -> AppInfo {
         AppInfo {
-            id: "shaiya-studio",
-            name: "Shaiya Archive & Patch Studio",
+            id: "shaiya-workbench",
+            name: "Shaiya Workbench",
             version: env!("CARGO_PKG_VERSION"),
             git: env!("SHAIYA_GIT_HASH"),
             target: env!("SHAIYA_TARGET"),
-            icon_rgba: include_bytes!("../../../assets/icons/shaiya-studio-64.rgba"),
+            icon_rgba: include_bytes!("../../../assets/icons/shaiya-workbench-64.rgba"),
             icon_size: 64,
             open_filters: &[("Shaiya files", &["sah", "saf", "sdata", "patch", "sig", "exe"]), ("All files", &["*"])],
             help: HELP,
         }
     }
 
-    fn new(cx: &mut StudioCx<'_>) -> StudioApp {
-        let mut app = StudioApp {
+    fn new(cx: &mut WorkbenchCx<'_>) -> WorkbenchApp {
+        let mut app = WorkbenchApp {
             tab: Tab::from_key(&cx.settings.tab),
             archive: ArchiveView::new(),
             patch: PatchBuilder::new(),
@@ -459,7 +459,7 @@ impl ToolApp for StudioApp {
         app
     }
 
-    fn ui(&mut self, ui: &mut egui::Ui, cx: &mut StudioCx<'_>) {
+    fn ui(&mut self, ui: &mut egui::Ui, cx: &mut WorkbenchCx<'_>) {
         let ctx = ui.ctx().clone();
         // the client list is re-read when the window gains focus (other toolkit programs may have changed it)
         let focused = ctx.input(|i| i.viewport().focused).unwrap_or(true);
@@ -514,11 +514,11 @@ impl ToolApp for StudioApp {
         self.handle_patch_requests(patch_requests, cx);
     }
 
-    fn open(&mut self, paths: Vec<PathBuf>, cx: &mut StudioCx<'_>) {
+    fn open(&mut self, paths: Vec<PathBuf>, cx: &mut WorkbenchCx<'_>) {
         self.dropped(paths, cx);
     }
 
-    fn menu(&mut self, menu: Menu, ui: &mut egui::Ui, cx: &mut StudioCx<'_>) {
+    fn menu(&mut self, menu: Menu, ui: &mut egui::Ui, cx: &mut WorkbenchCx<'_>) {
         match menu {
             Menu::File => {
                 ui.separator();
@@ -562,7 +562,7 @@ impl ToolApp for StudioApp {
         v
     }
 
-    fn run_command(&mut self, id: &str, cx: &mut StudioCx<'_>) {
+    fn run_command(&mut self, id: &str, cx: &mut WorkbenchCx<'_>) {
         match id {
             "tab-archive" | "tab-patch" | "tab-apply" | "tab-sign" | "tab-sdata" | "tab-inspect" => {
                 if let Some(t) = Tab::ALL.iter().find(|t| t.command_id() == id) {
@@ -590,11 +590,11 @@ impl ToolApp for StudioApp {
         }
     }
 
-    fn undo(&mut self, _cx: &mut StudioCx<'_>) -> bool {
+    fn undo(&mut self, _cx: &mut WorkbenchCx<'_>) -> bool {
         self.tab == Tab::Archive && self.archive.undo()
     }
 
-    fn redo(&mut self, _cx: &mut StudioCx<'_>) -> bool {
+    fn redo(&mut self, _cx: &mut WorkbenchCx<'_>) -> bool {
         self.tab == Tab::Archive && self.archive.redo()
     }
 
@@ -602,7 +602,7 @@ impl ToolApp for StudioApp {
         self.archive.unsaved()
     }
 
-    fn save_all(&mut self, cx: &mut StudioCx<'_>) -> Result<(), String> {
+    fn save_all(&mut self, cx: &mut WorkbenchCx<'_>) -> Result<(), String> {
         if self.archive.unsaved().is_empty() {
             return Ok(());
         }
@@ -610,7 +610,7 @@ impl ToolApp for StudioApp {
         Err("apply or discard the pending changes in the Archive tab".to_string())
     }
 
-    fn prefs(&mut self, ui: &mut egui::Ui, cx: &mut StudioCx<'_>) {
+    fn prefs(&mut self, ui: &mut egui::Ui, cx: &mut WorkbenchCx<'_>) {
         ui.checkbox(&mut cx.settings.extract_keep_times, "Extracted files keep the archive's pack time");
         ui.label("Inspect tab column widths");
         let mut cols = inspect::columns(cx.settings);

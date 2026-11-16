@@ -1,4 +1,4 @@
-//! Archive health: what `shaiya archive check` and Studio's Check report.
+//! Archive health: what `shaiya archive check` and Workbench's Check report.
 
 use crate::layout::{self, Layout};
 use crate::{decode_name, name_hash, Archive, Dir, Entry, Index};

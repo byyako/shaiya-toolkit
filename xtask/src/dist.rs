@@ -301,7 +301,7 @@ mod tests {
 
     #[test]
     fn names_follow_the_release_asset_scheme() {
-        assert_eq!(zip_name("shaiya-studio", "0.1.0", "windows-x86_64"), "shaiya-studio-0.1.0-windows-x86_64.zip");
+        assert_eq!(zip_name("shaiya-workbench", "0.1.0", "windows-x86_64"), "shaiya-workbench-0.1.0-windows-x86_64.zip");
         assert_eq!(zip_name("shaiya-toolkit", "1.2.3", "macos-universal"), "shaiya-toolkit-1.2.3-macos-universal.zip");
     }
 
@@ -341,20 +341,20 @@ mod tests {
 
     #[test]
     fn readme_has_the_statement_and_the_platform_note() {
-        let studio = &TOOLS[1];
-        let r = readme(studio.title, &[studio], "windows-x86_64", "0.1.0");
+        let workbench = &TOOLS[1];
+        let r = readme(workbench.title, &[workbench], "windows-x86_64", "0.1.0");
         assert!(r.contains("These tools work on your own copy of the game"));
-        assert!(r.contains("SmartScreen") && r.contains("shaiya-studio.exe"));
-        let m = readme(studio.title, &[studio], "macos-universal", "0.1.0");
-        assert!(m.contains("xattr -dr com.apple.quarantine") && m.contains("Shaiya Archive & Patch Studio.app"));
+        assert!(r.contains("SmartScreen") && r.contains("shaiya-workbench.exe"));
+        let m = readme(workbench.title, &[workbench], "macos-universal", "0.1.0");
+        assert!(m.contains("xattr -dr com.apple.quarantine") && m.contains("Shaiya Workbench.app"));
         assert!(readme("x", &[&TOOLS[0]], "linux-x86_64", "0.1.0").contains("chmod +x"));
     }
 
     #[test]
     fn the_plist_names_the_bundle() {
         let p = plist(&TOOLS[1], "0.1.0");
-        assert!(p.contains("<string>Shaiya Archive &amp; Patch Studio</string>"));
-        assert!(p.contains("io.github.byyako.shaiya-studio") && p.contains("<string>shaiya-studio</string>"));
+        assert!(p.contains("<string>Shaiya Workbench</string>"));
+        assert!(p.contains("io.github.byyako.shaiya-workbench") && p.contains("<string>shaiya-workbench</string>"));
     }
 
     #[test]

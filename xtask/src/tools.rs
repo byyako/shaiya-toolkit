@@ -13,11 +13,11 @@ pub struct Tool {
 pub const TOOLS: &[Tool] = &[
     Tool { package: "shaiya-cli", bin: "shaiya", asset: "shaiya", title: "Shaiya command line", gui: false, bundle_id: None },
     Tool {
-        package: "shaiya-studio",
-        bin: "shaiya-studio",
-        asset: "shaiya-studio",
-        title: "Shaiya Archive & Patch Studio",
+        package: "shaiya-workbench",
+        bin: "shaiya-workbench",
+        asset: "shaiya-workbench",
+        title: "Shaiya Workbench",
         gui: true,
-        bundle_id: Some("io.github.byyako.shaiya-studio"),
+        bundle_id: Some("io.github.byyako.shaiya-workbench"),
     },
 ];

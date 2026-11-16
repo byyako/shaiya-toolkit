@@ -374,7 +374,7 @@ fn sibling_in(dir: &Path, tool_id: &str, os: Os) -> Option<PathBuf> {
 
 /// The other toolkit GUIs the Tools menu lists.
 const SIBLINGS: [(&str, &str); 3] = [
-    ("shaiya-studio", "Shaiya Archive & Patch Studio"),
+    ("shaiya-workbench", "Shaiya Workbench"),
     ("shaiya-sdata-editor", "Shaiya SData Editor"),
     ("shaiya-log-viewer", "Shaiya Log Viewer"),
 ];

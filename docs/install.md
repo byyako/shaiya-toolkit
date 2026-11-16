@@ -10,7 +10,7 @@ Every release has one zip per tool per platform, plus an everything zip:
 |---|---|
 | `shaiya-toolkit-<version>-<platform>.zip` | all programs |
 | `shaiya-<version>-<platform>.zip` | the `shaiya` command line only |
-| `shaiya-studio-<version>-<platform>.zip` | Shaiya Archive & Patch Studio only |
+| `shaiya-workbench-<version>-<platform>.zip` | Shaiya Workbench only |
 
 `<platform>` is `windows-x86_64`, `linux-x86_64` or `macos-universal`. Each zip holds a folder named like the zip with the program(s), `README.txt`, `LICENSE.txt` and `THIRD-PARTY-NOTICES.txt`. Unzip it anywhere; there is no installer. The GUI programs can run side by side and start each other from their Tools menu when they sit in the same folder.
 
@@ -27,8 +27,8 @@ Releases built on a public repository also carry a build provenance attestation 
 ## Platform notes
 
 - **Windows.** The programs are not code signed. SmartScreen may show "Windows protected your PC" the first time: choose More info, then Run anyway. The `shaiya` program is a console program: open a terminal in its folder and run `shaiya --help`.
-- **macOS.** The GUI programs are app bundles, ad-hoc signed and not notarised. If macOS says the developer is unidentified, right-click the app and choose Open, or run `xattr -dr com.apple.quarantine "Shaiya Archive & Patch Studio.app"`. The macOS GUI is **untested** until a tester confirms it.
-- **Linux.** The GUI programs need a desktop with X11 or Wayland and a Vulkan or OpenGL driver. If a file is not executable: `chmod +x shaiya shaiya-studio`.
+- **macOS.** The GUI programs are app bundles, ad-hoc signed and not notarised. If macOS says the developer is unidentified, right-click the app and choose Open, or run `xattr -dr com.apple.quarantine "Shaiya Workbench.app"`. The macOS GUI is **untested** until a tester confirms it.
+- **Linux.** The GUI programs need a desktop with X11 or Wayland and a Vulkan or OpenGL driver. If a file is not executable: `chmod +x shaiya shaiya-workbench`.
 
 ## Portable mode and where settings live
 

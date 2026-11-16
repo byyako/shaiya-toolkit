@@ -54,7 +54,7 @@ jobs:
         continue-on-error: true
         shell: bash
         run: |
-          ./target/debug/shaiya-studio.exe --no-settings --smoke smoke.txt
+          ./target/debug/shaiya-workbench.exe --no-settings --smoke smoke.txt
           cat smoke.txt
 
   test-macos:

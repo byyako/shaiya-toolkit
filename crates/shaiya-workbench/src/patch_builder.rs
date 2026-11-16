@@ -5,7 +5,7 @@
 use crate::archive_view::ArchiveView;
 use crate::clients::ClientInfo;
 use crate::keys::KeyForm;
-use crate::StudioSettings;
+use crate::WorkbenchSettings;
 use egui::RichText;
 use shaiya_archive::Archive;
 use shaiya_core::fs::Existing;
@@ -16,9 +16,9 @@ use shaiya_patch::{BuildInput, BuildOptions, Report};
 use shaiya_ui::{Confirm, Cx, TaskHandle, TaskOutcome, TaskSpec};
 use std::path::{Path, PathBuf};
 
-type StudioCx<'a> = Cx<'a, StudioSettings>;
+type WorkbenchCx<'a> = Cx<'a, WorkbenchSettings>;
 
-/// What the builder asks the Studio frame to do after a build.
+/// What the builder asks the Workbench frame to do after a build.
 pub enum PatchRequest {
     ApplyPatch(PathBuf),
     VerifyPatch(PathBuf),
@@ -182,7 +182,7 @@ impl PatchBuilder {
     }
 
     /// "From differences": added and different files of `new` over `old` (content compare) as a task.
-    pub fn from_diff(&mut self, old: PathBuf, new: Option<PathBuf>, archive: &ArchiveView, cx: &mut StudioCx<'_>) {
+    pub fn from_diff(&mut self, old: PathBuf, new: Option<PathBuf>, archive: &ArchiveView, cx: &mut WorkbenchCx<'_>) {
         let Some(newer) = new.or_else(|| archive.sah_path().map(Path::to_path_buf)) else {
             cx.shell.status("Open an archive in the Archive tab first");
             return;
@@ -326,7 +326,7 @@ impl PatchBuilder {
     }
 
     /// "Build": the overwrite question when the output exists, then the build task.
-    pub fn begin_build(&mut self, keys: &KeyForm, cx: &mut StudioCx<'_>) {
+    pub fn begin_build(&mut self, keys: &KeyForm, cx: &mut WorkbenchCx<'_>) {
         if self.build_blocked(keys).is_some() {
             return;
         }
@@ -338,7 +338,7 @@ impl PatchBuilder {
         }
     }
 
-    fn start_build(&mut self, out: PathBuf, existing: Existing, cx: &mut StudioCx<'_>) {
+    fn start_build(&mut self, out: PathBuf, existing: Existing, cx: &mut WorkbenchCx<'_>) {
         let input = self.input.clone();
         let sign = if self.sign { Some((PathBuf::from(self.secret_path.trim()), self.check_version.trim().parse::<u32>().unwrap_or(0))) } else { None };
         let o2 = out.clone();
@@ -356,7 +356,7 @@ impl PatchBuilder {
         self.flow = BuildFlow::Running(out, h);
     }
 
-    pub fn tick(&mut self, cx: &mut StudioCx<'_>) {
+    pub fn tick(&mut self, cx: &mut WorkbenchCx<'_>) {
         if let Some(h) = &mut self.diff {
             match h.poll() {
                 None => {}
@@ -376,7 +376,7 @@ impl PatchBuilder {
             BuildFlow::Idle => {}
             BuildFlow::Confirm(out) => {
                 let c = Confirm { title: "Overwrite the patch".into(), text: format!("{} already exists.", out.display()), buttons: vec!["Overwrite".into(), "Cancel".into()], danger: Some(0) };
-                match cx.shell.confirm("studio-build-exists", &c) {
+                match cx.shell.confirm("workbench-build-exists", &c) {
                     None => self.flow = BuildFlow::Confirm(out),
                     Some(0) => self.start_build(out, Existing::Overwrite, cx),
                     Some(_) => {}
@@ -415,7 +415,7 @@ impl PatchBuilder {
 
     // ---------------------------------------------------------------------------------------- drawing
 
-    pub fn ui(&mut self, ui: &mut egui::Ui, cx: &mut StudioCx<'_>, client: Option<&ClientInfo>, archive: &ArchiveView, keys: &mut KeyForm) -> Vec<PatchRequest> {
+    pub fn ui(&mut self, ui: &mut egui::Ui, cx: &mut WorkbenchCx<'_>, client: Option<&ClientInfo>, archive: &ArchiveView, keys: &mut KeyForm) -> Vec<PatchRequest> {
         let mut requests = Vec::new();
         self.tick(cx);
         self.suggest_name(client);
@@ -495,14 +495,14 @@ impl PatchBuilder {
             } else {
                 ui.add_space(6.0);
                 ui.label(RichText::new(format!("Contents ({})", self.rows.len())).strong());
-                egui::Grid::new("studio-patch-rows-head").show(ui, |ui| {
+                egui::Grid::new("workbench-patch-rows-head").show(ui, |ui| {
                     for h in ["Kind", "Path", "Size", "Packed", "Effect on the client"] {
                         ui.label(RichText::new(h).strong());
                     }
                     ui.end_row();
                 });
                 let n = self.rows.len();
-                egui::ScrollArea::vertical().id_salt("studio-patch-rows").max_height(260.0).show_rows(ui, 18.0, n, |ui, range| {
+                egui::ScrollArea::vertical().id_salt("workbench-patch-rows").max_height(260.0).show_rows(ui, 18.0, n, |ui, range| {
                     for r in &self.rows[range] {
                         ui.horizontal(|ui| {
                             let col = if r.problem { pal.error } else { pal.text };

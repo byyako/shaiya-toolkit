@@ -1,6 +1,6 @@
 [package]
-name = "shaiya-studio"
-description = "Shaiya Archive & Patch Studio: browse and edit client archives with a backup, build, sign and apply patches, SData shortcuts, file inspector"
+name = "shaiya-workbench"
+description = "Shaiya Workbench: browse and edit client archives with a backup, build, sign and apply patches, SData shortcuts, file inspector"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -13,7 +13,7 @@ build = "build.rs"
 workspace = true
 
 [[bin]]
-name = "shaiya-studio"
+name = "shaiya-workbench"
 path = "src/main.rs"
 
 [dependencies]

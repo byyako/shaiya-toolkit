@@ -23,7 +23,7 @@ pub enum Mark {
 pub const ICONS: &[Icon] = &[
     Icon { id: "shaiya-toolkit", bg: [0x3b, 0x3f, 0x9e], mark: Mark::Chevron },
     Icon { id: "shaiya", bg: [0x16, 0x69, 0x7a], mark: Mark::Chevron },
-    Icon { id: "shaiya-studio", bg: [0xb5, 0x54, 0x1c], mark: Mark::Box },
+    Icon { id: "shaiya-workbench", bg: [0xb5, 0x54, 0x1c], mark: Mark::Box },
 ];
 
 const BIG: usize = 512;

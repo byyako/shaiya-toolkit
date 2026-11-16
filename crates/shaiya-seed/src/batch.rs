@@ -1,4 +1,4 @@
-//! SData work over many files with one shape (the command line's `shaiya sdata` and Studio's SData tab): info, check, decrypt and
+//! SData work over many files with one shape (the command line's `shaiya sdata` and Workbench's SData tab): info, check, decrypt and
 //! encrypt over any [`ByteSource`] (a folder, an archive, memory).
 
 use super::{decrypt_body, info, is_encrypted, wrap, Wrapper};

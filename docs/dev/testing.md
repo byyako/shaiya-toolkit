@@ -11,9 +11,9 @@
 3. **Round trips on synthetic data:** an archive built by `SahBuilder` (versions 0 and 1, nested folders, cp949 names, free entries, a trailer) parses and writes back identically; `wrap(unwrap(x)) == x` for plain and encrypted data of many lengths; patch build, list and apply on a synthetic client; compaction; a cancelled compaction leaves both files byte-identical.
 4. **Robustness:** truncation at every byte of a small index, SEED file and patch returns an error; a single-bit flip at every byte never panics; a flip inside a SEED body always fails the checksum.
 5. **CLI tests** (`crates/shaiya-cli/tests/cli.rs`) run the real `shaiya` binary and check text, JSON and exit codes.
-6. **GUI harness tests** (`shaiya-ui`, `shaiya-studio`): headless frames with synthetic input: the empty state, drop, tasks with progress, cancel, the theme switch, the command palette, settings written with `--data-dir` and read back, `--no-settings` writing nothing, the contrast of both palettes.
+6. **GUI harness tests** (`shaiya-ui`, `shaiya-workbench`): headless frames with synthetic input: the empty state, drop, tasks with progress, cancel, the theme switch, the command palette, settings written with `--data-dir` and read back, `--no-settings` writing nothing, the contrast of both palettes.
 7. **Opt-in tests on your own client** (below).
-8. **Real-window smoke:** `shaiya-studio --smoke report.txt`.
+8. **Real-window smoke:** `shaiya-workbench --smoke report.txt`.
 
 ## The testkit
 

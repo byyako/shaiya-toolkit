@@ -2,7 +2,7 @@
 //! shortcuts that always write to a chosen folder (in-place conversion is left to `shaiya sdata`).
 
 use crate::archive_view::ArchiveView;
-use crate::StudioSettings;
+use crate::WorkbenchSettings;
 use egui::RichText;
 use shaiya_archive::{Archive, ArchiveSource};
 use shaiya_core::fs::Existing;
@@ -14,7 +14,7 @@ use shaiya_ui::{Confirm, Cx, TaskHandle, TaskOutcome, TaskSpec};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-type StudioCx<'a> = Cx<'a, StudioSettings>;
+type WorkbenchCx<'a> = Cx<'a, WorkbenchSettings>;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Action {
@@ -170,7 +170,7 @@ impl SDataTab {
     }
 
     /// Starts an operation writing into `out` (the test entry point; the buttons call it after the folder dialog).
-    pub fn begin(&mut self, action: Action, out: Option<PathBuf>, archive: &ArchiveView, cx: &mut StudioCx<'_>) {
+    pub fn begin(&mut self, action: Action, out: Option<PathBuf>, archive: &ArchiveView, cx: &mut WorkbenchCx<'_>) {
         if self.is_busy() {
             return;
         }
@@ -189,7 +189,7 @@ impl SDataTab {
         }
     }
 
-    fn spawn(&mut self, action: Action, out: Option<PathBuf>, existing: Existing, archive: &ArchiveView, cx: &mut StudioCx<'_>) {
+    fn spawn(&mut self, action: Action, out: Option<PathBuf>, existing: Existing, archive: &ArchiveView, cx: &mut WorkbenchCx<'_>) {
         let inputs = self.inputs(archive);
         let like = self.like();
         let title = match action {
@@ -201,7 +201,7 @@ impl SDataTab {
         self.flow = Flow::Running(action, h);
     }
 
-    pub fn tick(&mut self, archive: &ArchiveView, cx: &mut StudioCx<'_>) {
+    pub fn tick(&mut self, archive: &ArchiveView, cx: &mut WorkbenchCx<'_>) {
         // the listing
         let stamp = format!("{:?}|{:?}|{}|{}|{}", self.files, self.dirs, self.from_client, archive.changed_counter, archive.archive_handle().map(|a| a.sah_path().display().to_string()).unwrap_or_default());
         if stamp != self.list_stamp && self.list.is_none() && (!self.files.is_empty() || !self.dirs.is_empty() || self.from_client) {
@@ -242,7 +242,7 @@ impl SDataTab {
                     buttons: vec!["Skip existing".into(), "Overwrite".into(), "Cancel".into()],
                     danger: Some(1),
                 };
-                match cx.shell.confirm("studio-sdata-exists", &c) {
+                match cx.shell.confirm("workbench-sdata-exists", &c) {
                     None => self.flow = Flow::Confirm(req),
                     Some(0) => self.spawn(req.action, Some(req.out), Existing::Skip, archive, cx),
                     Some(1) => self.spawn(req.action, Some(req.out), Existing::Overwrite, archive, cx),
@@ -278,7 +278,7 @@ impl SDataTab {
         }
     }
 
-    pub fn ui(&mut self, ui: &mut egui::Ui, cx: &mut StudioCx<'_>, archive: &ArchiveView) {
+    pub fn ui(&mut self, ui: &mut egui::Ui, cx: &mut WorkbenchCx<'_>, archive: &ArchiveView) {
         self.tick(archive, cx);
         let pal = cx.shell.pal();
         let has_client = archive.archive_handle().is_some();
@@ -334,7 +334,7 @@ impl SDataTab {
             ui.label(m);
         }
         ui.separator();
-        egui::Grid::new("studio-sdata-grid").striped(true).show(ui, |ui| {
+        egui::Grid::new("workbench-sdata-grid").striped(true).show(ui, |ui| {
             if !self.rows.is_empty() {
                 for h in ["Name", "Source", "Kind", "CRC", "Plaintext", "Padding and tail"] {
                     ui.label(RichText::new(h).strong());
