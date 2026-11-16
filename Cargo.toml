@@ -51,3 +51,7 @@ panic = "unwind"          # the GUI catches task panics; the CLI maps a panic to
 opt-level = 3
 [profile.release.package.sha2]
 opt-level = 3
+[profile.release.package.shaiya-seed]        # cipher loops
+opt-level = 3
+[profile.dev.package.shaiya-seed]            # keeps the opt-in tests over real SData quick
+opt-level = 3

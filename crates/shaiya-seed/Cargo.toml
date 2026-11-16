@@ -1,0 +1,15 @@
+[package]
+name = "shaiya-seed"
+description = "KISA SEED as used by Shaiya SData files: decrypt, encrypt, CRC and a wrapper that round-trips byte for byte"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+shaiya-core = { workspace = true }
