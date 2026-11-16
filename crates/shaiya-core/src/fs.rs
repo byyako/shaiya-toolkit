@@ -10,6 +10,55 @@ use std::time::{Duration, SystemTime};
 
 const TEMP_SUFFIX: &str = ".shaiya-tmp";
 
+/// What to do when an output file already exists.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Existing {
+    Refuse,
+    Skip,
+    Overwrite,
+}
+
+/// Whether a write is followed by fsync.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Sync {
+    Yes,
+    No,
+}
+
+/// A file or folder name every OS accepts: characters Windows forbids (`<>:"|?*`, `/`, `\` and controls), trailing dots or spaces and
+/// reserved device names (CON, PRN, AUX, NUL, COM1..9, LPT1..9, any case, with or without extension) are replaced by `%XX` (UTF-8
+/// bytes); `None` when the name is fine as it is.
+pub fn portable_name(name: &str) -> Option<String> {
+    fn pct(out: &mut String, c: char) {
+        let mut b = [0u8; 4];
+        for x in c.encode_utf8(&mut b).bytes() {
+            out.push_str(&format!("%{x:02X}"));
+        }
+    }
+    if name.is_empty() {
+        return Some("%5F".to_string());
+    }
+    let mut chars: Vec<char> = name.chars().collect();
+    let mut out = String::new();
+    let mut changed = false;
+    let last = chars.len() - 1;
+    let reserved = {
+        let stem = name.split('.').next().unwrap_or("").trim_end().to_ascii_uppercase();
+        matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL")
+            || ((stem.starts_with("COM") || stem.starts_with("LPT")) && stem.len() == 4 && stem.as_bytes()[3].is_ascii_digit() && stem.as_bytes()[3] != b'0')
+    };
+    for (i, c) in chars.drain(..).enumerate() {
+        let bad = (c as u32) < 0x20 || matches!(c, '<' | '>' | ':' | '"' | '|' | '?' | '*' | '/' | '\\') || (i == last && (c == '.' || c == ' '));
+        if bad || (reserved && i == 0) {
+            pct(&mut out, c);
+            changed = true;
+        } else {
+            out.push(c);
+        }
+    }
+    changed.then_some(out)
+}
+
 fn temp_path(path: &Path) -> PathBuf {
     let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| "out".into());
     let tmp = format!(".{name}.{}{TEMP_SUFFIX}", std::process::id());
@@ -36,6 +85,12 @@ pub fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
 /// Streams `src` into a temp file next to `path` (1 MiB buffer, `job.check()` between chunks, byte progress), then renames it over
 /// `path`. A cancelled or failed run removes the temp file and leaves `path` as it was. Returns the bytes written.
 pub fn write_atomic_from(path: &Path, src: &mut dyn Read, job: &Job) -> Result<u64> {
+    write_atomic_from_with(path, src, Sync::Yes, job)
+}
+
+/// [`write_atomic_from`] with a choice of fsync. Archive pairs, indexes, patches, journals, markers and keys use `Sync::Yes`; bulk
+/// outputs of many files (extract, SData batch) use `Sync::No`: the temp + rename still means no half-written target.
+pub fn write_atomic_from_with(path: &Path, src: &mut dyn Read, sync: Sync, job: &Job) -> Result<u64> {
     let tmp = temp_path(path);
     let result = (|| -> Result<u64> {
         let mut f = File::create(&tmp).map_err(|e| Error::io(&tmp, e))?;
@@ -51,7 +106,9 @@ pub fn write_atomic_from(path: &Path, src: &mut dyn Read, job: &Job) -> Result<u
             total += n as u64;
             job.advance(n as u64);
         }
-        f.sync_all().map_err(|e| Error::io(&tmp, e))?;
+        if sync == Sync::Yes {
+            f.sync_all().map_err(|e| Error::io(&tmp, e))?;
+        }
         drop(f);
         std::fs::rename(&tmp, path).map_err(|e| Error::io(path, e))?;
         Ok(total)
@@ -276,6 +333,37 @@ mod tests {
         std::fs::write(d.join("in.bin.bak"), b"old").unwrap();
         let p = plan_output(&input, None, true, false).unwrap();
         assert_ne!(p.backup, Some(d.join("in.bin.bak")));
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn portable_names() {
+        assert_eq!(portable_name("Item.SData"), None);
+        assert_eq!(portable_name("10051\u{C6D0}.3do"), None);
+        assert_eq!(portable_name("a:b"), Some("a%3Ab".into()));
+        for (bad, want) in [("<", "%3C"), (">", "%3E"), ("\"", "%22"), ("|", "%7C"), ("?", "%3F"), ("*", "%2A"), ("\u{1}", "%01")] {
+            assert_eq!(portable_name(&format!("x{bad}y")), Some(format!("x{want}y")), "{bad:?}");
+        }
+        assert_eq!(portable_name("CON.txt"), Some("%43ON.txt".into()));
+        assert_eq!(portable_name("nul"), Some("%6Eul".into()));
+        assert_eq!(portable_name("Com3"), Some("%43om3".into()));
+        assert_eq!(portable_name("lpt9.x.y"), Some("%6Cpt9.x.y".into()));
+        assert_eq!(portable_name("COM0"), None);
+        assert_eq!(portable_name("CONSOLE"), None);
+        assert_eq!(portable_name("name."), Some("name%2E".into()));
+        assert_eq!(portable_name("name "), Some("name%20".into()));
+        assert_eq!(portable_name(".."), Some(".%2E".into()));
+        assert_eq!(portable_name("\u{BAAC}:"), Some("\u{BAAC}%3A".into()));
+        assert!(portable_name("").is_some());
+    }
+
+    #[test]
+    fn atomic_from_without_sync_still_renames() {
+        let d = scratch("nosync");
+        let p = d.join("c.bin");
+        let n = write_atomic_from_with(&p, &mut &b"abc"[..], Sync::No, &Job::silent()).unwrap();
+        assert_eq!((n, std::fs::read(&p).unwrap()), (3, b"abc".to_vec()));
+        assert_eq!(std::fs::read_dir(&d).unwrap().count(), 1);
         let _ = std::fs::remove_dir_all(&d);
     }
 

@@ -12,6 +12,7 @@ use crate::theme::Theme;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
+use shaiya_core::config::{data_root_with, DataDirInputs, Platform};
 use shaiya_core::fs::write_atomic;
 use std::collections::BTreeMap;
 use std::ffi::OsString;
@@ -291,22 +292,19 @@ impl Env {
 
     /// The toolkit data root, or `None` when no folder can be determined (then nothing is stored).
     pub fn root(&self, os: Os) -> Option<PathBuf> {
-        if let Some(h) = &self.toolkit_home {
-            return Some(PathBuf::from(h));
-        }
-        if self.portable {
-            if let Some(d) = &self.exe_dir {
-                return Some(d.join("shaiya-toolkit-data"));
-            }
-        }
-        match os {
-            Os::Windows => self.appdata.as_ref().map(|a| PathBuf::from(a).join("shaiya-toolkit")),
-            Os::Mac => self.home.as_ref().map(|h| PathBuf::from(h).join("Library").join("Application Support").join("shaiya-toolkit")),
-            Os::Linux => match &self.xdg_config_home {
-                Some(x) => Some(PathBuf::from(x).join("shaiya-toolkit")),
-                None => self.home.as_ref().map(|h| PathBuf::from(h).join(".config").join("shaiya-toolkit")),
-            },
-        }
+        let platform = match os {
+            Os::Windows => Platform::Windows,
+            Os::Mac => Platform::Mac,
+            Os::Linux => Platform::Linux,
+        };
+        data_root_with(&self.to_inputs(), platform, self.portable)
+    }
+
+    /// The same environment as `shaiya_core::config::DataDirInputs`; the rule itself lives in `shaiya_core::config` so the command
+    /// line (which must not depend on this crate) resolves the same folder.
+    pub fn to_inputs(&self) -> DataDirInputs {
+        let p = |v: &Option<OsString>| v.as_ref().map(PathBuf::from);
+        DataDirInputs { toolkit_home: p(&self.toolkit_home), exe_dir: self.exe_dir.clone(), appdata: p(&self.appdata), home: p(&self.home), xdg_config_home: p(&self.xdg_config_home) }
     }
 }
 

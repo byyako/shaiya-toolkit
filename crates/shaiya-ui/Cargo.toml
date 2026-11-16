@@ -16,7 +16,7 @@ workspace = true
 testing = []
 
 [dependencies]
-shaiya-core = { workspace = true }
+shaiya-core = { workspace = true, features = ["config"] }
 eframe = { workspace = true }
 egui = { workspace = true }
 rfd = { workspace = true }

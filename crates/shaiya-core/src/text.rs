@@ -82,9 +82,68 @@ pub fn display_lossless(raw: &[u8], enc: Encoding) -> String {
     out
 }
 
+/// "1500", "64k"/"64KB" (1000s), "2KiB"/"2MiB"/"1GiB" (1024s), "1.5MB", "3G"; case-insensitive; `Error::Format` otherwise.
+pub fn parse_size(s: &str) -> Result<u64> {
+    let bad = |why: &str| Error::format("size", None, format!("{s:?} is not a size ({why}); examples: 1500, 64k, 2MiB, 1.5MB"));
+    let t = s.trim();
+    let split = t.find(|c: char| !(c.is_ascii_digit() || c == '.')).unwrap_or(t.len());
+    let (num, unit) = t.split_at(split);
+    if num.is_empty() {
+        return Err(bad("no number"));
+    }
+    let mult: u128 = match unit.trim().to_ascii_lowercase().as_str() {
+        "" | "b" => 1,
+        "k" | "kb" => 1_000,
+        "m" | "mb" => 1_000_000,
+        "g" | "gb" => 1_000_000_000,
+        "t" | "tb" => 1_000_000_000_000,
+        "kib" => 1 << 10,
+        "mib" => 1 << 20,
+        "gib" => 1 << 30,
+        "tib" => 1 << 40,
+        _ => return Err(bad("unknown unit")),
+    };
+    let (int, frac) = match num.split_once('.') {
+        Some((i, f)) => (i, f),
+        None => (num, ""),
+    };
+    if num.matches('.').count() > 1 || (int.is_empty() && frac.is_empty()) {
+        return Err(bad("bad number"));
+    }
+    let int_v: u128 = if int.is_empty() { 0 } else { int.parse().map_err(|_| bad("too large"))? };
+    let frac = &frac[..frac.len().min(9)];
+    let frac_v: u128 = if frac.is_empty() { 0 } else { frac.parse().map_err(|_| bad("bad number"))? };
+    let scale = 10u128.pow(frac.len() as u32);
+    let total = int_v.checked_mul(mult).and_then(|v| v.checked_add(frac_v * mult / scale)).ok_or_else(|| bad("too large"))?;
+    u64::try_from(total).map_err(|_| bad("too large"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sizes_parse() {
+        for (s, want) in [
+            ("1500", 1500u64),
+            ("0", 0),
+            ("64k", 64_000),
+            ("64KB", 64_000),
+            ("2KiB", 2048),
+            ("2mib", 2 << 20),
+            ("1GiB", 1 << 30),
+            ("1.5MB", 1_500_000),
+            ("3G", 3_000_000_000),
+            (" 7 b ", 7),
+            ("0.5KiB", 512),
+            (".5k", 500),
+        ] {
+            assert_eq!(parse_size(s).unwrap(), want, "{s}");
+        }
+        for s in ["", "k", "abc", "1.2.3", "12 parsecs", "-5", "99999999999999999999999999TB", "1,5MB"] {
+            assert!(matches!(parse_size(s), Err(Error::Format { .. })), "{s:?}");
+        }
+    }
 
     #[test]
     fn cp949_round_trip() {

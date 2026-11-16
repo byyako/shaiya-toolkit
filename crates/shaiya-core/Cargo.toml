@@ -14,3 +14,9 @@ workspace = true
 [dependencies]
 encoding_rs = { workspace = true }
 sha2 = { workspace = true }
+serde = { workspace = true, optional = true }
+serde_json = { workspace = true, optional = true }
+
+[features]
+# The data folder rule and the shared client list (`shaiya_core::config`).
+config = ["dep:serde", "dep:serde_json"]

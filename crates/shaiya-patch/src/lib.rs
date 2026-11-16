@@ -71,16 +71,7 @@ fn read_removals(z: &mut ZipArchive<File>) -> Result<Vec<String>> {
     let Some(i) = find(z, REMOVE) else { return Ok(Vec::new()) };
     let mut text = String::new();
     z.by_index(i).map_err(zip_err)?.take(16 << 20).read_to_string(&mut text)?;
-    Ok(parse_list(&text))
-}
-
-/// Archive paths from a list: the first tab-separated column of each line; blank lines, `#` comments and a `path` header are skipped
-/// (so `docs/cleanup-candidates.tsv` can be used as it is).
-fn parse_list(text: &str) -> Vec<String> {
-    text.lines()
-        .map(|l| l.split('\t').next().unwrap_or("").trim().replace('\\', "/"))
-        .filter(|p| !p.is_empty() && !p.starts_with('#') && !p.eq_ignore_ascii_case("path"))
-        .collect()
+    Ok(shaiya_core::glob::parse_list(&text))
 }
 
 fn reserved(name: &str) -> bool {
@@ -201,7 +192,7 @@ pub fn apply(patch: &Path, client: &Path, protect: &[String]) -> Result<Report> 
 }
 
 /// Build a patch. `files` mirrors archive paths (e.g. `files/Item/Item.SData`); `loose` holds files for the client folder (e.g.
-/// `loose/game.exe`); `remove` is a list of archive paths to drop (see [`parse_list`]). Any may be None. Entry versions are the files'
+/// `loose/game.exe`); `remove` is a list of archive paths to drop (see `shaiya_core::glob::parse_list`). Any may be None. Entry versions are the files'
 /// modification times.
 pub fn build(files: Option<&Path>, loose: Option<&Path>, remove: Option<&Path>, out: &Path) -> Result<Report> {
     let mut report = Report::default();
@@ -231,7 +222,7 @@ pub fn build(files: Option<&Path>, loose: Option<&Path>, remove: Option<&Path>, 
     z.start_file(SAF, opts).map_err(zip_err)?;
     z.write_all(&saf)?;
     if let Some(list) = remove {
-        let paths = parse_list(&io_at(list, fs::read_to_string(list))?);
+        let paths = shaiya_core::glob::parse_list(&io_at(list, fs::read_to_string(list))?);
         for p in &paths {
             split_path(p).ok_or_else(|| Error::format(list.display().to_string(), None, format!("bad path in the removal list: {p:?}")))?;
         }

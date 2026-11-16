@@ -50,6 +50,60 @@ pub fn utc_iso_unix(secs: i64) -> String {
     format!("{y:04}-{mo:02}-{d:02}T{h:02}:{mi:02}:{s:02}Z")
 }
 
+/// `2010-05-17T03:12:44Z` for seconds since the Unix epoch (same text as [`utc_iso_unix`]).
+pub fn iso_from_unix(secs: i64) -> String {
+    utc_iso_unix(secs)
+}
+
+/// Day count since 1970-01-01 of a civil date (the inverse of [`civil_from_days`]).
+pub fn days_from_civil(y: i64, m: u32, d: u32) -> i64 {
+    let y = if m <= 2 { y - 1 } else { y };
+    let era = y.div_euclid(400);
+    let yoe = y.rem_euclid(400);
+    let mp = if m > 2 { m - 3 } else { m + 9 } as i64;
+    let doy = (153 * mp + 2) / 5 + d as i64 - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    era * 146_097 + doe - 719_468
+}
+
+/// Unix seconds (`1274079412`), a date (`2026-11-15`, midnight UTC) or `2026-11-15T12:00:00Z` (also `YYYY-MM-DD HH:MM:SS`, `Z` optional).
+pub fn parse_utc(s: &str) -> crate::error::Result<i64> {
+    let t = s.trim();
+    let bad = || crate::error::Error::format("time", None, format!("{s:?} is not a time; use Unix seconds, 2026-11-15 or 2026-11-15T12:00:00Z"));
+    if !t.is_empty() && t.bytes().all(|b| b.is_ascii_digit()) {
+        return t.parse::<i64>().map_err(|_| bad());
+    }
+    let num = |x: &str, len: usize| -> Option<u32> { (x.len() == len && x.bytes().all(|b| b.is_ascii_digit())).then(|| x.parse().ok()).flatten() };
+    let (date, time) = match t.split_once(['T', ' ']) {
+        Some((d, tm)) => (d, Some(tm.trim_end_matches('Z'))),
+        None => (t.trim_end_matches('Z'), None),
+    };
+    let mut dp = date.split('-');
+    let (y, mo, d) = (dp.next().ok_or_else(bad)?, dp.next().ok_or_else(bad)?, dp.next().ok_or_else(bad)?);
+    if dp.next().is_some() {
+        return Err(bad());
+    }
+    let (y, mo, d) = (num(y, 4).ok_or_else(bad)? as i64, num(mo, 2).ok_or_else(bad)?, num(d, 2).ok_or_else(bad)?);
+    let (mut h, mut mi, mut sec) = (0u32, 0u32, 0u32);
+    if let Some(tm) = time {
+        let mut tp = tm.split(':');
+        h = num(tp.next().ok_or_else(bad)?, 2).ok_or_else(bad)?;
+        mi = num(tp.next().ok_or_else(bad)?, 2).ok_or_else(bad)?;
+        sec = match tp.next() {
+            Some(x) => num(x, 2).ok_or_else(bad)?,
+            None => 0,
+        };
+        if tp.next().is_some() {
+            return Err(bad());
+        }
+    }
+    let days = days_from_civil(y, mo, d);
+    if !(1..=12).contains(&mo) || d == 0 || civil_from_days(days) != (y, mo, d) || h > 23 || mi > 59 || sec > 60 {
+        return Err(bad());
+    }
+    Ok(days * 86_400 + h as i64 * 3600 + mi as i64 * 60 + sec as i64)
+}
+
 /// Decimal units: `512 B`, `1.9 KB`, `1.9 MB`, `2.0 GB`.
 pub fn human_size(bytes: u64) -> String {
     const UNITS: [&str; 5] = ["B", "KB", "MB", "GB", "TB"];
@@ -88,6 +142,28 @@ mod tests {
         assert_eq!(utc_stamp(UNIX_EPOCH), "19700101T000000Z");
         let before = UNIX_EPOCH - Duration::from_secs(1);
         assert_eq!(utc_iso(before), "1969-12-31T23:59:59Z");
+    }
+
+    #[test]
+    fn parse_utc_forms() {
+        assert_eq!(parse_utc("1274079412").unwrap(), 1_274_079_412);
+        assert_eq!(parse_utc("0").unwrap(), 0);
+        assert_eq!(parse_utc("1970-01-01").unwrap(), 0);
+        assert_eq!(parse_utc("2026-11-15").unwrap(), 20_772 * 86_400);
+        assert_eq!(parse_utc("2026-11-15T12:00:00Z").unwrap(), 20_772 * 86_400 + 12 * 3600);
+        assert_eq!(parse_utc("2026-11-15 12:00:01").unwrap(), 20_772 * 86_400 + 12 * 3600 + 1);
+        assert_eq!(parse_utc("2026-11-15T12:30Z").unwrap(), 20_772 * 86_400 + 12 * 3600 + 1800);
+        assert_eq!(parse_utc("2024-02-29").unwrap(), 19_782 * 86_400);
+        assert_eq!(parse_utc("1969-12-31").unwrap(), -86_400);
+        for bad in ["", "yesterday", "2026-13-01", "2025-02-29", "2026-11-15T25:00:00Z", "2026-11", "2026-11-15-01", "26-11-15"] {
+            assert!(parse_utc(bad).is_err(), "{bad:?}");
+        }
+        assert_eq!(iso_from_unix(1_274_079_412), "2010-05-17T06:56:52Z");
+        assert_eq!(days_from_civil(2026, 11, 15), 20_772);
+        for d in [-800_000i64, -1, 0, 59, 60, 365, 11_017, 19_782, 20_772, 800_000] {
+            let (y, m, dd) = civil_from_days(d);
+            assert_eq!(days_from_civil(y, m, dd), d);
+        }
     }
 
     #[test]
