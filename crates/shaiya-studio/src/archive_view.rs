@@ -1461,6 +1461,8 @@ enum Act {
     AddFiles,
     QueueRemove,
     CopyPaths,
+    CopyJson,
+    ShowInTree(usize),
     ReplaceWith(usize),
     DecryptTo(usize),
     Sort(SortKey),
@@ -1812,6 +1814,7 @@ impl ArchiveView {
                                 ("Extract with folders...", MenuChoice::ExtractFolders),
                                 ("Copy path", MenuChoice::CopyPath),
                                 ("Copy as JSON", MenuChoice::CopyJson),
+                                ("Show in folder tree", MenuChoice::ShowInTree),
                                 ("Replace with file...", MenuChoice::Replace),
                                 ("Remove", MenuChoice::Remove),
                                 ("Decrypt to file...", MenuChoice::Decrypt),
@@ -1853,7 +1856,13 @@ impl ArchiveView {
             match choice {
                 MenuChoice::Extract => acts.push(Act::Extract { all: false, flat: true }),
                 MenuChoice::ExtractFolders => acts.push(Act::Extract { all: false, flat: false }),
-                MenuChoice::CopyPath | MenuChoice::CopyJson => acts.push(Act::CopyPaths),
+                MenuChoice::CopyPath => acts.push(Act::CopyPaths),
+                MenuChoice::CopyJson => acts.push(Act::CopyJson),
+                MenuChoice::ShowInTree => {
+                    if let ViewRow::File(i) = self.view[vi] {
+                        acts.push(Act::ShowInTree(i));
+                    }
+                }
                 MenuChoice::Replace => {
                     if let ViewRow::File(i) = self.view[vi] {
                         acts.push(Act::ReplaceWith(i));
@@ -2295,6 +2304,28 @@ impl ArchiveView {
                     cx.shell.ctx().copy_text(text);
                     cx.shell.status("Copied");
                 }
+                Act::CopyJson => {
+                    let Some(l) = &self.loaded else { continue };
+                    let items: Vec<serde_json::Value> = self
+                        .selected
+                        .iter()
+                        .map(|&i| {
+                            let r = &l.rows[i];
+                            serde_json::json!({ "path": r.path, "size": r.entry.length, "offset": r.entry.offset, "version": r.entry.version, "shadowed": r.shadowed })
+                        })
+                        .collect();
+                    cx.shell.ctx().copy_text(serde_json::to_string_pretty(&items).unwrap_or_default());
+                    cx.shell.status("Copied");
+                }
+                Act::ShowInTree(i) => {
+                    let Some(l) = &self.loaded else { continue };
+                    let (folder, path) = (l.rows[i].folder().to_string(), l.rows[i].path.clone());
+                    self.enter_folder(&folder);
+                    self.refresh_view();
+                    if let Some(i) = self.find_row(&path) {
+                        self.selected.insert(i);
+                    }
+                }
                 Act::ReplaceWith(i) => {
                     if let Some(f) = cx.shell.pick_file("replace", &[("All files", &["*"])]) {
                         if let Some(l) = &self.loaded {
@@ -2369,6 +2400,7 @@ enum MenuChoice {
     ExtractFolders,
     CopyPath,
     CopyJson,
+    ShowInTree,
     Replace,
     Remove,
     Decrypt,
