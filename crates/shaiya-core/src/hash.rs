@@ -10,6 +10,22 @@ pub fn sha256(bytes: &[u8]) -> [u8; 32] {
     Sha256::digest(bytes).into()
 }
 
+/// Incremental SHA-256 (for hashing while streaming).
+#[derive(Default)]
+pub struct Hasher(Sha256);
+
+impl Hasher {
+    pub fn new() -> Hasher {
+        Hasher(Sha256::new())
+    }
+    pub fn update(&mut self, bytes: &[u8]) {
+        self.0.update(bytes);
+    }
+    pub fn finish(self) -> [u8; 32] {
+        self.0.finalize().into()
+    }
+}
+
 /// Streams the file with a 1 MiB buffer and reports `Unit::Bytes` progress; stops with `Error::Cancelled` when the job is cancelled.
 pub fn sha256_file(path: &Path, job: &Job) -> Result<[u8; 32]> {
     let mut f = std::fs::File::open(path).map_err(|e| Error::io(path, e))?;

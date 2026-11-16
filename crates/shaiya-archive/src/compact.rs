@@ -14,8 +14,16 @@ const COMPACT_SAF: &str = "data.saf.compact";
 /// Exists only between "both compacted files are complete and synced" and "both are in place".
 const COMPACT_COMMIT: &str = "data.compact-commit";
 
+/// `(data.sah, data.saf)` of a client folder (found in any case; the plain names when they are not there yet).
+fn pair(client: &Path) -> (std::path::PathBuf, std::path::PathBuf) {
+    match crate::client::ClientFiles::locate(client) {
+        Ok(f) => (f.sah, f.saf),
+        Err(_) => (client.join("data.sah"), client.join("data.saf")),
+    }
+}
+
 fn read_index(client: &Path) -> Result<Index> {
-    Index::read(&client.join("data.sah"))
+    Index::read(&pair(client).0)
 }
 
 fn size_of(path: &Path) -> Result<u64> {
@@ -25,7 +33,7 @@ fn size_of(path: &Path) -> Result<u64> {
 /// `data.saf` size and the bytes the index still uses (shared ranges counted once). `size - live` is dead space.
 pub fn usage(client: &Path) -> Result<(u64, u64)> {
     let idx = read_index(client)?;
-    let size = size_of(&client.join("data.saf"))?;
+    let size = size_of(&pair(client).1)?;
     let mut ranges: Vec<(u64, u64)> = idx.files().iter().map(|(_, e)| (e.offset, e.offset + e.length as u64)).collect();
     ranges.sort_unstable();
     let (mut live, mut end) = (0u64, 0u64);
@@ -40,6 +48,7 @@ pub fn usage(client: &Path) -> Result<(u64, u64)> {
 }
 
 #[derive(Debug, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct Compacted {
     pub before: u64,
     pub after: u64,
@@ -55,7 +64,7 @@ pub struct Compacted {
 /// marker exists and discards the half-written files when it does not, so the index and `data.saf` always match. On an error (a full
 /// disk) or when `job` is cancelled the temp files are removed and the archive is left as it was (`Error::Cancelled`).
 pub fn compact(client: &Path, job: &Job) -> Result<Compacted> {
-    finish_compact(client)?;
+    crate::client::recover(client)?;
     let r = compact_inner(client, job);
     if r.is_err() {
         let _ = fs::remove_file(client.join(COMPACT_SAH));
@@ -65,7 +74,7 @@ pub fn compact(client: &Path, job: &Job) -> Result<Compacted> {
 }
 
 fn compact_inner(client: &Path, job: &Job) -> Result<Compacted> {
-    let saf_path = client.join("data.saf");
+    let saf_path = pair(client).1;
     let mut idx = read_index(client)?;
     let mut report = Compacted { before: size_of(&saf_path)?, ..Compacted::default() };
     report.duplicates = idx.dedupe();
@@ -124,8 +133,10 @@ fn compact_inner(client: &Path, job: &Job) -> Result<Compacted> {
         f.write_all(&idx.to_bytes()).map_err(|e| Error::io(&new_sah, e))?;
         f.sync_all().map_err(|e| Error::io(&new_sah, e))?;
     }
-    let sah_path = client.join("data.sah");
-    fs::copy(&sah_path, client.join("data.sah.bak")).map_err(|e| Error::io(&sah_path, e))?;
+    let sah_path = pair(client).0;
+    let mut bak = sah_path.clone().into_os_string();
+    bak.push(".bak");
+    fs::copy(&sah_path, std::path::PathBuf::from(bak)).map_err(|e| Error::io(&sah_path, e))?;
     let marker = client.join(COMPACT_COMMIT);
     File::create(&marker).and_then(|f| f.sync_all()).map_err(|e| Error::io(&marker, e))?;
     finish_compact(client)?;
@@ -139,10 +150,10 @@ pub fn finish_compact(client: &Path) -> Result<()> {
     if client.join(COMPACT_COMMIT).exists() {
         // Committed: each rename replaces its target; one may already be done.
         if saf.exists() {
-            step(&saf, &client.join("data.saf"))?;
+            step(&saf, &pair(client).1)?;
         }
         if sah.exists() {
-            step(&sah, &client.join("data.sah"))?;
+            step(&sah, &pair(client).0)?;
         }
         let marker = client.join(COMPACT_COMMIT);
         fs::remove_file(&marker).map_err(|e| Error::io(&marker, e))?;

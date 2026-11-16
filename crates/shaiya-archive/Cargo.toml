@@ -1,6 +1,6 @@
 [package]
 name = "shaiya-archive"
-description = "Shaiya data.sah/data.saf archives: index parsing and editing, read access, compaction"
+description = "Shaiya data.sah/data.saf archives: index parsing and editing, read access, compaction, safe in-place edits with undo, pack, diff, swap"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -11,9 +11,14 @@ publish.workspace = true
 [lints]
 workspace = true
 
+[features]
+# `#[derive(Serialize)]` on the report types (the command line's --json).
+serde = ["dep:serde"]
+
 [dependencies]
 shaiya-core = { workspace = true }
 encoding_rs = { workspace = true }
+serde = { workspace = true, optional = true }
 
 [dev-dependencies]
 shaiya-testkit = { workspace = true }
