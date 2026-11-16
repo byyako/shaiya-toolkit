@@ -15,8 +15,7 @@ workspace = true
 shaiya-core = { workspace = true }
 shaiya-seed = { workspace = true }
 shaiya-archive = { workspace = true }
+shaiya-patch = { workspace = true }
 shaiya-clientdata = { workspace = true }
 shaiya-inspect = { workspace = true }
-
-[dev-dependencies]
 shaiya-testkit = { workspace = true }

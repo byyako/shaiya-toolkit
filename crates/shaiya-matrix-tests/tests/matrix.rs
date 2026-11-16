@@ -5,19 +5,25 @@
 
 use shaiya_matrix_tests::{differences, markdown, observe, present_clients, Cap, Observed, CAPS};
 use shaiya_testkit::{env_client, env_test_clients};
+use std::sync::OnceLock;
 
-fn observed_all() -> Option<Vec<Observed>> {
-    let (us, root) = (env_client(), env_test_clients());
-    if us.is_none() && root.is_none() {
-        return None;
-    }
-    let clients = present_clients(us.as_deref(), root.as_deref());
-    Some(clients.iter().map(|(id, dir)| observe(id, dir)).collect())
+/// Observed once per test binary: every client is measured (including the writes on stub copies) a single time.
+fn observed_all() -> Option<&'static Vec<Observed>> {
+    static ALL: OnceLock<Option<Vec<Observed>>> = OnceLock::new();
+    ALL.get_or_init(|| {
+        let (us, root) = (env_client(), env_test_clients());
+        if us.is_none() && root.is_none() {
+            return None;
+        }
+        let clients = present_clients(us.as_deref(), root.as_deref());
+        Some(clients.iter().map(|(id, dir)| observe(id, dir)).collect())
+    })
+    .as_ref()
 }
 
 fn check(cap: Cap) {
     let Some(all) = observed_all() else { return };
-    let diff: Vec<String> = differences(&all).into_iter().filter(|l| l.contains(cap.label())).collect();
+    let diff: Vec<String> = differences(all).into_iter().filter(|l| l.contains(cap.label())).collect();
     assert!(diff.is_empty(), "{}", diff.join("\n"));
 }
 
@@ -61,14 +67,62 @@ fn inspect_on_game_exe() {
     check(Cap::InspectPe);
 }
 
+#[test]
+fn archive_visible_count() {
+    check(Cap::ArchiveVisibleCount);
+}
+
+#[test]
+fn archive_check_index() {
+    check(Cap::ArchiveCheckIndex);
+}
+
+#[test]
+fn archive_free_list() {
+    check(Cap::ArchiveFreeList);
+}
+
+#[test]
+fn archive_data_end() {
+    check(Cap::ArchiveDataEnd);
+}
+
+#[test]
+fn archive_diff_self() {
+    check(Cap::ArchiveDiffSelf);
+}
+
+#[test]
+fn archive_edit_rollback_stub() {
+    check(Cap::ArchiveEditRollbackStub);
+}
+
+#[test]
+fn patch_apply_rollback_stub() {
+    check(Cap::PatchApplyRollbackStub);
+}
+
+#[test]
+fn sdata_batch_check() {
+    check(Cap::SdataBatchCheck);
+}
+
+#[test]
+fn sdata_like_roundtrip() {
+    check(Cap::SdataLikeRoundtrip);
+}
+
 /// Prints the observed table (run with `--nocapture`) and the timing of the SAH parse; the table is what `docs/version-matrix.md` mirrors.
 #[test]
 fn print_the_observed_table() {
     let Some(all) = observed_all() else { return };
-    println!("\n{}", markdown(&all));
-    for o in &all {
+    println!("\n{}", markdown(all));
+    for o in all {
         if let (Some(files), Some(ms)) = (o.sah_files, o.sah_millis) {
             println!("SAH parse {}: {files} files in {ms:.1} ms", o.client);
+        }
+        for f in &o.facts {
+            println!("fact {}: {f}", o.client);
         }
         for n in &o.notes {
             println!("note {}: {n}", o.client);

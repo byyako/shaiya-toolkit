@@ -5,6 +5,8 @@
 //! A client folder holds `data.sah` and `game.exe`, and either `data.saf` (a full client: SData files are read from the archive) or
 //! `files/<archive path with "/" replaced by "__">` (SData files and `sysmsg-uni.txt`, fetched by HTTP range).
 
+mod t1;
+
 use shaiya_archive::{Archive, Index};
 use shaiya_core::Job;
 use shaiya_inspect::{inspect, Kind, Options};
@@ -43,9 +45,48 @@ pub enum Cap {
     Monsters,
     NpcQuest,
     InspectPe,
+    // T1 (spec section 9)
+    ArchiveVisibleCount,
+    ArchiveCheckIndex,
+    ArchiveFreeList,
+    ArchiveDataEnd,
+    ArchiveDiffSelf,
+    ArchiveEditRollbackStub,
+    PatchApplyRollbackStub,
+    SdataBatchCheck,
+    SdataLikeRoundtrip,
 }
 
-pub const CAPS: [Cap; 8] = [Cap::IndexParse, Cap::ToBytesIdentical, Cap::InspectSah, Cap::SeedUnwrap, Cap::WrapIdentity, Cap::Monsters, Cap::NpcQuest, Cap::InspectPe];
+pub const CAPS: [Cap; 17] = [
+    Cap::IndexParse,
+    Cap::ToBytesIdentical,
+    Cap::InspectSah,
+    Cap::SeedUnwrap,
+    Cap::WrapIdentity,
+    Cap::Monsters,
+    Cap::NpcQuest,
+    Cap::InspectPe,
+    Cap::ArchiveVisibleCount,
+    Cap::ArchiveCheckIndex,
+    Cap::ArchiveFreeList,
+    Cap::ArchiveDataEnd,
+    Cap::ArchiveDiffSelf,
+    Cap::ArchiveEditRollbackStub,
+    Cap::PatchApplyRollbackStub,
+    Cap::SdataBatchCheck,
+    Cap::SdataLikeRoundtrip,
+];
+
+/// The T1 capabilities, which need a readable `data.sah` (they all fail with it).
+const SAH_CAPS: [Cap; 7] = [
+    Cap::ArchiveVisibleCount,
+    Cap::ArchiveCheckIndex,
+    Cap::ArchiveFreeList,
+    Cap::ArchiveDataEnd,
+    Cap::ArchiveDiffSelf,
+    Cap::ArchiveEditRollbackStub,
+    Cap::PatchApplyRollbackStub,
+];
 
 impl Cap {
     pub fn label(self) -> &'static str {
@@ -58,6 +99,15 @@ impl Cap {
             Cap::Monsters => "clientdata `Monsters::parse`",
             Cap::NpcQuest => "clientdata `NpcQuest::parse`",
             Cap::InspectPe => "`inspect` on game.exe (PE)",
+            Cap::ArchiveVisibleCount => "`archive_visible_count`",
+            Cap::ArchiveCheckIndex => "`archive_check_index`",
+            Cap::ArchiveFreeList => "`archive_free_list`",
+            Cap::ArchiveDataEnd => "`archive_data_end`",
+            Cap::ArchiveDiffSelf => "`archive_diff_self`",
+            Cap::ArchiveEditRollbackStub => "`archive_edit_rollback_stub`",
+            Cap::PatchApplyRollbackStub => "`patch_apply_rollback_stub`",
+            Cap::SdataBatchCheck => "`sdata_batch_check`",
+            Cap::SdataLikeRoundtrip => "`sdata_like_roundtrip`",
         }
     }
 }
@@ -73,7 +123,7 @@ use Cell::{Fails as F, NotAvailable as NA, Ok as O, Plain as P};
 ///
 /// T2 note: the T2 spec found that the 9 EP8 `DB*Data` binary-header files of kr-ep8 and fawkes-v68 do not survive `seed::unwrap` + CRC
 /// (the SEED rows of those two clients may need `Fails` once a run shows it); a run that disagrees must be reported, not forced to pass.
-pub const EXPECTED: [[Cell; 9]; 8] = [
+pub const EXPECTED: [[Cell; 9]; 17] = [
     /* IndexParse       */ [O, O, O, O, O, O, O, O, O],
     /* ToBytesIdentical */ [O, O, O, O, O, O, O, O, O],
     /* InspectSah       */ [O, O, O, O, O, O, O, O, O],
@@ -82,7 +132,31 @@ pub const EXPECTED: [[Cell; 9]; 8] = [
     /* Monsters         */ [O, O, O, NA, O, O, F, F, F],
     /* NpcQuest         */ [O, O, O, NA, O, O, F, F, O],
     /* InspectPe        */ [O, O, O, NA, O, O, O, O, O],
+    /* ArchiveVisibleCount     */ [O, O, O, O, O, O, O, O, O],
+    /* ArchiveCheckIndex       */ [O, O, O, O, O, O, O, O, O],
+    /* ArchiveFreeList         */ [O, O, O, O, O, O, O, O, O],
+    /* ArchiveDataEnd          */ [O, O, O, O, O, O, O, O, O],
+    /* ArchiveDiffSelf         */ [O, O, O, O, O, O, O, O, O],
+    /* ArchiveEditRollbackStub */ [O, O, O, O, O, O, O, O, O],
+    /* PatchApplyRollbackStub  */ [O, O, O, O, O, O, O, O, O],
+    /* SdataBatchCheck         */ [O, O, O, NA, O, O, O, O, P],
+    /* SdataLikeRoundtrip      */ [O, O, O, NA, O, O, O, O, O],
 ];
+
+/// The numbers the T1 rows assert (the "OK 19,939" style cells of spec section 9), in `CLIENTS` order; `None` = a plain "OK" cell.
+/// `ArchiveVisibleCount`: files minus shadowed. `ArchiveCheckIndex`: the `shadowed` warnings of the index-only check. `ArchiveFreeList`:
+/// free-list entries (preserved by an in-place edit). `ArchiveDataEnd`: `max(offset + length)`, asserted where the table gives it.
+pub const NUMBERS: [(Cap, [Option<u64>; 9]); 4] = [
+    (Cap::ArchiveVisibleCount, [Some(19_939), Some(21_523), Some(23_533), Some(24_745), Some(24_599), Some(30_340), Some(34_418), Some(48_118), Some(20_418)]),
+    (Cap::ArchiveCheckIndex, [Some(0), Some(0), Some(0), Some(0), Some(0), Some(0), Some(1), Some(1), Some(0)]),
+    (Cap::ArchiveFreeList, [Some(0), Some(0), Some(507), Some(500), Some(500), Some(0), Some(0), Some(630), Some(500)]),
+    (Cap::ArchiveDataEnd, [None, None, None, None, None, None, None, Some(6_645_531_195), None]),
+];
+
+pub fn expected_number(client: &str, cap: Cap) -> Option<u64> {
+    let col = CLIENTS.iter().position(|c| *c == client)?;
+    NUMBERS.iter().find(|n| n.0 == cap).and_then(|n| n.1[col])
+}
 
 pub fn expected(client: &str, cap: Cap) -> Option<Cell> {
     let col = CLIENTS.iter().position(|c| *c == client)?;
@@ -94,7 +168,11 @@ pub fn expected(client: &str, cap: Cap) -> Option<Cell> {
 #[derive(Clone, Debug)]
 pub struct Observed {
     pub client: String,
-    pub cells: [Cell; 8],
+    pub cells: [Cell; 17],
+    /// Measured numbers of the T1 rows (see [`NUMBERS`]).
+    pub numbers: Vec<(Cap, u64)>,
+    /// Counts and other facts printed with the table (not asserted).
+    pub facts: Vec<String>,
     pub sah_files: Option<usize>,
     pub sah_millis: Option<f64>,
     pub sdata_files: usize,
@@ -106,6 +184,14 @@ pub struct Observed {
 impl Observed {
     pub fn cell(&self, cap: Cap) -> Cell {
         self.cells[CAPS.iter().position(|c| *c == cap).expect("every Cap is in CAPS")]
+    }
+
+    pub fn number(&self, cap: Cap) -> Option<u64> {
+        self.numbers.iter().find(|n| n.0 == cap).map(|n| n.1)
+    }
+
+    pub(crate) fn set(&mut self, cap: Cap, c: Cell) {
+        self.cells[CAPS.iter().position(|x| *x == cap).expect("every Cap is in CAPS")] = c;
     }
 }
 
@@ -145,7 +231,7 @@ fn by_name<'a>(files: &'a [(String, Vec<u8>)], tail: &str) -> Option<&'a (String
 
 /// Measures one client folder.
 pub fn observe(client: &str, dir: &Path) -> Observed {
-    let mut o = Observed { client: client.to_string(), cells: [NA; 8], sah_files: None, sah_millis: None, sdata_files: 0, sdata_bytes: 0, notes: Vec::new() };
+    let mut o = Observed { client: client.to_string(), cells: [NA; 17], numbers: Vec::new(), facts: Vec::new(), sah_files: None, sah_millis: None, sdata_files: 0, sdata_bytes: 0, notes: Vec::new() };
     let set = |o: &mut Observed, cap: Cap, c: Cell| o.cells[CAPS.iter().position(|x| *x == cap).expect("cap")] = c;
 
     // the index
@@ -158,11 +244,15 @@ pub fn observe(client: &str, dir: &Path) -> Observed {
                     o.sah_files = Some(idx.file_count());
                     set(&mut o, Cap::IndexParse, O);
                     set(&mut o, Cap::ToBytesIdentical, if idx.to_bytes() == raw { O } else { F });
+                    t1::index_caps(&mut o, &idx, &raw);
                 }
                 Err(e) => {
                     o.notes.push(format!("Index::parse: {e}"));
                     set(&mut o, Cap::IndexParse, F);
                     set(&mut o, Cap::ToBytesIdentical, F);
+                    for cap in SAH_CAPS {
+                        set(&mut o, cap, F);
+                    }
                 }
             }
             let c = match inspect(&path, &Options::default(), &Job::silent()) {
@@ -182,9 +272,15 @@ pub fn observe(client: &str, dir: &Path) -> Observed {
             set(&mut o, Cap::IndexParse, F);
             set(&mut o, Cap::ToBytesIdentical, F);
             set(&mut o, Cap::InspectSah, F);
+            for cap in SAH_CAPS {
+                set(&mut o, cap, F);
+            }
             o.notes.push("no readable data.sah".into());
         }
     }
+
+    // the SData batch capabilities (T1)
+    t1::sdata_caps_for(&mut o, dir, find_ci(dir, "data.saf").is_some());
 
     // the SData files
     match sdata_files(dir) {
@@ -273,6 +369,19 @@ pub fn present_clients(us: Option<&Path>, root: Option<&Path>) -> Vec<(String, P
     v
 }
 
+/// 19939 -> "19,939".
+fn group(n: u64) -> String {
+    let s = n.to_string();
+    let mut out = String::new();
+    for (i, c) in s.chars().enumerate() {
+        if i > 0 && (s.len() - i) % 3 == 0 {
+            out.push(',');
+        }
+        out.push(c);
+    }
+    out
+}
+
 /// The observed table as Markdown (capabilities as rows, clients as columns), with file counts.
 pub fn markdown(all: &[Observed]) -> String {
     let mut s = String::from("| Capability |");
@@ -292,7 +401,8 @@ pub fn markdown(all: &[Observed]) -> String {
     for cap in CAPS {
         s.push_str(&format!("| {} |", cap.label()));
         for o in all {
-            s.push_str(&format!(" {} |", o.cell(cap).label()));
+            let n = expected_number(&o.client, cap).and_then(|_| o.number(cap)).filter(|_| o.cell(cap) == O);
+            s.push_str(&format!(" {} |", n.map_or(o.cell(cap).label().to_string(), |n| format!("OK {}", group(n)))));
         }
         s.push('\n');
     }
@@ -319,6 +429,16 @@ pub fn differences(all: &[Observed]) -> Vec<String> {
                     got.label(),
                     if o.notes.is_empty() { String::new() } else { format!(" (notes: {})", o.notes.join("; ")) }
                 ));
+            }
+            if let Some(want) = expected_number(&o.client, cap) {
+                if o.number(cap) != Some(want) {
+                    out.push(format!(
+                        "{} / {}: expected {want}, observed {}; update EXPECTED and docs/version-matrix.md",
+                        o.client,
+                        cap.label(),
+                        o.number(cap).map_or("nothing".to_string(), |n| n.to_string())
+                    ));
+                }
             }
         }
     }
@@ -364,7 +484,23 @@ mod tests {
         assert_eq!(o.cell(Cap::NpcQuest), Cell::NotAvailable, "no NpcQuest file");
         assert_eq!(o.cell(Cap::InspectPe), Cell::Ok);
         assert_eq!((o.sah_files, o.sdata_files), (Some(2), 2));
+        for cap in [Cap::ArchiveVisibleCount, Cap::ArchiveCheckIndex, Cap::ArchiveFreeList, Cap::ArchiveDataEnd, Cap::ArchiveDiffSelf, Cap::ArchiveEditRollbackStub, Cap::PatchApplyRollbackStub, Cap::SdataBatchCheck, Cap::SdataLikeRoundtrip] {
+            assert_eq!(o.cell(cap), Cell::Ok, "{}: {:?}", cap.label(), o.notes);
+        }
+        assert_eq!((o.number(Cap::ArchiveVisibleCount), o.number(Cap::ArchiveCheckIndex), o.number(Cap::ArchiveFreeList)), (Some(2), Some(0), Some(0)));
         assert!(o.sah_millis.is_some());
+    }
+
+    #[test]
+    fn numbers_are_grouped_and_shown_for_the_asserted_cells() {
+        assert_eq!((group(0), group(999), group(1000), group(19_939), group(6_645_531_195)), ("0".into(), "999".into(), "1,000".into(), "19,939".into(), "6,645,531,195".into()));
+        let d = TempDir::new("matrix-numbers");
+        synthetic_client(d.path(), true, true);
+        let o = observe("us-108", d.path());
+        let md = markdown(std::slice::from_ref(&o));
+        assert!(md.contains("| `archive_visible_count` | OK 2 |") && md.contains("| `archive_data_end` | OK |"), "{md}");
+        let diff = differences(std::slice::from_ref(&o));
+        assert!(diff.iter().any(|l| l.contains("`archive_visible_count`: expected 19939, observed 2")), "{diff:?}");
     }
 
     #[test]
