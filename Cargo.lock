@@ -2669,6 +2669,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "shaiya-matrix-tests"
+version = "0.1.0"
+dependencies = [
+ "shaiya-archive",
+ "shaiya-clientdata",
+ "shaiya-core",
+ "shaiya-inspect",
+ "shaiya-seed",
+ "shaiya-testkit",
+]
+
+[[package]]
 name = "shaiya-patch"
 version = "0.1.0"
 dependencies = [

@@ -1,0 +1,22 @@
+[package]
+name = "shaiya-matrix-tests"
+description = "Opt-in version-matrix tests: what the toolkit parses on which Shaiya client (needs the test clients; no game data in the repository)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+shaiya-core = { workspace = true }
+shaiya-seed = { workspace = true }
+shaiya-archive = { workspace = true }
+shaiya-clientdata = { workspace = true }
+shaiya-inspect = { workspace = true }
+
+[dev-dependencies]
+shaiya-testkit = { workspace = true }
