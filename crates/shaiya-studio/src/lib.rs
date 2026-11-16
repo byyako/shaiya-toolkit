@@ -2,15 +2,25 @@
 //! shortcuts and the T0 file inspector, on the shared GUI shell. Every change to a client folder goes through the same crash-safe
 //! procedure as the command line (`shaiya_archive::edit`, `shaiya_patch::apply_with`), after a confirmation.
 
+pub mod apply_tab;
 pub mod archive_view;
 pub mod clients;
 pub mod inspect;
+pub mod keys;
+pub mod patch_builder;
 pub mod preview;
+pub mod sdata_tab;
+pub mod sign_tab;
 
+use apply_tab::ApplyTab;
 use archive_view::{ArchiveView, OpenSource, TabRequest};
 use clients::{ClientInfo, ClientsAction, ClientsUi};
 use egui::{Key, Modifiers, RichText};
 use inspect::InspectTab;
+use keys::KeyForm;
+use patch_builder::{PatchBuilder, PatchRequest};
+use sdata_tab::SDataTab;
+use sign_tab::{Section, SignTab};
 use serde::{Deserialize, Serialize};
 use shaiya_ui::{AppInfo, Command, Confirm, Cx, Menu, ToolApp};
 use std::collections::BTreeMap;
@@ -63,22 +73,45 @@ impl Default for StudioSettings {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Tab {
     Archive,
+    Patch,
+    Apply,
+    Sign,
+    SData,
     Inspect,
 }
 
 impl Tab {
-    pub const ALL: [Tab; 2] = [Tab::Archive, Tab::Inspect];
+    pub const ALL: [Tab; 6] = [Tab::Archive, Tab::Patch, Tab::Apply, Tab::Sign, Tab::SData, Tab::Inspect];
 
     pub fn key(self) -> &'static str {
         match self {
             Tab::Archive => "archive",
+            Tab::Patch => "patch",
+            Tab::Apply => "apply",
+            Tab::Sign => "sign",
+            Tab::SData => "sdata",
             Tab::Inspect => "inspect",
+        }
+    }
+
+    pub fn command_id(self) -> &'static str {
+        match self {
+            Tab::Archive => "tab-archive",
+            Tab::Patch => "tab-patch",
+            Tab::Apply => "tab-apply",
+            Tab::Sign => "tab-sign",
+            Tab::SData => "tab-sdata",
+            Tab::Inspect => "tab-inspect",
         }
     }
 
     pub fn label(self) -> &'static str {
         match self {
             Tab::Archive => "Archive",
+            Tab::Patch => "Patch builder",
+            Tab::Apply => "Apply & history",
+            Tab::Sign => "Sign & verify",
+            Tab::SData => "SData",
             Tab::Inspect => "Inspect",
         }
     }
@@ -97,7 +130,12 @@ struct FolderPrompt {
 pub struct StudioApp {
     pub tab: Tab,
     pub archive: ArchiveView,
+    pub patch: PatchBuilder,
+    pub apply: ApplyTab,
+    pub sign: SignTab,
+    pub sdata: SDataTab,
     pub inspect: InspectTab,
+    pub keys: KeyForm,
     pub clients: ClientsUi,
     /// The saved client (or opened folder) the tabs work on.
     pub current: Option<ClientInfo>,
@@ -193,8 +231,30 @@ impl StudioApp {
     fn handle_requests(&mut self, requests: Vec<TabRequest>, cx: &mut StudioCx<'_>) {
         for r in requests {
             match r {
-                TabRequest::PatchFromPending | TabRequest::PatchFromDiff(_) => {
-                    cx.shell.status("Patch builder is not available yet");
+                TabRequest::PatchFromPending => {
+                    self.patch.from_pending(self.archive.pending_build_input());
+                    self.patch.prefill_signing(&self.keys);
+                    self.set_tab(Tab::Patch, cx);
+                }
+                TabRequest::PatchFromDiff(other) => {
+                    // old = the other archive, new = the open one
+                    self.patch.from_diff(other, None, &self.archive, cx);
+                    self.set_tab(Tab::Patch, cx);
+                }
+            }
+        }
+    }
+
+    fn handle_patch_requests(&mut self, requests: Vec<PatchRequest>, cx: &mut StudioCx<'_>) {
+        for r in requests {
+            match r {
+                PatchRequest::ApplyPatch(p) => {
+                    self.apply.add_patches(vec![p]);
+                    self.set_tab(Tab::Apply, cx);
+                }
+                PatchRequest::VerifyPatch(p) => {
+                    self.sign.add_to(Section::Verify, vec![p]);
+                    self.set_tab(Tab::Sign, cx);
                 }
             }
         }
@@ -204,23 +264,35 @@ impl StudioApp {
 
     fn dropped(&mut self, paths: Vec<PathBuf>, cx: &mut StudioCx<'_>) {
         let mut files: Vec<PathBuf> = Vec::new();
+        let mut patches: Vec<PathBuf> = Vec::new();
         for p in paths {
             if p.is_dir() && has_sah(&p) {
                 self.folder_prompt = Some(FolderPrompt { dir: p, archive_open: self.archive.is_open() });
             } else if ext_of(&p) == "sah" {
                 self.open_archive_file(p, cx);
+            } else if ext_of(&p) == "patch" {
+                patches.push(p);
             } else {
                 files.push(p);
             }
         }
+        if !patches.is_empty() {
+            self.apply.add_patches(patches);
+            self.set_tab(Tab::Apply, cx);
+        }
         if files.is_empty() {
             return;
         }
-        if self.tab == Tab::Archive && self.archive.is_open() && self.archive.client_dir().is_some() {
-            self.archive.begin_add(files);
-        } else {
-            self.set_tab(Tab::Inspect, cx);
-            self.inspect.open(files, cx);
+        match self.tab {
+            Tab::Archive if self.archive.is_open() && self.archive.client_dir().is_some() => self.archive.begin_add(files),
+            Tab::Patch => self.patch.drop_paths(files),
+            Tab::Sign => self.sign.add_files(files),
+            Tab::SData => self.sdata.add_paths(files),
+            Tab::Apply => cx.shell.status("Drop .patch files here to apply them"),
+            Tab::Archive | Tab::Inspect => {
+                self.set_tab(Tab::Inspect, cx);
+                self.inspect.open(files, cx);
+            }
         }
     }
 
@@ -367,7 +439,12 @@ impl ToolApp for StudioApp {
         let mut app = StudioApp {
             tab: Tab::from_key(&cx.settings.tab),
             archive: ArchiveView::new(),
+            patch: PatchBuilder::new(),
+            apply: ApplyTab::new(),
+            sign: SignTab::new(),
+            sdata: SDataTab::new(),
             inspect: InspectTab::new(),
+            keys: KeyForm::default(),
             clients: ClientsUi::default(),
             current: None,
             ini_stamp: None,
@@ -395,13 +472,31 @@ impl ToolApp for StudioApp {
         ui.separator();
         self.tab_keys(&ctx, cx);
         let mut requests = Vec::new();
+        let mut patch_requests = Vec::new();
+        let client = self.current.as_ref();
         match self.tab {
             Tab::Archive => requests = self.archive.ui(ui, cx),
+            Tab::Patch => patch_requests = self.patch.ui(ui, cx, client, &self.archive, &mut self.keys),
+            Tab::Apply => self.apply.ui(ui, cx, client, &mut self.archive, &mut self.keys),
+            Tab::Sign => self.sign.ui(ui, cx, client, &mut self.keys),
+            Tab::SData => self.sdata.ui(ui, cx, &self.archive),
             Tab::Inspect => self.inspect.ui(ui, cx),
         }
-        // the archive keeps polling its tasks while another tab is shown
+        // what goes on in the background (checks, plans, applies, builds, questions) goes on whichever tab is shown
         if self.tab != Tab::Archive {
             self.archive.poll(cx);
+        }
+        if self.tab != Tab::Patch {
+            self.patch.tick(cx);
+        }
+        if self.tab != Tab::Apply {
+            self.apply.tick(cx, client, &mut self.archive, &mut self.keys);
+        }
+        if self.tab != Tab::Sign {
+            self.sign.tick(&self.keys, cx);
+        }
+        if self.tab != Tab::SData {
+            self.sdata.tick(&self.archive, cx);
         }
         let actions = self.clients.ui(&ctx, cx, &mut self.archive);
         for a in actions {
@@ -416,6 +511,7 @@ impl ToolApp for StudioApp {
         }
         self.folder_prompt_ui(cx);
         self.handle_requests(requests, cx);
+        self.handle_patch_requests(patch_requests, cx);
     }
 
     fn open(&mut self, paths: Vec<PathBuf>, cx: &mut StudioCx<'_>) {
@@ -451,24 +547,40 @@ impl ToolApp for StudioApp {
         let mut v: Vec<Command> = Vec::new();
         for (i, t) in Tab::ALL.iter().enumerate() {
             v.push(Command {
-                id: match t {
-                    Tab::Archive => "tab-archive",
-                    Tab::Inspect => "tab-inspect",
-                },
+                id: t.command_id(),
                 label: format!("Go to {}", t.label()),
                 shortcut: Some(egui::KeyboardShortcut::new(Modifiers::COMMAND, [Key::Num1, Key::Num2, Key::Num3, Key::Num4, Key::Num5, Key::Num6][i])),
                 enabled: true,
             });
         }
         v.extend(self.archive.commands());
+        let client = self.current.as_ref();
+        v.push(Command { id: "patch-build", label: "Build the patch".into(), shortcut: None, enabled: self.patch.build_blocked(&self.keys).is_none() });
+        v.push(Command { id: "apply-patches", label: "Apply the listed patches...".into(), shortcut: None, enabled: self.apply.apply_blocked(client).is_none() });
+        v.push(Command { id: "history-rollback", label: "Roll back the newest change...".into(), shortcut: None, enabled: client.is_some() && self.apply.newest_rollback().is_some() });
         v.push(Command { id: "hash-selected", label: "Hash selected files".into(), shortcut: None, enabled: !self.inspect.is_empty() });
         v
     }
 
     fn run_command(&mut self, id: &str, cx: &mut StudioCx<'_>) {
         match id {
-            "tab-archive" => self.set_tab(Tab::Archive, cx),
-            "tab-inspect" => self.set_tab(Tab::Inspect, cx),
+            "tab-archive" | "tab-patch" | "tab-apply" | "tab-sign" | "tab-sdata" | "tab-inspect" => {
+                if let Some(t) = Tab::ALL.iter().find(|t| t.command_id() == id) {
+                    self.set_tab(*t, cx);
+                }
+            }
+            "patch-build" => {
+                self.set_tab(Tab::Patch, cx);
+                self.patch.begin_build(&self.keys, cx);
+            }
+            "apply-patches" => {
+                self.set_tab(Tab::Apply, cx);
+                self.apply.request_apply(self.current.as_ref(), &self.keys);
+            }
+            "history-rollback" => {
+                self.set_tab(Tab::Apply, cx);
+                self.apply.request_rollback(self.current.as_ref());
+            }
             "hash-selected" => self.inspect.hash_selected(cx),
             other => {
                 self.set_tab(Tab::Archive, cx);

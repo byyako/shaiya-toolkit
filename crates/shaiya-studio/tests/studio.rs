@@ -452,3 +452,225 @@ fn an_open_handle_on_data_saf_makes_apply_show_retry() {
     assert!(w.h.wait_until(WAIT, |h| h.app.app.archive.changed_counter == 1 && h.app.app.archive.is_open()), "Retry succeeds once the handle is closed");
     assert_eq!(w.h.app.app.archive.pending.len(), 0);
 }
+
+// ------------------------------------------------------------------------------------------------ T1: the other tabs
+
+fn build_patch(dir: &std::path::Path, name: &str) -> PathBuf {
+    let files = dir.join(format!("{name}-files"));
+    let loose = dir.join(format!("{name}-loose"));
+    std::fs::create_dir_all(files.join("Item")).unwrap();
+    std::fs::create_dir_all(files.join("interface")).unwrap();
+    std::fs::create_dir_all(&loose).unwrap();
+    std::fs::write(files.join("Item/Item.SData"), b"patched").unwrap();
+    std::fs::write(files.join("interface/new.txt"), b"brand new").unwrap();
+    std::fs::write(loose.join("notice.txt"), b"hello players").unwrap();
+    let out = dir.join(name);
+    let input = shaiya_patch::BuildInput::from_folders(Some(&files), Some(&loose), None, Some(0)).unwrap();
+    shaiya_patch::build_with(&input, &out, &shaiya_patch::BuildOptions { existing: shaiya_core::fs::Existing::Overwrite, sign: None }, &shaiya_core::Job::silent()).unwrap();
+    out
+}
+
+#[test]
+fn tab_keys_switch_tabs_and_remember_the_last_one() {
+    let mut h = Harness::<StudioApp>::bare();
+    h.frames(2);
+    for (key, tab) in [(Key::Num2, Tab::Patch), (Key::Num3, Tab::Apply), (Key::Num4, Tab::Sign), (Key::Num5, Tab::SData), (Key::Num6, Tab::Inspect), (Key::Num1, Tab::Archive)] {
+        h.key(key, Modifiers::COMMAND);
+        h.frames(2);
+        assert_eq!(h.app.app.tab, tab);
+        assert_eq!(h.app.tool_settings.tab, tab.key());
+    }
+    h.key(Key::Num3, Modifiers::COMMAND);
+    h.frames(2);
+    assert!(h.text().contains("Apply & history") && h.text().contains("No patches yet"), "{}", h.text());
+    assert!(h.text().contains("No changes made by the toolkit to this client yet") || h.text().contains("History"), "{}", h.text());
+}
+
+#[test]
+fn apply_and_history_plan_apply_list_and_roll_back() {
+    let mut w = open_world("t1-hist");
+    let src = TempDir::new("t1-hist-src");
+    let patch = build_patch(src.path(), "ps0001.patch");
+    go(&mut w.h, Tab::Apply);
+    with_cx(&mut w.h, |app, _| app.apply.add_patches(vec![patch.clone()]));
+    assert!(w.h.wait_until(WAIT, |h| h.app.app.apply.plan_summary().is_some() && h.app.app.apply.verify_summary().iter().all(|v| v.is_some())), "the plan is made");
+    assert_eq!(w.h.app.app.apply.plan_summary().unwrap(), vec![(1, 1, 0, 1)], "one added, one replaced, one loose file");
+    assert_eq!(w.h.app.app.apply.verify_summary(), vec![Some((0, "not checked".to_string()))]);
+    w.h.frames(2);
+    assert!(w.h.text().contains("ps0001.patch") && w.h.text().contains("structure OK"), "{}", w.h.text());
+    // apply through the confirmation
+    with_cx(&mut w.h, |app, _| app.apply.request_apply(app.current.as_ref(), &app.keys));
+    w.h.frames(3);
+    assert!(w.h.text().contains("Apply ps0001.patch to US test") && w.h.text().contains("Signatures: NOT CHECKED"), "{}", w.h.text());
+    w.h.app.shell.inject_answer("studio-apply-patches", 0);
+    assert!(w.h.wait_until(WAIT, |h| h.app.app.apply.history().len() == 1 && h.app.app.archive.is_open() && h.app.app.archive.changed_counter >= 1), "applied; the history lists it");
+    w.h.frames(3);
+    let (j, rb) = &w.h.app.app.apply.history()[0];
+    assert_eq!((j.label.as_str(), j.kind.as_str()), ("ps0001.patch", "patch"));
+    assert!(matches!(rb, shaiya_archive::journal::Rollback::Possible));
+    assert_eq!(std::fs::read(w.client.path().join("notice.txt")).unwrap(), b"hello players");
+    let arch = shaiya_archive::Archive::open(w.client.path()).unwrap();
+    assert_eq!(arch.read("Item/Item.SData").unwrap(), b"patched");
+    assert_eq!(arch.read("interface/new.txt").unwrap(), b"brand new");
+    drop(arch);
+    assert!(w.h.text().contains("ps0001.patch") && w.h.text().contains("possible"), "{}", w.h.text());
+    // roll back
+    with_cx(&mut w.h, |app, _| app.apply.request_rollback(app.current.as_ref()));
+    w.h.frames(3);
+    assert!(w.h.text().contains("Roll back ps0001.patch") && w.h.text().contains("1 deleted"), "{}", w.h.text());
+    w.h.app.shell.inject_answer("studio-rollback", 0);
+    assert!(
+        w.h.wait_until(WAIT, |h| matches!(h.app.app.apply.history().first().map(|(j, _)| j.state.clone()), Some(shaiya_archive::journal::State::RolledBack { .. })) && h.app.app.archive.is_open()),
+        "rolled back"
+    );
+    w.h.frames(2);
+    assert!(!w.client.path().join("notice.txt").exists(), "the loose file that did not exist is deleted again");
+    let arch = shaiya_archive::Archive::open(w.client.path()).unwrap();
+    assert_eq!(arch.read("Item/Item.SData").unwrap().len(), shaiya_seed::encrypt(b"0123456789abcdef-more").len(), "the original entry is back");
+    assert!(arch.index().get("interface/new.txt").is_none());
+}
+
+#[test]
+fn patch_builder_from_pending_changes_builds_a_patch_with_those_contents() {
+    let mut w = open_world("t1-builder");
+    let src = TempDir::new("t1-builder-src");
+    let f = src.path().join("Item.SData");
+    std::fs::write(&f, b"queued").unwrap();
+    {
+        let a = &mut w.h.app.app.archive;
+        a.queue_puts(vec![("Item/Item.SData".to_string(), f.clone(), 0)]);
+        a.queue_removes(vec!["top.txt".to_string()]);
+    }
+    w.h.frames(2);
+    with_cx(&mut w.h, |app, cx| shaiya_ui::ToolApp::run_command(app, "archive-make-patch", cx));
+    w.h.frames(3);
+    assert_eq!(w.h.app.app.tab, Tab::Patch, "Make patch switches to the builder");
+    let out_dir = TempDir::new("t1-builder-out");
+    w.h.app.app.patch.out_dir = out_dir.path().display().to_string();
+    w.h.frames(2);
+    assert!(w.h.text().contains("Item/Item.SData") && w.h.text().contains("top.txt"), "{}", w.h.text());
+    assert_eq!(w.h.app.app.patch.out_name, "ps0001.patch", "the name is suggested (no Version.ini here)");
+    assert!(w.h.app.app.patch.problems.is_empty());
+    with_cx(&mut w.h, |app, cx| app.patch.begin_build(&app.keys, cx));
+    assert!(w.h.wait_until(WAIT, |h| h.app.app.patch.last_out.is_some()), "built");
+    let c = shaiya_patch::contents(&out_dir.path().join("ps0001.patch")).unwrap();
+    assert_eq!(c.files.iter().map(|f| f.path.as_str()).collect::<Vec<_>>(), vec!["Item/Item.SData"]);
+    assert_eq!(c.files[0].length, 6);
+    assert_eq!(c.removals, vec!["top.txt"]);
+    w.h.frames(2);
+    assert!(w.h.text().contains("Built ps0001.patch"), "{}", w.h.text());
+    // building again over the file asks first
+    with_cx(&mut w.h, |app, cx| app.patch.begin_build(&app.keys, cx));
+    w.h.frames(3);
+    assert!(w.h.text().contains("already exists") && w.h.text().contains("Overwrite"), "{}", w.h.text());
+    w.h.app.shell.inject_answer("studio-build-exists", 1);
+    w.h.frames(3);
+    assert!(out_dir.path().join("ps0001.patch").exists());
+}
+
+#[test]
+fn patch_builder_folder_sources_show_problems_and_effects() {
+    let mut w = open_world("t1-builder-folder");
+    let src = TempDir::new("t1-builder-folder-src");
+    let files = src.path().join("changed");
+    std::fs::create_dir_all(files.join("Item")).unwrap();
+    std::fs::write(files.join("Item/Item.SData"), b"x").unwrap();
+    std::fs::write(files.join("fresh.txt"), b"y").unwrap();
+    go(&mut w.h, Tab::Patch);
+    assert!(w.h.text().contains("Drop a folder of changed files here"), "{}", w.h.text());
+    w.h.drop_files(&[files.clone()]);
+    w.h.frames(3);
+    let rows = w.h.app.app.patch.rows.clone();
+    assert_eq!(rows.len(), 2, "{rows:?}");
+    let by = |p: &str| rows.iter().find(|r| r.path == p).unwrap().effect.clone();
+    assert!(by("Item/Item.SData").starts_with("replaces"), "{rows:?}");
+    assert_eq!(by("fresh.txt"), "new");
+    // a name the archive cannot hold blocks the build
+    std::fs::write(files.join("bad\u{1F600}name.txt"), b"z").unwrap();
+    w.h.app.app.patch.set_card(shaiya_studio::patch_builder::Card::Files, Some(files));
+    w.h.frames(3);
+    assert!(!w.h.app.app.patch.problems.is_empty(), "an unencodable name is a problem: rows {:?} err {:?} input {:?}", w.h.app.app.patch.rows, w.h.app.app.patch.resolve_error, w.h.app.app.patch.input().files.iter().map(|f| f.0.clone()).collect::<Vec<_>>());
+    assert!(w.h.app.app.patch.build_blocked(&w.h.app.app.keys).is_some());
+}
+
+#[test]
+fn sign_and_verify_with_a_generated_key_pair_and_a_tampered_patch() {
+    let mut w = open_world("t1-sign");
+    go(&mut w.h, Tab::Sign);
+    let dir = TempDir::new("t1-sign-files");
+    let (secret, public) = (dir.path().join("secret.key"), dir.path().join("public.key"));
+    with_cx(&mut w.h, |app, cx| app.sign.generate_keys(secret.clone(), public.clone(), &mut app.keys, cx));
+    assert!(secret.exists() && public.exists());
+    let hex = w.h.app.app.sign.generated.as_ref().unwrap().public_hex.clone();
+    assert_eq!(hex.len(), 64);
+    // the pair is never overwritten
+    with_cx(&mut w.h, |app, cx| app.sign.generate_keys(secret.clone(), public.clone(), &mut app.keys, cx));
+    assert!(w.h.app.app.sign.error.is_some(), "an existing key file is refused");
+    w.h.app.app.keys.check_version = "3".into();
+    let patch = dir.path().join("ps0002.patch");
+    std::fs::write(&patch, b"not really a patch, but bytes to sign").unwrap();
+    w.h.app.app.sign.sign_files = vec![patch.clone()];
+    with_cx(&mut w.h, |app, cx| app.sign.begin_sign(&app.keys, cx));
+    assert!(w.h.wait_until(WAIT, |h| !h.app.app.sign.sign_results.is_empty()), "signed");
+    assert!(shaiya_patch::signature_path(&patch).exists(), "the .sig is next to the file");
+    // verify: valid
+    w.h.app.app.sign.verify_files = vec![patch.clone()];
+    with_cx(&mut w.h, |app, cx| app.sign.begin_verify(&app.keys, None, cx));
+    assert!(w.h.wait_until(WAIT, |h| !h.app.app.sign.verify_results.is_empty()));
+    assert_eq!(w.h.app.app.sign.verify_results[0].1, shaiya_studio::sign_tab::Outcome::Valid);
+    // tamper one byte: invalid
+    let mut bytes = std::fs::read(&patch).unwrap();
+    bytes[3] ^= 1;
+    std::fs::write(&patch, &bytes).unwrap();
+    w.h.app.app.sign.verify_results.clear();
+    with_cx(&mut w.h, |app, cx| app.sign.begin_verify(&app.keys, None, cx));
+    assert!(w.h.wait_until(WAIT, |h| !h.app.app.sign.verify_results.is_empty()));
+    assert!(matches!(w.h.app.app.sign.verify_results[0].1, shaiya_studio::sign_tab::Outcome::Invalid(_)), "{:?}", w.h.app.app.sign.verify_results);
+    // a missing signature is reported as missing
+    std::fs::remove_file(shaiya_patch::signature_path(&patch)).unwrap();
+    w.h.app.app.sign.verify_results.clear();
+    with_cx(&mut w.h, |app, cx| app.sign.begin_verify(&app.keys, None, cx));
+    assert!(w.h.wait_until(WAIT, |h| !h.app.app.sign.verify_results.is_empty()));
+    assert_eq!(w.h.app.app.sign.verify_results[0].1, shaiya_studio::sign_tab::Outcome::Missing);
+    // signing again over an existing .sig asks first
+    w.h.app.app.sign.sign_results.clear();
+    with_cx(&mut w.h, |app, cx| app.sign.begin_sign(&app.keys, cx));
+    assert!(w.h.wait_until(WAIT, |h| !h.app.app.sign.sign_results.is_empty()), "signed again (the .sig was gone)");
+    with_cx(&mut w.h, |app, cx| app.sign.begin_sign(&app.keys, cx));
+    w.h.frames(3);
+    assert!(w.h.text().contains("Replace signature"), "{}", w.h.text());
+    // the secret key's path is not stored unless asked
+    w.h.app.flush_settings(true);
+    let settings = std::fs::read_to_string(w.data_path.join("shaiya-studio").join("settings.json")).unwrap();
+    assert!(!settings.contains("secret.key"), "the secret key path is not remembered by default: {settings}");
+}
+
+#[test]
+fn the_sdata_tab_lists_and_decrypts_to_a_folder() {
+    let mut w = open_world("t1-sdata");
+    go(&mut w.h, Tab::SData);
+    assert!(w.h.text().contains("Drop SData files or folders here"), "{}", w.h.text());
+    let src = TempDir::new("t1-sdata-src");
+    std::fs::write(src.path().join("Item.SData"), shaiya_seed::encrypt(b"0123456789abcdef")).unwrap();
+    std::fs::write(src.path().join("Plain.SData"), b"not encrypted").unwrap();
+    w.h.drop_files(&[src.path().to_path_buf()]);
+    assert!(w.h.wait_until(WAIT, |h| h.app.app.sdata.row_count() == 2), "both files are listed");
+    w.h.frames(2);
+    assert!(w.h.text().contains("Item.SData") && w.h.text().contains("OK") && w.h.text().contains("plain"), "{}", w.h.text());
+    let out = TempDir::new("t1-sdata-out");
+    let o = out.path().join("plain");
+    with_cx(&mut w.h, |app, cx| app.sdata.begin(shaiya_studio::sdata_tab::Action::Decrypt, Some(o.clone()), &app.archive, cx));
+    assert!(w.h.wait_until(WAIT, |h| o.join("Item.SData").exists() && !h.app.app.sdata.is_busy()), "decrypted into the folder");
+    assert_eq!(std::fs::read(o.join("Item.SData")).unwrap(), b"0123456789abcdef");
+    assert_eq!(std::fs::read(o.join("Plain.SData")).unwrap(), b"not encrypted", "a plain file is copied unchanged");
+    // existing files ask the three-button question
+    with_cx(&mut w.h, |app, cx| app.sdata.begin(shaiya_studio::sdata_tab::Action::Decrypt, Some(o.clone()), &app.archive, cx));
+    w.h.frames(3);
+    assert!(w.h.text().contains("already exist") && w.h.text().contains("Skip existing"), "{}", w.h.text());
+    w.h.app.shell.inject_answer("studio-sdata-exists", 0);
+    assert!(w.h.wait_until(WAIT, |h| !h.app.app.sdata.is_busy()));
+    // the open client's files can be added too
+    with_cx(&mut w.h, |app, _| app.sdata.clear());
+    w.h.app.app.sdata.from_client = true;
+    assert!(w.h.wait_until(WAIT, |h| h.app.app.sdata.row_count() == 1), "the client's Item.SData is listed");
+}

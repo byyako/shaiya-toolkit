@@ -604,6 +604,15 @@ impl ArchiveView {
         matches!(&self.source, Some(OpenSource::Client { dir: d, .. }) if d == dir)
     }
 
+    /// Studio's handle on `data.saf` (for tasks that read it; they must not outlive a write).
+    pub fn archive_handle(&self) -> Option<Arc<Archive>> {
+        self.loaded.as_ref().and_then(|l| l.archive.clone())
+    }
+
+    pub fn sah_path(&self) -> Option<&Path> {
+        self.loaded.as_ref().map(|l| l.sah.as_path())
+    }
+
     /// Size and pack time of a visible entry (the patch builder's "replaces ..." column).
     pub fn lookup(&self, path: &str) -> Option<(u32, i32)> {
         let i = self.find_row(path)?;
