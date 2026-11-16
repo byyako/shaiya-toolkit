@@ -1,0 +1,33 @@
+[package]
+name = "shaiya-cli"
+description = "The `shaiya` command-line program of the Shaiya toolkit"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish.workspace = true
+build = "build.rs"
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "shaiya"
+path = "src/main.rs"
+
+[dependencies]
+shaiya-core = { workspace = true }
+shaiya-inspect = { workspace = true }
+clap = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.52", features = ["Win32_Foundation", "Win32_System_Console"] }
+
+[dev-dependencies]
+shaiya-testkit = { workspace = true }
+shaiya-seed = { workspace = true }
+shaiya-patch = { workspace = true }
+shaiya-archive = { workspace = true }

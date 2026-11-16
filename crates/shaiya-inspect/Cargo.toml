@@ -1,0 +1,23 @@
+[package]
+name = "shaiya-inspect"
+description = "Identify a Shaiya file (SAH index, SAF data, SData, patch, game.exe) and describe it"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+shaiya-core = { workspace = true }
+shaiya-seed = { workspace = true }
+shaiya-archive = { workspace = true }
+shaiya-patch = { workspace = true }
+serde = { workspace = true }
+
+[dev-dependencies]
+shaiya-testkit = { workspace = true }
+serde_json = { workspace = true }
