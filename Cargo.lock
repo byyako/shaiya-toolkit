@@ -394,6 +394,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "shaiya-clientdata"
+version = "0.1.0"
+dependencies = [
+ "encoding_rs",
+ "shaiya-archive",
+ "shaiya-core",
+ "shaiya-seed",
+ "shaiya-testkit",
+]
+
+[[package]]
 name = "shaiya-core"
 version = "0.1.0"
 dependencies = [
