@@ -232,6 +232,17 @@ pub(crate) fn build_new_index(old: &Index, plan: &EditPlan, offset_for: &mut dyn
     Ok((idx, rep))
 }
 
+/// The index after the plan with sequential offsets from `base` (where the first put would land) and the report; for planning several
+/// patches in a row. Same checks as [`preview`].
+pub fn simulate(index: &Index, plan: &EditPlan, base: u64) -> Result<(Index, EditReport)> {
+    let mut at = base;
+    build_new_index(index, plan, &mut |_, len| {
+        let o = at;
+        at += len;
+        o
+    })
+}
+
 /// Validates without writing: paths (`split_path` + `encode_name_strict`), `AddOnly` on an existing visible path, `ReplaceOnly` on a
 /// missing one, removals of missing paths unless `ignore_missing` -> `Error::Refused` listing every offending path (all at once, not the
 /// first). Removals are applied before puts, as in the original patch tool.
@@ -445,7 +456,7 @@ fn walk_mut(d: &mut Dir, f: &mut dyn FnMut(&mut Entry, &str) -> Result<()>, pref
     Ok(())
 }
 
-pub(crate) fn temp_next_to(path: &Path) -> PathBuf {
+pub fn temp_next_to(path: &Path) -> PathBuf {
     let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| "out".into());
     path.with_file_name(format!(".{name}.{}.shaiya-tmp", std::process::id()))
 }

@@ -47,6 +47,10 @@ codegen-units = 1
 strip = true
 panic = "unwind"          # the GUI catches task panics; the CLI maps a panic to exit 5
 
+[profile.dev.package.miniz_oxide]       # patch deflate in tests
+opt-level = 3
+[profile.dev.package.flate2]
+opt-level = 3
 [profile.dev.package.sha2]
 opt-level = 3
 [profile.release.package.sha2]

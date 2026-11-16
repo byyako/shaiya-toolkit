@@ -16,8 +16,9 @@
 //! Moved from `rust/archive/src/sign.rs` of the Shaiya EP4 Client repo. The message format is unchanged: deployed updaters verify it.
 
 use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
+use shaiya_core::fs::{write_atomic, Existing};
 use shaiya_core::{Error, Job, Result};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 fn message(check_version: u32, file_name: &str, digest: &[u8; 32]) -> Vec<u8> {
     let mut m = b"shaiya-patch-v2\0".to_vec();
@@ -64,6 +65,100 @@ pub fn verify(public_hex: &str, check_version: u32, file_name: &str, digest: &[u
     pk.verify(&message(check_version, file_name, digest), &sig).map_err(|_| {
         Error::format(file_name, None, "signature does not match (file altered, or signed for another name/version or with another key)")
     })
+}
+
+/// `<file>.sig`.
+pub fn signature_path(file: &Path) -> PathBuf {
+    let mut s = file.as_os_str().to_os_string();
+    s.push(".sig");
+    PathBuf::from(s)
+}
+
+/// Reads a key or signature file: trims, checks for hex of the given length.
+fn read_hex_file(path: &Path, digits: usize, what: &str) -> Result<String> {
+    let text = std::fs::read_to_string(path).map_err(|e| Error::io(path, e))?;
+    let t = text.trim();
+    if t.len() != digits || !t.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return Err(Error::format(path.display().to_string(), None, format!("not a {what}: expected {digits} hex characters")));
+    }
+    Ok(t.to_ascii_lowercase())
+}
+
+/// A key file (secret or public): trims; checks 64 hex characters.
+pub fn read_key(path: &Path) -> Result<String> {
+    read_hex_file(path, 64, "key file")
+}
+
+/// `create_new` for both files (never overwrites; `Error::Refused` when either exists); the secret is written with mode 0600 on Unix.
+/// Returns the public key as hex.
+pub fn write_key_pair(secret: &Path, public: &Path) -> Result<String> {
+    for p in [secret, public] {
+        if p.exists() {
+            return Err(Error::Refused(format!("{} already exists; keys are never overwritten", p.display())));
+        }
+    }
+    let (sk, pk) = keygen();
+    let create = |p: &Path, secret: bool| -> Result<()> {
+        let mut o = std::fs::OpenOptions::new();
+        o.write(true).create_new(true);
+        #[cfg(unix)]
+        if secret {
+            use std::os::unix::fs::OpenOptionsExt;
+            o.mode(0o600);
+        }
+        let _ = secret;
+        let mut f = o.open(p).map_err(|e| {
+            if e.kind() == std::io::ErrorKind::AlreadyExists {
+                Error::Refused(format!("{} already exists; keys are never overwritten", p.display()))
+            } else {
+                Error::io(p, e)
+            }
+        })?;
+        use std::io::Write;
+        let text = format!("{}\n", if secret { &sk } else { &pk });
+        f.write_all(text.as_bytes()).and_then(|_| f.sync_all()).map_err(|e| Error::io(p, e))
+    };
+    create(secret, true)?;
+    if let Err(e) = create(public, false) {
+        let _ = std::fs::remove_file(secret);
+        return Err(e);
+    }
+    Ok(pk)
+}
+
+fn name_for(file: &Path, name: Option<&str>) -> String {
+    match name {
+        Some(n) => n.to_string(),
+        None => file.file_name().map(|n| n.to_string_lossy().to_ascii_lowercase()).unwrap_or_default(),
+    }
+}
+
+/// Signs `file` under its own lower-cased file name, or under `name` (updater: [`updater_name`]); writes `<file>.sig` per `existing`
+/// (`Refuse` -> `Error::Refused` when it exists; `Skip` leaves it). Returns the signature file's path.
+pub fn sign_file(secret_hex: &str, check_version: u32, file: &Path, name: Option<&str>, existing: Existing, job: &Job) -> Result<PathBuf> {
+    let sig_path = signature_path(file);
+    if sig_path.exists() {
+        match existing {
+            Existing::Refuse => return Err(Error::Refused(format!("{} already exists; use --force to replace it (never re-sign a published patch number)", sig_path.display()))),
+            Existing::Skip => return Ok(sig_path),
+            Existing::Overwrite => {}
+        }
+    }
+    let digest = shaiya_core::hash::sha256_file(file, job)?;
+    let sig = sign(secret_hex, check_version, &name_for(file, name), &digest)?;
+    write_atomic(&sig_path, format!("{sig}\n").as_bytes())?;
+    Ok(sig_path)
+}
+
+/// Checks `<file>.sig` against `file`; `Error::Refused` when the signature file is missing, `Error::Format` when it does not match.
+pub fn verify_file(public_hex: &str, check_version: u32, file: &Path, name: Option<&str>, job: &Job) -> Result<()> {
+    let sig_path = signature_path(file);
+    if !sig_path.is_file() {
+        return Err(Error::Refused(format!("signature file {} not found", sig_path.display())));
+    }
+    let sig = read_hex_file(&sig_path, 128, "signature file")?;
+    let digest = shaiya_core::hash::sha256_file(file, job)?;
+    verify(public_hex, check_version, &name_for(file, name), &digest, &sig)
 }
 
 #[cfg(test)]
