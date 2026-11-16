@@ -1,0 +1,15 @@
+[package]
+name = "shaiya-testkit"
+description = "Dev-only test helpers for the Shaiya toolkit: temp folders, hand-written SAH/SAF and PE fixtures, opt-in data variables (no game data)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+# Std only on purpose: the testkit is an oracle that writes formats by hand and must not share code with what it tests.
+[dependencies]
