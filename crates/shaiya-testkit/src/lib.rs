@@ -205,6 +205,132 @@ pub fn env_test_clients() -> Option<PathBuf> {
     env_path("SHAIYA_TEST_CLIENTS")
 }
 
+
+/// Opt-in scratch space for tests that write gigabytes (`SHAIYA_SCRATCH`): a folder outside every repo.
+pub fn env_scratch() -> Option<PathBuf> {
+    env_path("SHAIYA_SCRATCH")
+}
+
+fn crc32(data: &[u8]) -> u32 {
+    let mut c = 0xffff_ffffu32;
+    for &b in data {
+        c ^= b as u32;
+        for _ in 0..8 {
+            c = if c & 1 != 0 { 0xedb8_8320 ^ (c >> 1) } else { c >> 1 };
+        }
+    }
+    !c
+}
+
+/// A ZIP file written by hand: stored (uncompressed) entries, CRC-32 computed here, times fixed at 1980-01-01. An oracle independent
+/// of the `zip` crate. Entry names are written exactly as given (so `../x` and case twins can be tested).
+#[derive(Default)]
+pub struct ZipBuilder {
+    entries: Vec<(String, Vec<u8>)>,
+}
+
+impl ZipBuilder {
+    pub fn new() -> ZipBuilder {
+        ZipBuilder::default()
+    }
+
+    pub fn add(mut self, name: &str, data: &[u8]) -> ZipBuilder {
+        self.entries.push((name.to_string(), data.to_vec()));
+        self
+    }
+
+    pub fn build(&self) -> Vec<u8> {
+        let mut out = Vec::new();
+        let mut central = Vec::new();
+        for (name, data) in &self.entries {
+            let offset = out.len() as u32;
+            let crc = crc32(data);
+            let (n, size) = (name.as_bytes(), data.len() as u32);
+            let mut common = Vec::new();
+            common.extend_from_slice(&20u16.to_le_bytes()); // version needed
+            common.extend_from_slice(&0x0800u16.to_le_bytes()); // flags: UTF-8 names
+            common.extend_from_slice(&0u16.to_le_bytes()); // stored
+            common.extend_from_slice(&0u16.to_le_bytes()); // time 00:00:00
+            common.extend_from_slice(&0x0021u16.to_le_bytes()); // date 1980-01-01
+            common.extend_from_slice(&crc.to_le_bytes());
+            common.extend_from_slice(&size.to_le_bytes());
+            common.extend_from_slice(&size.to_le_bytes());
+            common.extend_from_slice(&(n.len() as u16).to_le_bytes());
+            common.extend_from_slice(&0u16.to_le_bytes()); // extra length
+            out.extend_from_slice(&0x0403_4b50u32.to_le_bytes());
+            out.extend_from_slice(&common);
+            out.extend_from_slice(n);
+            out.extend_from_slice(data);
+            central.extend_from_slice(&0x0201_4b50u32.to_le_bytes());
+            central.extend_from_slice(&20u16.to_le_bytes()); // version made by
+            central.extend_from_slice(&common);
+            central.extend_from_slice(&0u16.to_le_bytes()); // comment length
+            central.extend_from_slice(&0u16.to_le_bytes()); // disk
+            central.extend_from_slice(&0u16.to_le_bytes()); // internal attributes
+            central.extend_from_slice(&0u32.to_le_bytes()); // external attributes
+            central.extend_from_slice(&offset.to_le_bytes());
+            central.extend_from_slice(n);
+        }
+        let cd_offset = out.len() as u32;
+        out.extend_from_slice(&central);
+        out.extend_from_slice(&0x0605_4b50u32.to_le_bytes());
+        out.extend_from_slice(&0u16.to_le_bytes());
+        out.extend_from_slice(&0u16.to_le_bytes());
+        out.extend_from_slice(&(self.entries.len() as u16).to_le_bytes());
+        out.extend_from_slice(&(self.entries.len() as u16).to_le_bytes());
+        out.extend_from_slice(&(central.len() as u32).to_le_bytes());
+        out.extend_from_slice(&cd_offset.to_le_bytes());
+        out.extend_from_slice(&0u16.to_le_bytes());
+        out
+    }
+
+    pub fn write_to(&self, path: &Path) {
+        std::fs::write(path, self.build()).expect("write zip");
+    }
+}
+
+/// An uncompressed 24-bit true-colour TGA (type 2, bottom-up) with a red-to-blue gradient.
+pub fn tga_stub(w: u16, h: u16) -> Vec<u8> {
+    let mut b = vec![0u8; 18];
+    b[2] = 2;
+    b[12..14].copy_from_slice(&w.to_le_bytes());
+    b[14..16].copy_from_slice(&h.to_le_bytes());
+    b[16] = 24;
+    for y in 0..h {
+        for x in 0..w {
+            // BGR order
+            b.extend_from_slice(&[(x * 255 / w.max(1)) as u8, (y * 255 / h.max(1)) as u8, 200]);
+        }
+    }
+    b
+}
+
+/// An uncompressed 24-bit BMP (bottom-up, rows padded to 4 bytes).
+pub fn bmp_stub(w: u32, h: u32) -> Vec<u8> {
+    let stride = (w * 3).div_ceil(4) * 4;
+    let size = 54 + stride * h;
+    let mut b = Vec::with_capacity(size as usize);
+    b.extend_from_slice(b"BM");
+    b.extend_from_slice(&size.to_le_bytes());
+    b.extend_from_slice(&0u32.to_le_bytes());
+    b.extend_from_slice(&54u32.to_le_bytes());
+    b.extend_from_slice(&40u32.to_le_bytes());
+    b.extend_from_slice(&(w as i32).to_le_bytes());
+    b.extend_from_slice(&(h as i32).to_le_bytes());
+    b.extend_from_slice(&1u16.to_le_bytes());
+    b.extend_from_slice(&24u16.to_le_bytes());
+    b.extend_from_slice(&[0u8; 24]); // compression 0, image size, resolution, colours
+    for y in 0..h {
+        let mut row = Vec::new();
+        for x in 0..w {
+            row.extend_from_slice(&[(x * 255 / w.max(1)) as u8, (y * 255 / h.max(1)) as u8, 100]);
+        }
+        row.resize(stride as usize, 0);
+        b.extend_from_slice(&row);
+    }
+    b
+}
+
 pub const TEST_CLIENT_IDS: [&str; 8] = ["ru-ep3", "ru-ep45", "ru-ep54", "fr-ep54", "phoenix-ep63", "kr-ep8", "fawkes-v68", "cn-ep4"];
 
 #[cfg(test)]
@@ -297,6 +423,42 @@ mod tests {
         assert_eq!(&b[pe..pe + 4], b"PE\0\0");
         assert_eq!(u16::from_le_bytes([b[pe + 4], b[pe + 5]]), 0x014C);
         assert_eq!(le32(&b, pe + 8), 0x4BD4_E2AC);
+    }
+
+    #[test]
+    fn crc32_matches_the_standard_check_value() {
+        assert_eq!(crc32(b"123456789"), 0xcbf4_3926);
+        assert_eq!(crc32(b""), 0);
+    }
+
+    #[test]
+    fn zip_builder_writes_the_documented_structure() {
+        let z = ZipBuilder::new().add("a.txt", b"hello").add("../x", b"").build();
+        assert_eq!(le32(&z, 0), 0x0403_4b50);
+        // first local header: stored, crc of "hello", sizes 5, name length 5
+        assert_eq!(le32(&z, 14), crc32(b"hello"));
+        assert_eq!((le32(&z, 18), le32(&z, 22)), (5, 5));
+        assert_eq!(&z[30..35], b"a.txt");
+        assert_eq!(&z[35..40], b"hello");
+        // end of central directory: two entries, and it points at a central directory header
+        let e = z.len() - 22;
+        assert_eq!(le32(&z, e), 0x0605_4b50);
+        assert_eq!(u16::from_le_bytes([z[e + 10], z[e + 11]]), 2);
+        let cd = le32(&z, e + 16) as usize;
+        assert_eq!(le32(&z, cd), 0x0201_4b50);
+        assert_eq!(le32(&z, e + 12) as usize, e - cd);
+        assert!(z.windows(4).any(|w| w == b"../x"), "names are written as given");
+    }
+
+    #[test]
+    fn image_stubs_have_valid_headers() {
+        let t = tga_stub(4, 2);
+        assert_eq!((t[2], t[16], u16::from_le_bytes([t[12], t[13]]), u16::from_le_bytes([t[14], t[15]])), (2, 24, 4, 2));
+        assert_eq!(t.len(), 18 + 4 * 2 * 3);
+        let b = bmp_stub(3, 2);
+        assert_eq!(&b[..2], b"BM");
+        assert_eq!(le32(&b, 2) as usize, b.len());
+        assert_eq!(b.len(), 54 + 12 * 2, "3 pixels of 3 bytes pad to 12");
     }
 
     #[test]
