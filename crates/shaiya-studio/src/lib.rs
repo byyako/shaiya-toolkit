@@ -1,226 +1,349 @@
-//! Shaiya Archive & Patch Studio, T0: a file inspector on the shared GUI shell. Open or drop files; Studio identifies them (SAH index,
-//! SAF data, SData, patches, game.exe) and hashes them as cancellable tasks. T1 replaces the central panel with the archive browser.
+//! Shaiya Archive & Patch Studio (T1): the archive browser with queued changes, patch builder, apply with history, signing, SData
+//! shortcuts and the T0 file inspector, on the shared GUI shell. Every change to a client folder goes through the same crash-safe
+//! procedure as the command line (`shaiya_archive::edit`, `shaiya_patch::apply_with`), after a confirmation.
 
-use egui::RichText;
+pub mod archive_view;
+pub mod clients;
+pub mod inspect;
+pub mod preview;
+
+use archive_view::{ArchiveView, OpenSource, TabRequest};
+use clients::{ClientInfo, ClientsAction, ClientsUi};
+use egui::{Key, Modifiers, RichText};
+use inspect::InspectTab;
 use serde::{Deserialize, Serialize};
-use shaiya_core::hash::{sha256_file, to_hex};
-use shaiya_inspect::{describe, Info, Options};
-use shaiya_ui::{AppInfo, Command, Cx, Menu, TaskHandle, TaskOutcome, TaskSpec, ToolApp};
-use std::collections::HashSet;
+use shaiya_ui::{AppInfo, Command, Confirm, Cx, Menu, ToolApp};
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-const HELP: &str = "Shaiya Archive & Patch Studio (inspector)\n\nOpen files with File > Open (Ctrl+O), drop them on the window, or pass them on the command line. Studio identifies Shaiya files (data.sah, data.saf, SData files, patches, game.exe) and shows what they are.\n\nSHA-256: press \"SHA-256\" in a row, or select rows and use Hash selected. Hashing runs in the background and can be cancelled in the Activity panel (Ctrl+J).\n\nCopy row as text or JSON puts the details on the clipboard, handy for bug reports. Never attach game files to a report; hashes are enough.\n\nArchive browsing and patches arrive in the next version.";
+const HELP: &str = "Shaiya Archive & Patch Studio\n\nPick a client folder in the toolbar (Add client folder... remembers it for every toolkit program), or open any data.sah with Open other archive...\n\nArchive: browse, search and preview the files of the archive; extract them; queue changes (add, replace, remove) and apply them to the client with a backup. Nothing is written until you press Apply to client.\n\nPatch builder, Apply & history, Sign & verify: make, check, sign and apply patches; every applied change can be rolled back from Apply & history.\n\nSData: decrypt or encrypt SData files into a folder.\n\nInspect: identify files and compute SHA-256.\n\nKeys: Ctrl+1 to Ctrl+6 switch tabs, Ctrl+F search, Delete queues a removal, Insert adds files, Ctrl+E extracts, Ctrl+Enter applies, Ctrl+Z / Ctrl+Y undo and redo queued changes, F5 reloads. All actions are in the command palette (Ctrl+Shift+P).";
 
-#[derive(Serialize, Deserialize, Default, Clone, Debug, PartialEq)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
+#[serde(default)]
+pub struct KeySettings {
+    pub public_key_path: String,
+    pub public_hex: String,
+    pub check_version: String,
+    /// Only stored when "Remember where my secret key is" is ticked.
+    pub secret_key_path: String,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 #[serde(default)]
 pub struct StudioSettings {
-    /// Column widths: Name, Kind, Size, Details.
+    pub tab: String,
+    pub last_client: Option<String>,
+    pub tree_width: f32,
+    pub preview_width: f32,
+    /// Column widths of the Inspect tab: Name, Kind, Size, Details.
     pub columns: Vec<f32>,
+    pub show_shadowed: bool,
+    pub text_encoding: String,
+    pub extract_keep_times: bool,
+    /// Per client name: signature settings.
+    pub keys: BTreeMap<String, KeySettings>,
 }
 
-const DEFAULT_COLUMNS: [f32; 4] = [180.0, 130.0, 110.0, 420.0];
-
-enum RowState {
-    Loading(TaskHandle<Info>),
-    Ready(Box<Info>),
-    Failed(String),
-}
-
-enum HashState {
-    None,
-    Running(TaskHandle<String>),
-    Done(String),
-    Cancelled,
-    Failed(String),
-}
-
-struct Row {
-    id: u64,
-    path: PathBuf,
-    state: RowState,
-    hash: HashState,
-}
-
-impl Row {
-    fn name(&self) -> String {
-        self.path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| self.path.display().to_string())
+impl Default for StudioSettings {
+    fn default() -> Self {
+        StudioSettings {
+            tab: "archive".into(),
+            last_client: None,
+            tree_width: 220.0,
+            preview_width: 360.0,
+            columns: Vec::new(),
+            show_shadowed: false,
+            text_encoding: String::new(),
+            extract_keep_times: true,
+            keys: BTreeMap::new(),
+        }
     }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Tab {
+    Archive,
+    Inspect,
+}
+
+impl Tab {
+    pub const ALL: [Tab; 2] = [Tab::Archive, Tab::Inspect];
+
+    pub fn key(self) -> &'static str {
+        match self {
+            Tab::Archive => "archive",
+            Tab::Inspect => "inspect",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Tab::Archive => "Archive",
+            Tab::Inspect => "Inspect",
+        }
+    }
+
+    pub fn from_key(k: &str) -> Tab {
+        Tab::ALL.iter().copied().find(|t| t.key() == k).unwrap_or(Tab::Archive)
+    }
+}
+
+/// A dropped folder that holds a `data.sah`: what to do with it.
+struct FolderPrompt {
+    dir: PathBuf,
+    archive_open: bool,
 }
 
 pub struct StudioApp {
-    rows: Vec<Row>,
-    next_id: u64,
-    selected: HashSet<u64>,
+    pub tab: Tab,
+    pub archive: ArchiveView,
+    pub inspect: InspectTab,
+    pub clients: ClientsUi,
+    /// The saved client (or opened folder) the tabs work on.
+    pub current: Option<ClientInfo>,
+    ini_stamp: Option<(PathBuf, u64)>,
+    folder_prompt: Option<FolderPrompt>,
+    was_focused: bool,
+}
+
+type StudioCx<'a> = Cx<'a, StudioSettings>;
+
+fn has_sah(dir: &Path) -> bool {
+    dir.is_dir() && std::fs::read_dir(dir).map(|r| r.flatten().any(|e| e.file_name().to_string_lossy().eq_ignore_ascii_case("data.sah"))).unwrap_or(false)
+}
+
+fn ext_of(p: &Path) -> String {
+    p.extension().map(|e| e.to_string_lossy().to_ascii_lowercase()).unwrap_or_default()
+}
+
+/// A `file:` URL of a folder, for "Show folder" (the same mechanism as Help > Open data folder).
+pub fn file_url(p: &Path) -> String {
+    let s = p.display().to_string().replace('\\', "/").replace(' ', "%20");
+    if s.starts_with('/') { format!("file://{s}") } else { format!("file:///{s}") }
 }
 
 impl StudioApp {
-    /// Adds files (a file opened twice is inspected again).
-    fn add_files(&mut self, paths: Vec<PathBuf>, cx: &mut Cx<'_, StudioSettings>) {
-        for path in paths {
-            if shaiya_ui::fonts::needs_cjk(&path.display().to_string()) {
-                cx.shell.need_cjk_font();
-            }
-            self.rows.retain(|r| r.path != path);
-            let id = self.next_id;
-            self.next_id += 1;
-            let p = path.clone();
-            let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-            let handle = cx.shell.tasks().spawn(TaskSpec { title: format!("Inspecting {name}"), cancellable: true, exclusive: None }, move |job| {
-                shaiya_inspect::inspect(&p, &Options { hash: false }, job)
-            });
-            cx.shell.add_recent(&path);
-            cx.shell.log_info(&format!("opened {}", path.display()));
-            self.rows.push(Row { id, path, state: RowState::Loading(handle), hash: HashState::None });
-        }
-    }
+    // ---------------------------------------------------------------------------------------- client handling
 
-    /// Starts the SHA-256 task of one row (a running one is left alone).
-    fn start_hash(&mut self, id: u64, cx: &mut Cx<'_, StudioSettings>) {
-        let Some(row) = self.rows.iter_mut().find(|r| r.id == id) else { return };
-        if matches!(row.hash, HashState::Running(_)) {
+    /// Opens a saved client by name (a missing folder is reported, not opened).
+    pub fn select_client(&mut self, name: &str, cx: &mut StudioCx<'_>) {
+        if !self.archive.pending.is_empty() {
+            cx.shell.status("Apply or discard the pending changes first");
             return;
         }
-        let path = row.path.clone();
-        let key = path.display().to_string();
-        let name = row.name();
-        let handle = cx.shell.tasks().spawn(TaskSpec { title: format!("Hashing {name}"), cancellable: true, exclusive: Some(key) }, move |job| {
-            job.stage("SHA-256");
-            sha256_file(&path, job).map(|d| to_hex(&d))
-        });
-        row.hash = HashState::Running(handle);
-    }
-
-    /// Hashes the selected rows (all rows when nothing is selected).
-    pub fn hash_selected(&mut self, cx: &mut Cx<'_, StudioSettings>) {
-        let ids: Vec<u64> = if self.selected.is_empty() { self.rows.iter().map(|r| r.id).collect() } else { self.rows.iter().filter(|r| self.selected.contains(&r.id)).map(|r| r.id).collect() };
-        for id in ids {
-            self.start_hash(id, cx);
-        }
-    }
-
-    /// Collects the results of finished tasks.
-    fn poll(&mut self, cx: &mut Cx<'_, StudioSettings>) {
-        for row in &mut self.rows {
-            if let RowState::Loading(h) = &mut row.state {
-                match h.poll() {
-                    None => {}
-                    Some(TaskOutcome::Done(info)) => {
-                        if !info.problems.is_empty() {
-                            for p in &info.problems {
-                                cx.shell.push_activity(shaiya_core::Level::Warn, format!("{}: {p}", row.path.display()));
-                            }
-                        }
-                        row.state = RowState::Ready(Box::new(info));
-                    }
-                    Some(TaskOutcome::Failed(e)) => {
-                        cx.shell.push_activity(shaiya_core::Level::Error, e.to_string());
-                        row.state = RowState::Failed(e.to_string());
-                    }
-                    Some(TaskOutcome::Cancelled) => row.state = RowState::Failed("cancelled".into()),
-                    Some(TaskOutcome::Panicked(m)) => row.state = RowState::Failed(format!("internal error (a bug): {m}")),
-                }
-            }
-            if let HashState::Running(h) = &mut row.hash {
-                match h.poll() {
-                    None => {}
-                    Some(TaskOutcome::Done(hex)) => {
-                        if let RowState::Ready(info) = &mut row.state {
-                            info.sha256 = Some(hex.clone());
-                        }
-                        row.hash = HashState::Done(hex);
-                    }
-                    Some(TaskOutcome::Cancelled) => row.hash = HashState::Cancelled,
-                    Some(TaskOutcome::Failed(e)) => row.hash = HashState::Failed(e.to_string()),
-                    Some(TaskOutcome::Panicked(m)) => row.hash = HashState::Failed(format!("internal error (a bug): {m}")),
-                }
-            }
-        }
-    }
-
-    fn row_text(&self, row: &Row) -> String {
-        let mut s = format!("{}\n", row.path.display());
-        match &row.state {
-            RowState::Ready(info) => s.push_str(&describe(info)),
-            RowState::Failed(e) => s.push_str(&format!("error: {e}")),
-            RowState::Loading(_) => s.push_str("reading..."),
-        }
-        if let HashState::Done(h) = &row.hash {
-            s.push_str(&format!("\nsha256 {h}"));
-        }
-        s
-    }
-
-    fn row_json(&self, row: &Row) -> String {
-        let v = match &row.state {
-            RowState::Ready(info) => serde_json::to_value(info.as_ref()).unwrap_or_default(),
-            RowState::Failed(e) => serde_json::json!({ "path": row.path.display().to_string(), "error": e }),
-            RowState::Loading(_) => serde_json::json!({ "path": row.path.display().to_string() }),
+        let Some(c) = cx.shell.shared().clients.iter().find(|c| c.name.eq_ignore_ascii_case(name)).cloned() else {
+            cx.shell.status(format!("No client named {name}"));
+            return;
         };
-        serde_json::to_string_pretty(&v).unwrap_or_default()
+        let dir = PathBuf::from(&c.path);
+        if !has_sah(&dir) {
+            cx.shell.status(format!("{} was not found at {}", c.name, c.path));
+            return;
+        }
+        self.open_client_dir(&c.name, dir, cx);
+        cx.settings.last_client = Some(c.name);
     }
 
-    /// The rows as the table shows them: (name, kind, size, details, sha256 or status), for tests.
-    pub fn table(&self) -> Vec<(String, String, String, String, String)> {
-        self.rows
-            .iter()
-            .map(|r| {
-                let (kind, size, details) = match &r.state {
-                    RowState::Ready(i) => (format!("{:?}", i.kind), shaiya_core::time::human_size(i.size), describe(i)),
-                    RowState::Failed(e) => ("error".into(), String::new(), e.clone()),
-                    RowState::Loading(_) => ("...".into(), String::new(), String::new()),
-                };
-                let hash = match &r.hash {
-                    HashState::None => String::new(),
-                    HashState::Running(_) => "hashing".into(),
-                    HashState::Done(h) => h.clone(),
-                    HashState::Cancelled => "Cancelled".into(),
-                    HashState::Failed(e) => format!("error: {e}"),
-                };
-                (r.name(), kind, size, details, hash)
-            })
-            .collect()
+    fn open_client_dir(&mut self, name: &str, dir: PathBuf, cx: &mut StudioCx<'_>) {
+        let (check_version, current_version) = clients::version_numbers(&dir);
+        self.current = Some(ClientInfo { name: name.to_string(), dir: dir.clone(), check_version, current_version });
+        self.ini_stamp = None;
+        self.archive.open(OpenSource::Client { name: name.to_string(), dir }, cx);
+        self.set_tab(Tab::Archive, cx);
     }
 
-    /// Number of rows.
-    pub fn len(&self) -> usize {
-        self.rows.len()
+    /// Opens any archive file read only (its own folder's changes are not offered).
+    pub fn open_archive_file(&mut self, path: PathBuf, cx: &mut StudioCx<'_>) {
+        if !self.archive.pending.is_empty() {
+            cx.shell.status("Apply or discard the pending changes first");
+            return;
+        }
+        self.current = None;
+        cx.shell.add_recent(&path);
+        self.archive.open(OpenSource::File(path), cx);
+        self.set_tab(Tab::Archive, cx);
     }
 
-    pub fn is_empty(&self) -> bool {
-        self.rows.is_empty()
+    /// Adds a client folder to the shared list (and opens it when asked).
+    pub fn add_client(&mut self, name: &str, path: &Path, open: bool, cx: &mut StudioCx<'_>) -> shaiya_core::Result<()> {
+        clients::add_client(cx.shell, name, path)?;
+        if open {
+            self.select_client(name, cx);
+        }
+        Ok(())
     }
 
-    /// Cancels the running hash of a row (what the Cancel button in the Activity panel does).
-    pub fn cancel_hash(&mut self, name: &str) {
-        for r in &self.rows {
-            if r.name() == name {
-                if let HashState::Running(h) = &r.hash {
-                    h.cancel();
+    pub fn set_tab(&mut self, tab: Tab, cx: &mut StudioCx<'_>) {
+        self.tab = tab;
+        cx.settings.tab = tab.key().to_string();
+    }
+
+    /// Keeps the current client's `Version.ini` numbers fresh (read again after every change of the archive).
+    fn refresh_ini(&mut self) {
+        let Some(cur) = &mut self.current else { return };
+        let stamp = (cur.dir.clone(), self.archive.changed_counter);
+        if self.ini_stamp.as_ref() != Some(&stamp) {
+            let (c, v) = clients::version_numbers(&cur.dir);
+            cur.check_version = c;
+            cur.current_version = v;
+            self.ini_stamp = Some(stamp);
+        }
+    }
+
+    fn handle_requests(&mut self, requests: Vec<TabRequest>, cx: &mut StudioCx<'_>) {
+        for r in requests {
+            match r {
+                TabRequest::PatchFromPending | TabRequest::PatchFromDiff(_) => {
+                    cx.shell.status("Patch builder is not available yet");
                 }
             }
         }
     }
 
-    /// Starts the hash of the row with this file name (what the row's SHA-256 button does).
-    pub fn hash_row(&mut self, name: &str, cx: &mut Cx<'_, StudioSettings>) {
-        if let Some(id) = self.rows.iter().find(|r| r.name() == name).map(|r| r.id) {
-            self.start_hash(id, cx);
+    // ---------------------------------------------------------------------------------------- drops
+
+    fn dropped(&mut self, paths: Vec<PathBuf>, cx: &mut StudioCx<'_>) {
+        let mut files: Vec<PathBuf> = Vec::new();
+        for p in paths {
+            if p.is_dir() && has_sah(&p) {
+                self.folder_prompt = Some(FolderPrompt { dir: p, archive_open: self.archive.is_open() });
+            } else if ext_of(&p) == "sah" {
+                self.open_archive_file(p, cx);
+            } else {
+                files.push(p);
+            }
+        }
+        if files.is_empty() {
+            return;
+        }
+        if self.tab == Tab::Archive && self.archive.is_open() && self.archive.client_dir().is_some() {
+            self.archive.begin_add(files);
+        } else {
+            self.set_tab(Tab::Inspect, cx);
+            self.inspect.open(files, cx);
         }
     }
 
-    pub fn path_of(&self, name: &str) -> Option<&Path> {
-        self.rows.iter().find(|r| r.name() == name).map(|r| r.path.as_path())
-    }
-}
-
-fn columns(s: &StudioSettings) -> [f32; 4] {
-    let mut c = DEFAULT_COLUMNS;
-    for (i, w) in s.columns.iter().take(4).enumerate() {
-        if w.is_finite() {
-            c[i] = w.clamp(40.0, 2000.0);
+    fn folder_prompt_ui(&mut self, cx: &mut StudioCx<'_>) {
+        let Some(p) = &self.folder_prompt else { return };
+        let (dir, archive_open) = (p.dir.clone(), p.archive_open);
+        let second = if archive_open { "Add its files" } else { "Remember as client" };
+        let c = Confirm {
+            title: "Dropped folder".into(),
+            text: format!("{} holds a data.sah. What should Studio do with it?", dir.display()),
+            buttons: vec!["Open this client".into(), second.into(), "Cancel".into()],
+            danger: None,
+        };
+        match cx.shell.confirm("studio-drop-folder", &c) {
+            None => {}
+            Some(0) => {
+                self.folder_prompt = None;
+                if self.archive.pending.is_empty() {
+                    let name = dir.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| "client".into());
+                    let known = cx.shell.shared().clients.iter().find(|c| Path::new(&c.path) == dir).map(|c| c.name.clone());
+                    match known {
+                        Some(n) => self.select_client(&n, cx),
+                        None => self.open_client_dir(&name, dir, cx),
+                    }
+                } else {
+                    cx.shell.status("Apply or discard the pending changes first");
+                }
+            }
+            Some(1) => {
+                self.folder_prompt = None;
+                if archive_open {
+                    self.archive.begin_add(vec![dir]);
+                } else {
+                    self.clients.open_add(Some(&dir));
+                }
+            }
+            Some(_) => self.folder_prompt = None,
         }
     }
-    c
+
+    // ---------------------------------------------------------------------------------------- drawing
+
+    fn toolbar(&mut self, ui: &mut egui::Ui, cx: &mut StudioCx<'_>) {
+        enum A {
+            Select(String),
+            Add,
+            Other,
+            Manage,
+            Tab(Tab),
+        }
+        let mut act: Option<A> = None;
+        let pal = cx.shell.pal();
+        let clients: Vec<shaiya_ui::Client> = cx.shell.shared().clients.clone();
+        let current = self.current.as_ref().map(|c| c.name.clone());
+        let shown = match (&current, self.archive.source_name()) {
+            (Some(n), _) => n.clone(),
+            (None, Some(f)) => f,
+            (None, None) => "(none)".to_string(),
+        };
+        ui.horizontal_wrapped(|ui| {
+            ui.label("Client");
+            egui::ComboBox::from_id_salt("studio-client").selected_text(shown).width(220.0).show_ui(ui, |ui| {
+                for c in &clients {
+                    let found = has_sah(Path::new(&c.path));
+                    let label = clients::picker_label(c, found);
+                    let text = if found { RichText::new(label) } else { RichText::new(label).color(pal.weak) };
+                    if ui.add_enabled(found, egui::Button::selectable(current.as_deref() == Some(c.name.as_str()), text)).clicked() {
+                        act = Some(A::Select(c.name.clone()));
+                        ui.close();
+                    }
+                }
+                if !clients.is_empty() {
+                    ui.separator();
+                }
+                if ui.button("Add client folder...").clicked() {
+                    act = Some(A::Add);
+                    ui.close();
+                }
+                if ui.button("Open other archive...").clicked() {
+                    act = Some(A::Other);
+                    ui.close();
+                }
+            });
+            if ui.button("Manage...").clicked() {
+                act = Some(A::Manage);
+            }
+            ui.separator();
+            for t in Tab::ALL {
+                if ui.selectable_label(self.tab == t, t.label()).clicked() {
+                    act = Some(A::Tab(t));
+                }
+            }
+        });
+        match act {
+            Some(A::Select(n)) => self.select_client(&n, cx),
+            Some(A::Add) => {
+                let picked = cx.shell.pick_folder("client");
+                self.clients.open_add(picked.as_deref());
+            }
+            Some(A::Other) => {
+                if let Some(p) = cx.shell.pick_file("open-archive", &[("SAH index", &["sah"])]) {
+                    self.open_archive_file(p, cx);
+                }
+            }
+            Some(A::Manage) => self.clients.open_manage(cx.shell),
+            Some(A::Tab(t)) => self.set_tab(t, cx),
+            None => {}
+        }
+    }
+
+    fn tab_keys(&mut self, ctx: &egui::Context, cx: &mut StudioCx<'_>) {
+        if ctx.egui_wants_keyboard_input() {
+            return;
+        }
+        let keys = [Key::Num1, Key::Num2, Key::Num3, Key::Num4, Key::Num5, Key::Num6];
+        for (i, k) in keys.iter().enumerate() {
+            if ctx.input(|inp| inp.modifiers.command && !inp.modifiers.shift && inp.key_pressed(*k)) {
+                if let Some(t) = Tab::ALL.get(i) {
+                    self.set_tab(*t, cx);
+                }
+            }
+        }
+    }
 }
 
 impl ToolApp for StudioApp {
@@ -240,143 +363,145 @@ impl ToolApp for StudioApp {
         }
     }
 
-    fn new(_cx: &mut Cx<'_, StudioSettings>) -> StudioApp {
-        StudioApp { rows: Vec::new(), next_id: 1, selected: HashSet::new() }
+    fn new(cx: &mut StudioCx<'_>) -> StudioApp {
+        let mut app = StudioApp {
+            tab: Tab::from_key(&cx.settings.tab),
+            archive: ArchiveView::new(),
+            inspect: InspectTab::new(),
+            clients: ClientsUi::default(),
+            current: None,
+            ini_stamp: None,
+            folder_prompt: None,
+            was_focused: true,
+        };
+        app.archive.show_shadowed = cx.settings.show_shadowed;
+        // the last used client opens at start, as a task; a client whose folder is gone is not opened
+        if let Some(name) = cx.settings.last_client.clone() {
+            app.select_client(&name, cx);
+        }
+        app
     }
 
-    fn ui(&mut self, ui: &mut egui::Ui, cx: &mut Cx<'_, StudioSettings>) {
-        self.poll(cx);
-        let pal = cx.shell.pal();
-        if self.rows.is_empty() {
-            cx.shell.empty_state(
-                ui,
-                "Drop files here or press Ctrl+O. Studio identifies Shaiya files (data.sah, data.saf, SData, patches, game.exe) and hashes them. Archive browsing and patches arrive in the next version.",
-            );
-            return;
+    fn ui(&mut self, ui: &mut egui::Ui, cx: &mut StudioCx<'_>) {
+        let ctx = ui.ctx().clone();
+        // the client list is re-read when the window gains focus (other toolkit programs may have changed it)
+        let focused = ctx.input(|i| i.viewport().focused).unwrap_or(true);
+        if focused && !self.was_focused {
+            clients::reload(cx.shell);
         }
-        // toolbar
-        let mut act: Option<&'static str> = None;
-        ui.horizontal(|ui| {
-            if ui.button("Compute SHA-256").on_hover_text("For the selected rows, or all rows when none is selected").clicked() {
-                act = Some("hash");
-            }
-            if ui.button("Remove from list").clicked() {
-                act = Some("remove");
-            }
-            if ui.button("Copy as text").clicked() {
-                act = Some("copy-text");
-            }
-            if ui.button("Copy as JSON").clicked() {
-                act = Some("copy-json");
-            }
-        });
+        self.was_focused = focused;
+        self.refresh_ini();
+        self.toolbar(ui, cx);
         ui.separator();
-        let cols = columns(cx.settings);
-        let header = ["Name", "Kind", "Size", "Details", "SHA-256"];
-        ui.horizontal(|ui| {
-            for (i, h) in header.iter().enumerate() {
-                let w = if i < 4 { cols[i] } else { 520.0 };
-                ui.add_sized([w, 18.0], egui::Label::new(RichText::new(*h).strong()));
-            }
-        });
-        let mut hash_click: Option<u64> = None;
-        let mut select: Option<(u64, bool)> = None;
-        let count = self.rows.len();
-        egui::ScrollArea::both().auto_shrink([false, false]).show_rows(ui, 20.0, count, |ui, range| {
-            for row in &self.rows[range] {
-                let selected = self.selected.contains(&row.id);
-                ui.horizontal(|ui| {
-                    let (kind, size, details, details_color) = match &row.state {
-                        RowState::Ready(i) => (format!("{:?}", i.kind), shaiya_core::time::human_size(i.size), describe(i), if i.problems.is_empty() { pal.text } else { pal.warning }),
-                        RowState::Failed(e) => ("error".to_string(), String::new(), e.clone(), pal.error),
-                        RowState::Loading(_) => ("...".to_string(), String::new(), "reading...".to_string(), pal.weak),
-                    };
-                    let name = ui.add_sized([cols[0], 20.0], egui::Button::selectable(selected, row.name()).truncate());
-                    if name.clicked() {
-                        select = Some((row.id, ui.input(|i| i.modifiers.command)));
+        self.tab_keys(&ctx, cx);
+        let mut requests = Vec::new();
+        match self.tab {
+            Tab::Archive => requests = self.archive.ui(ui, cx),
+            Tab::Inspect => self.inspect.ui(ui, cx),
+        }
+        // the archive keeps polling its tasks while another tab is shown
+        if self.tab != Tab::Archive {
+            self.archive.poll(cx);
+        }
+        let actions = self.clients.ui(&ctx, cx, &mut self.archive);
+        for a in actions {
+            match a {
+                ClientsAction::Open(n) => self.select_client(&n, cx),
+                ClientsAction::Reload(dir) => {
+                    if self.archive.client_dir() == Some(dir.as_path()) || self.archive.source_dir_is(&dir) {
+                        self.archive.reopen(cx);
                     }
-                    ui.add_sized([cols[1], 20.0], egui::Label::new(kind).truncate());
-                    ui.add_sized([cols[2], 20.0], egui::Label::new(size).truncate());
-                    ui.add_sized([cols[3], 20.0], egui::Label::new(RichText::new(details).color(details_color)).truncate());
-                    match &row.hash {
-                        HashState::None => {
-                            if ui.small_button("SHA-256").clicked() {
-                                hash_click = Some(row.id);
-                            }
-                        }
-                        HashState::Running(_) => {
-                            ui.label(RichText::new("hashing...").color(pal.weak));
-                        }
-                        HashState::Done(h) => {
-                            ui.add(egui::Label::new(RichText::new(h).monospace()).selectable(true));
-                        }
-                        HashState::Cancelled => {
-                            ui.label(RichText::new("Cancelled").color(pal.warning));
-                            if ui.small_button("Retry").clicked() {
-                                hash_click = Some(row.id);
-                            }
-                        }
-                        HashState::Failed(e) => {
-                            ui.label(RichText::new(e).color(pal.error));
-                        }
-                    }
-                });
-            }
-        });
-        if let Some((id, add)) = select {
-            if !add {
-                self.selected.clear();
-            }
-            if !self.selected.remove(&id) || !add {
-                self.selected.insert(id);
+                }
             }
         }
-        if let Some(id) = hash_click {
-            self.start_hash(id, cx);
-        }
-        match act {
-            Some("hash") => self.hash_selected(cx),
-            Some("remove") => {
-                let sel = std::mem::take(&mut self.selected);
-                self.rows.retain(|r| !sel.contains(&r.id));
+        self.folder_prompt_ui(cx);
+        self.handle_requests(requests, cx);
+    }
+
+    fn open(&mut self, paths: Vec<PathBuf>, cx: &mut StudioCx<'_>) {
+        self.dropped(paths, cx);
+    }
+
+    fn menu(&mut self, menu: Menu, ui: &mut egui::Ui, cx: &mut StudioCx<'_>) {
+        match menu {
+            Menu::File => {
+                ui.separator();
+                if ui.button("Add client folder...").clicked() {
+                    ui.close();
+                    let picked = cx.shell.pick_folder("client");
+                    self.clients.open_add(picked.as_deref());
+                }
+                if ui.button("Manage client folders...").clicked() {
+                    ui.close();
+                    self.clients.open_manage(cx.shell);
+                }
             }
-            Some(kind @ ("copy-text" | "copy-json")) => {
-                let rows: Vec<&Row> = self.rows.iter().filter(|r| self.selected.is_empty() || self.selected.contains(&r.id)).collect();
-                let text = if kind == "copy-text" { rows.iter().map(|r| self.row_text(r)).collect::<Vec<_>>().join("\n\n") } else { format!("[{}]", rows.iter().map(|r| self.row_json(r)).collect::<Vec<_>>().join(",\n")) };
-                cx.shell.ctx().copy_text(text);
-                cx.shell.status("Copied");
+            Menu::Edit => {
+                ui.separator();
+                if ui.add_enabled(!self.inspect.is_empty(), egui::Button::new("Hash selected")).clicked() {
+                    ui.close();
+                    self.inspect.hash_selected(cx);
+                }
             }
             _ => {}
         }
     }
 
-    fn open(&mut self, paths: Vec<PathBuf>, cx: &mut Cx<'_, StudioSettings>) {
-        self.add_files(paths, cx);
+    fn commands(&self) -> Vec<Command> {
+        let mut v: Vec<Command> = Vec::new();
+        for (i, t) in Tab::ALL.iter().enumerate() {
+            v.push(Command {
+                id: match t {
+                    Tab::Archive => "tab-archive",
+                    Tab::Inspect => "tab-inspect",
+                },
+                label: format!("Go to {}", t.label()),
+                shortcut: Some(egui::KeyboardShortcut::new(Modifiers::COMMAND, [Key::Num1, Key::Num2, Key::Num3, Key::Num4, Key::Num5, Key::Num6][i])),
+                enabled: true,
+            });
+        }
+        v.extend(self.archive.commands());
+        v.push(Command { id: "hash-selected", label: "Hash selected files".into(), shortcut: None, enabled: !self.inspect.is_empty() });
+        v
     }
 
-    fn menu(&mut self, menu: Menu, ui: &mut egui::Ui, cx: &mut Cx<'_, StudioSettings>) {
-        if menu == Menu::Edit {
-            ui.separator();
-            if ui.add_enabled(!self.rows.is_empty(), egui::Button::new("Hash selected")).clicked() {
-                ui.close();
-                self.hash_selected(cx);
+    fn run_command(&mut self, id: &str, cx: &mut StudioCx<'_>) {
+        match id {
+            "tab-archive" => self.set_tab(Tab::Archive, cx),
+            "tab-inspect" => self.set_tab(Tab::Inspect, cx),
+            "hash-selected" => self.inspect.hash_selected(cx),
+            other => {
+                self.set_tab(Tab::Archive, cx);
+                let requests = self.archive.run_command(other, cx);
+                self.handle_requests(requests, cx);
             }
         }
     }
 
-    fn commands(&self) -> Vec<Command> {
-        vec![Command { id: "hash-selected", label: "Hash selected files".into(), shortcut: None, enabled: !self.rows.is_empty() }]
+    fn undo(&mut self, _cx: &mut StudioCx<'_>) -> bool {
+        self.tab == Tab::Archive && self.archive.undo()
     }
 
-    fn run_command(&mut self, id: &str, cx: &mut Cx<'_, StudioSettings>) {
-        if id == "hash-selected" {
-            self.hash_selected(cx);
+    fn redo(&mut self, _cx: &mut StudioCx<'_>) -> bool {
+        self.tab == Tab::Archive && self.archive.redo()
+    }
+
+    fn unsaved(&self) -> Vec<String> {
+        self.archive.unsaved()
+    }
+
+    fn save_all(&mut self, cx: &mut StudioCx<'_>) -> Result<(), String> {
+        if self.archive.unsaved().is_empty() {
+            return Ok(());
         }
+        self.set_tab(Tab::Archive, cx);
+        Err("apply or discard the pending changes in the Archive tab".to_string())
     }
 
-    fn prefs(&mut self, ui: &mut egui::Ui, cx: &mut Cx<'_, StudioSettings>) {
-        ui.label("Column widths");
-        let mut cols = columns(cx.settings);
+    fn prefs(&mut self, ui: &mut egui::Ui, cx: &mut StudioCx<'_>) {
+        ui.checkbox(&mut cx.settings.extract_keep_times, "Extracted files keep the archive's pack time");
+        ui.label("Inspect tab column widths");
+        let mut cols = inspect::columns(cx.settings);
         for (i, name) in ["Name", "Kind", "Size", "Details"].iter().enumerate() {
             ui.horizontal(|ui| {
                 ui.label(*name);

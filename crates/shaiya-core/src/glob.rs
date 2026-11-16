@@ -2,7 +2,7 @@
 //!
 //! - `*` and `?` stay inside a path segment, `**` as a whole segment crosses segments (and matches zero of them);
 //! - `[a-z]`, `[!x]` character classes;
-//! - a pattern without `/` matches the file name in any folder; with a `/` it is anchored at the root of the path;
+//! - a pattern without `/` matches the file name in any folder; with a `/` (also a leading one) it is anchored at the root of the path;
 //! - a trailing `/` means "everything under that folder";
 //! - `\` is read as `/` in patterns and paths. No regular expressions.
 
@@ -129,7 +129,8 @@ impl Pattern {
         }
         let trailing = norm.ends_with('/');
         let body = norm.trim_start_matches('/');
-        let has_slash = body.contains('/');
+        // a leading `/` anchors a one-segment pattern at the root (`/top.txt` is the root file, not any file of that name)
+        let has_slash = norm.contains('/');
         let mut segs: Vec<Seg> = Vec::new();
         for s in body.split('/').filter(|s| !s.is_empty()) {
             segs.push(parse_segment(s, text)?);
@@ -234,6 +235,8 @@ mod tests {
             ("a*", "a"),
             // anchored patterns
             ("Item/Item.SData", "item/item.sdata"),
+            ("/top.txt", "top.txt"),
+            ("/Item/Item.SData", "item/item.sdata"),
             ("Character/*/*.3DC", "Character/Human/body.3dc"),
             ("Character/*/*.3dc", "CHARACTER/HUMAN/BODY.3DC"),
             ("item/*", "Item/Item.SData"),
@@ -279,6 +282,7 @@ mod tests {
             ("Item/Item.SData", "x/Item/Item.SData"),
             ("Item/", "Item"),
             ("Item/", "Items/a"),
+            ("/top.txt", "sub/top.txt"),
             ("item/*", "item"),
             ("[a-c].txt", "d.txt"),
             ("[!a-c].txt", "b.txt"),

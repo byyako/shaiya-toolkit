@@ -1,6 +1,6 @@
 [package]
 name = "shaiya-studio"
-description = "Shaiya Archive & Patch Studio: inspect Shaiya files (the T0 shell; archive browsing and patches arrive next)"
+description = "Shaiya Archive & Patch Studio: browse and edit client archives with a backup, build, sign and apply patches, SData shortcuts, file inspector"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -17,8 +17,12 @@ name = "shaiya-studio"
 path = "src/main.rs"
 
 [dependencies]
-shaiya-core = { workspace = true }
+shaiya-core = { workspace = true, features = ["config"] }
+shaiya-archive = { workspace = true }
+shaiya-patch = { workspace = true }
+shaiya-seed = { workspace = true }
 shaiya-inspect = { workspace = true }
+shaiya-clientdata = { workspace = true }
 shaiya-ui = { workspace = true }
 egui = { workspace = true }
 serde = { workspace = true }
