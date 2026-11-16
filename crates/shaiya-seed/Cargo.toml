@@ -1,6 +1,6 @@
 [package]
 name = "shaiya-seed"
-description = "KISA SEED as used by Shaiya SData files: decrypt, encrypt, CRC and a wrapper that round-trips byte for byte"
+description = "KISA SEED as used by Shaiya SData files: decrypt, encrypt, CRC, a wrapper that round-trips byte for byte, and batch work over folders and archives"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -11,5 +11,13 @@ publish.workspace = true
 [lints]
 workspace = true
 
+[features]
+# `#[derive(Serialize)]` on the batch result types (the command line's --json).
+serde = ["dep:serde"]
+
 [dependencies]
 shaiya-core = { workspace = true }
+serde = { workspace = true, optional = true }
+
+[dev-dependencies]
+shaiya-testkit = { workspace = true }

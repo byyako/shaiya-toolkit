@@ -5,6 +5,7 @@
 //! 16 bytes and encrypted block by block. [`Wrapper`] remembers the parts of a file that are not the plaintext (header padding and the
 //! decrypted bytes after the plaintext in the last block), so [`wrap`] can reproduce an unchanged file exactly.
 
+pub mod batch;
 mod tables;
 
 use shaiya_core::{Error, Result};

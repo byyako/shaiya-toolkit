@@ -2701,7 +2701,9 @@ dependencies = [
 name = "shaiya-seed"
 version = "0.1.0"
 dependencies = [
+ "serde",
  "shaiya-core",
+ "shaiya-testkit",
 ]
 
 [[package]]
