@@ -26,6 +26,9 @@ serde_json = { workspace = true }
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.52", features = ["Win32_Foundation", "Win32_System_Console"] }
 
+[build-dependencies]
+shaiya-build = { workspace = true }
+
 [dev-dependencies]
 shaiya-testkit = { workspace = true }
 shaiya-seed = { workspace = true }

@@ -1,0 +1,15 @@
+[package]
+name = "shaiya-build"
+description = "Build-script helper for the Shaiya toolkit programs: Windows resources (icon, version info, manifest), git hash, target"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+embed-resource = { workspace = true }

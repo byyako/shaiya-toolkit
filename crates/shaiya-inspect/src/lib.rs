@@ -149,6 +149,51 @@ fn sibling_with_ext(path: &Path, ext: &str) -> Option<PathBuf> {
         .find(|p| p.is_file() && p.file_stem().is_some_and(|s| s.to_string_lossy().eq_ignore_ascii_case(&stem)) && has_ext(p, ext))
 }
 
+/// `1,234,567`
+pub fn group(n: u64) -> String {
+    let s = n.to_string();
+    let mut out = String::new();
+    for (i, c) in s.chars().enumerate() {
+        if i > 0 && (s.len() - i) % 3 == 0 {
+            out.push(',');
+        }
+        out.push(c);
+    }
+    out
+}
+
+/// One line saying what the file is, the way `shaiya info` and Studio show it
+/// (`SData, SEED-encrypted, plaintext 4,512,768 bytes, checksum OK`).
+pub fn describe(i: &Info) -> String {
+    let size = group(i.size);
+    match &i.details {
+        Details::Sah { version, files, dirs, free_entries, data_end, .. } => format!(
+            "SAH index, version {version}, {} files in {} folders, {} free entries, data ends at {}",
+            group(*files as u64),
+            group(*dirs as u64),
+            group(*free_entries as u64),
+            group(*data_end)
+        ),
+        Details::Saf { index_files, live_bytes } => match (index_files, live_bytes) {
+            (Some(n), Some(l)) => format!("SAF data, {size} bytes, its index lists {} files using {} bytes", group(*n as u64), group(*l)),
+            _ => format!("SAF data, {size} bytes (no .sah next to it)"),
+        },
+        Details::SdataSeed { plain_size, crc_ok, .. } => {
+            format!("SData, SEED-encrypted, plaintext {} bytes, checksum {}", group(*plain_size as u64), if *crc_ok { "OK" } else { "FAILED" })
+        }
+        Details::SdataPlain => format!("SData, plain (not encrypted), {size} bytes"),
+        Details::Patch { files, loose, removals, signature_file } => format!(
+            "Patch, {files} archive files, {loose} loose files, {removals} removals, signature file {}, {size} bytes",
+            if *signature_file { "present" } else { "not found" }
+        ),
+        Details::PatchSignature { hex_len } => format!("Patch signature, {hex_len} hex digits"),
+        Details::Pe { machine_name, timestamp_utc, .. } => {
+            format!("Windows program ({machine_name}), linked {} UTC, {size} bytes", timestamp_utc.replace('T', " ").trim_end_matches('Z'))
+        }
+        Details::Unknown { magic_hex } => format!("Unknown file type, starts with {magic_hex}, {size} bytes"),
+    }
+}
+
 pub fn inspect(path: &Path, opts: &Options, job: &Job) -> Result<Info> {
     let mut f = File::open(path).map_err(|e| Error::io(path, e))?;
     let size = f.metadata().map_err(|e| Error::io(path, e))?.len();
@@ -410,6 +455,15 @@ mod tests {
         let e = d.path().join("empty");
         std::fs::write(&e, b"").unwrap();
         assert_eq!(info(&e).kind, Kind::Unknown);
+    }
+
+    #[test]
+    fn grouping_and_descriptions() {
+        assert_eq!((group(0), group(999), group(1000), group(1_991_954_802)), ("0".into(), "999".into(), "1,000".into(), "1,991,954,802".into()));
+        let d = TempDir::new("inspect-describe");
+        let p = d.path().join("game.exe");
+        std::fs::write(&p, pe_stub(0x014C, 1_272_251_564)).unwrap();
+        assert_eq!(describe(&info(&p)), "Windows program (x86), linked 2010-04-26 03:12:44 UTC, 512 bytes");
     }
 
     #[test]

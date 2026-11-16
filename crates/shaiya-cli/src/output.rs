@@ -48,30 +48,9 @@ pub fn error_json(e: &shaiya_core::Error) -> serde_json::Value {
     serde_json::json!({ "error": { "kind": kind, "message": e.to_string(), "file": file, "offset": offset } })
 }
 
-/// `1,234,567`
-pub fn group(n: u64) -> String {
-    let s = n.to_string();
-    let mut out = String::new();
-    for (i, c) in s.chars().enumerate() {
-        if i > 0 && (s.len() - i) % 3 == 0 {
-            out.push(',');
-        }
-        out.push(c);
-    }
-    out
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn thousands_groups() {
-        assert_eq!(group(0), "0");
-        assert_eq!(group(999), "999");
-        assert_eq!(group(1000), "1,000");
-        assert_eq!(group(1_991_954_802), "1,991,954,802");
-    }
 
     #[test]
     fn error_objects() {

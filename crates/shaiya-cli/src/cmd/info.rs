@@ -1,10 +1,10 @@
 //! `shaiya info [--hash] <PATH>...`
 
-use crate::output::{error_json, group, Report};
+use crate::output::{error_json, Report};
 use crate::Ctx;
 use serde::Serialize;
 use shaiya_core::{Error, Job};
-use shaiya_inspect::{Details, Info, Kind, Options};
+use shaiya_inspect::{describe, group, Info, Kind, Options};
 use std::io::Write;
 use std::path::PathBuf;
 
@@ -24,36 +24,6 @@ pub struct InfoReport {
     /// Paths that could not be read at all (only present when there are some).
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub errors: Vec<serde_json::Value>,
-}
-
-fn describe(i: &Info) -> String {
-    let size = group(i.size);
-    match &i.details {
-        Details::Sah { version, files, dirs, free_entries, data_end, .. } => format!(
-            "SAH index, version {version}, {} files in {} folders, {} free entries, data ends at {}",
-            group(*files as u64),
-            group(*dirs as u64),
-            group(*free_entries as u64),
-            group(*data_end)
-        ),
-        Details::Saf { index_files, live_bytes } => match (index_files, live_bytes) {
-            (Some(n), Some(l)) => format!("SAF data, {size} bytes, its index lists {} files using {} bytes", group(*n as u64), group(*l)),
-            _ => format!("SAF data, {size} bytes (no .sah next to it)"),
-        },
-        Details::SdataSeed { plain_size, crc_ok, .. } => {
-            format!("SData, SEED-encrypted, plaintext {} bytes, checksum {}", group(*plain_size as u64), if *crc_ok { "OK" } else { "FAILED" })
-        }
-        Details::SdataPlain => format!("SData, plain (not encrypted), {size} bytes"),
-        Details::Patch { files, loose, removals, signature_file } => format!(
-            "Patch, {files} archive files, {loose} loose files, {removals} removals, signature file {}, {size} bytes",
-            if *signature_file { "present" } else { "not found" }
-        ),
-        Details::PatchSignature { hex_len } => format!("Patch signature, {hex_len} hex digits"),
-        Details::Pe { machine_name, timestamp_utc, .. } => {
-            format!("Windows program ({machine_name}), linked {} UTC, {size} bytes", timestamp_utc.replace('T', " ").trim_end_matches('Z'))
-        }
-        Details::Unknown { magic_hex } => format!("Unknown file type, starts with {magic_hex}, {size} bytes"),
-    }
 }
 
 impl Report for InfoReport {
@@ -119,6 +89,7 @@ mod tests {
 
     #[test]
     fn human_lines_follow_the_documented_shape() {
+        use shaiya_inspect::Details;
         let info = Info {
             path: "x/data.sah".into(),
             size: 771_851,

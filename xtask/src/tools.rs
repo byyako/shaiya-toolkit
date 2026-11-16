@@ -1,0 +1,24 @@
+//! The programs of the toolkit. Every tool of a later spec adds one entry here.
+
+#[allow(dead_code)]
+pub struct Tool {
+    pub package: &'static str,
+    pub bin: &'static str,
+    pub asset: &'static str,
+    pub title: &'static str,
+    pub gui: bool,
+    pub bundle_id: Option<&'static str>,
+}
+
+#[allow(dead_code)] // used by `dist` (next step)
+pub const TOOLS: &[Tool] = &[
+    Tool { package: "shaiya-cli", bin: "shaiya", asset: "shaiya", title: "Shaiya command line", gui: false, bundle_id: None },
+    Tool {
+        package: "shaiya-studio",
+        bin: "shaiya-studio",
+        asset: "shaiya-studio",
+        title: "Shaiya Archive & Patch Studio",
+        gui: true,
+        bundle_id: Some("io.github.byyako.shaiya-studio"),
+    },
+];

@@ -1,0 +1,15 @@
+[package]
+name = "xtask"
+description = "Development tasks of the Shaiya toolkit (cargo xtask ...)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+miniz_oxide = { workspace = true }
