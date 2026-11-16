@@ -55,5 +55,9 @@ opt-level = 3
 opt-level = 3
 [profile.release.package.shaiya-archive]
 opt-level = 3
+[profile.release.package.shaiya-patch]
+opt-level = 3
+[profile.release.package.miniz_oxide]        # patch deflate
+opt-level = 3
 [profile.dev.package.shaiya-seed]            # keeps the opt-in tests over real SData quick
 opt-level = 3
