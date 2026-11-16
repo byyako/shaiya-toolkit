@@ -1,0 +1,16 @@
+[package]
+name = "shaiya-core"
+description = "Shared basics for the Shaiya toolkit: errors, jobs and progress, safe file writing, a bounds-checked reader, text encodings, hashing, UTC time"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+encoding_rs = { workspace = true }
+sha2 = { workspace = true }

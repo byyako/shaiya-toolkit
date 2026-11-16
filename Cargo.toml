@@ -1,0 +1,53 @@
+[workspace]
+resolver = "2"
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+authors = ["byyako"]
+repository = "https://github.com/byyako/shaiya-toolkit"
+publish = false
+
+[workspace.lints.rust]
+unsafe_code = "deny"
+
+[workspace.dependencies]
+# internal crates
+shaiya-core = { path = "crates/shaiya-core" }
+shaiya-seed = { path = "crates/shaiya-seed" }
+shaiya-archive = { path = "crates/shaiya-archive" }
+shaiya-patch = { path = "crates/shaiya-patch" }
+shaiya-clientdata = { path = "crates/shaiya-clientdata" }
+shaiya-inspect = { path = "crates/shaiya-inspect" }
+shaiya-ui = { path = "crates/shaiya-ui" }
+shaiya-testkit = { path = "crates/shaiya-testkit" }
+shaiya-build = { path = "crates/shaiya-build" }
+# external crates (versions match the client repo's Cargo.lock where it has them)
+encoding_rs = "0.8"
+sha2 = "0.10"
+zip = { version = "2.2", default-features = false, features = ["deflate"] }
+ed25519-dalek = { version = "2.1", features = ["rand_core"] }
+rand_core = { version = "0.6", features = ["getrandom"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+clap = { version = "4.5", default-features = false, features = ["derive", "std", "help", "usage", "error-context"] }
+embed-resource = "3"
+windows-sys = "0.52"
+miniz_oxide = "0.8"
+eframe = { version = "=0.37.0", default-features = false, features = ["wgpu", "default_fonts", "clipboard", "links"] }
+egui = "=0.37.0"
+rfd = { version = "=0.18.0", default-features = false }
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = true
+panic = "unwind"          # the GUI catches task panics; the CLI maps a panic to exit 5
+
+[profile.dev.package.sha2]
+opt-level = 3
+[profile.release.package.sha2]
+opt-level = 3
