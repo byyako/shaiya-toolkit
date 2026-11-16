@@ -1,0 +1,90 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Build and pack only; do not create a release"
+        type: boolean
+        default: true
+
+env:
+  CARGO_TERM_COLOR: never
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            platform: windows-x86_64
+            targets: x86_64-pc-windows-msvc
+            dist_targets: --target x86_64-pc-windows-msvc
+          # older glibc for wider Linux support
+          - os: ubuntu-22.04
+            platform: linux-x86_64
+            targets: x86_64-unknown-linux-gnu
+            dist_targets: --target x86_64-unknown-linux-gnu
+          - os: macos-latest
+            platform: macos-universal
+            targets: aarch64-apple-darwin,x86_64-apple-darwin
+            dist_targets: --target aarch64-apple-darwin --target x86_64-apple-darwin
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.targets }}
+      - uses: Swatinem/rust-cache@v2
+      - name: System libraries
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libxkbcommon-dev libwayland-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libx11-dev pkg-config
+      - name: Test
+        run: cargo test --workspace --locked
+      - name: Pack (the tag must equal the workspace version)
+        run: cargo xtask dist --platform ${{ matrix.platform }} ${{ matrix.dist_targets }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist-${{ matrix.platform }}
+          path: |
+            dist/*.zip
+            dist/SHA256SUMS-*.txt
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    # a tag push publishes a draft; a manual run only when dry_run is switched off
+    if: github.event_name == 'push' || github.event.inputs.dry_run == 'false'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Checksums and notes
+        run: |
+          cd dist
+          cat SHA256SUMS-*.txt | sort -k2 > SHA256SUMS.txt
+          rm SHA256SUMS-*.txt
+          cd ..
+          version="${GITHUB_REF_NAME#v}"
+          cargo xtask release-notes "$version" > notes.md
+      - name: Build provenance (public repositories only)
+        if: ${{ !github.event.repository.private }}
+        uses: actions/attest-build-provenance@v1
+        with:
+          subject-path: dist/*.zip
+      - name: Draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" --draft --title "shaiya-toolkit ${GITHUB_REF_NAME#v}" --notes-file notes.md dist/*.zip dist/SHA256SUMS.txt
