@@ -1170,7 +1170,14 @@ impl<A: ToolApp> ShellApp<A> {
                 ui.label(format!("Releases: {RELEASES_URL}"));
                 ui.separator();
                 ui.label(RichText::new("Third-party notices").strong());
-                egui::ScrollArea::vertical().max_height(220.0).show(ui, |ui| ui.add(egui::Label::new(RichText::new(THIRD_PARTY_NOTICES).monospace().small()).selectable(true)));
+                // the notices file is long (every dependency's licence text): draw only the visible lines
+                static LINES: std::sync::OnceLock<Vec<&'static str>> = std::sync::OnceLock::new();
+                let lines = LINES.get_or_init(|| THIRD_PARTY_NOTICES.lines().collect());
+                egui::ScrollArea::both().max_height(220.0).auto_shrink([false, false]).show_rows(ui, 14.0, lines.len(), |ui, range| {
+                    for l in &lines[range] {
+                        ui.add(egui::Label::new(RichText::new(*l).monospace().small()).extend());
+                    }
+                });
             });
             self.about_open = open;
         }

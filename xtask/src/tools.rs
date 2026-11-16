@@ -10,7 +10,6 @@ pub struct Tool {
     pub bundle_id: Option<&'static str>,
 }
 
-#[allow(dead_code)] // used by `dist` (next step)
 pub const TOOLS: &[Tool] = &[
     Tool { package: "shaiya-cli", bin: "shaiya", asset: "shaiya", title: "Shaiya command line", gui: false, bundle_id: None },
     Tool {

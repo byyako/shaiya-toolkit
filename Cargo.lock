@@ -4030,6 +4030,9 @@ name = "xtask"
 version = "0.1.0"
 dependencies = [
  "miniz_oxide 0.9.1",
+ "serde_json",
+ "shaiya-core",
+ "zip",
 ]
 
 [[package]]
