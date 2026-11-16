@@ -112,6 +112,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "shaiya-archive"
+version = "0.1.0"
+dependencies = [
+ "encoding_rs",
+ "shaiya-core",
+ "shaiya-testkit",
+]
+
+[[package]]
 name = "shaiya-core"
 version = "0.1.0"
 dependencies = [
