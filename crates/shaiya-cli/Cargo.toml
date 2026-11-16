@@ -17,7 +17,10 @@ name = "shaiya"
 path = "src/main.rs"
 
 [dependencies]
-shaiya-core = { workspace = true }
+shaiya-core = { workspace = true, features = ["config"] }
+shaiya-archive = { workspace = true, features = ["serde"] }
+shaiya-patch = { workspace = true, features = ["serde"] }
+shaiya-seed = { workspace = true, features = ["serde"] }
 shaiya-inspect = { workspace = true }
 clap = { workspace = true }
 serde = { workspace = true }

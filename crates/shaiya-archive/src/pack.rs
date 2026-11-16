@@ -18,6 +18,8 @@ pub struct PackOptions {
     /// Keep `Thumbs.db`, `desktop.ini`, `.DS_Store` and `._*` files.
     pub include_all: bool,
     pub existing: Existing,
+    /// Validate and count, write nothing.
+    pub dry_run: bool,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -115,6 +117,17 @@ pub fn pack_folder(src: &Path, out_sah: &Path, opts: &PackOptions, job: &Job) ->
         }
     }
     let total: u64 = files.iter().map(|f| f.3).sum();
+    if opts.dry_run {
+        let mut idx = Index::new();
+        for (raw, rel, _, len, version) in &files {
+            let name = raw.rsplit(|&b| b == b'/').next().unwrap_or(raw).to_vec();
+            idx.put(rel, Entry { name, offset: 0, length: *len as u32, version: *version })?;
+        }
+        report.files = files.len();
+        report.dirs = idx.dir_count();
+        report.bytes = total;
+        return Ok(report);
+    }
     job.total(Some(total), Unit::Bytes);
     let (tmp_sah, tmp_saf) = (temp_next_to(&out_sah), temp_next_to(&out_saf));
     let built = (|| -> Result<Index> {
@@ -167,7 +180,7 @@ mod tests {
     use shaiya_testkit::TempDir;
 
     fn opts() -> PackOptions {
-        PackOptions { sah_version: 0, timestamp: Some(1_274_079_412), filter: Filter::default(), include_all: false, existing: Existing::Refuse }
+        PackOptions { sah_version: 0, timestamp: Some(1_274_079_412), filter: Filter::default(), include_all: false, existing: Existing::Refuse, dry_run: false }
     }
 
     fn tree(d: &Path) -> PathBuf {

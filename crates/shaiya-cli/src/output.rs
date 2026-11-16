@@ -36,6 +36,14 @@ pub fn emit(ctx: &Ctx, r: &dyn ReportDyn) {
     let _ = w.flush();
 }
 
+/// Writes one JSON document to stdout.
+pub fn print_json(v: &serde_json::Value) {
+    let stdout = std::io::stdout();
+    let mut w = stdout.lock();
+    let _ = serde_json::to_writer_pretty(&mut w, v).map_err(std::io::Error::from).and_then(|_| writeln!(w));
+    let _ = w.flush();
+}
+
 /// The JSON error object for a failure: `{"error": {"kind", "message", "file", "offset"}}`.
 pub fn error_json(e: &shaiya_core::Error) -> serde_json::Value {
     let (kind, file, offset) = match e {

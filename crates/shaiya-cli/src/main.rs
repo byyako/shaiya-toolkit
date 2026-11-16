@@ -4,7 +4,18 @@
 //! Exit codes: 0 success; 1 the answer is "no" (differences, a failed check); 2 usage error; 3 input error (unreadable or bad file);
 //! 4 refused by a safety rule; 5 internal error (a panic); 130 cancelled.
 
+/// `writeln!` to a writer, ignoring errors (a closed pipe is not worth reporting).
+macro_rules! outln {
+    ($w:expr) => {{
+        let _ = writeln!($w);
+    }};
+    ($w:expr, $($arg:tt)*) => {{
+        let _ = writeln!($w, $($arg)*);
+    }};
+}
+
 mod cmd;
+mod config;
 mod console;
 mod output;
 mod progress;
@@ -23,6 +34,8 @@ enum ProgressArg {
 
 /// What every command needs to know about the global flags.
 pub struct Ctx {
+    /// `--data-dir`: where the saved client folders live (default: the toolkit data folder).
+    pub data_dir: Option<std::path::PathBuf>,
     pub json: bool,
     pub quiet: bool,
     pub verbose: u8,
@@ -34,7 +47,8 @@ pub struct Ctx {
     name = "shaiya",
     about = "Tools for Shaiya game data. These work on your own copy of the game; nothing is downloaded.",
     disable_version_flag = true,
-    arg_required_else_help = true
+    arg_required_else_help = true,
+    after_help = "Your own copy: these tools never download game files and never change a file without a backup or an explicit output."
 )]
 struct Cli {
     /// Print one JSON document on stdout instead of text
@@ -49,6 +63,9 @@ struct Cli {
     /// When to show progress on stderr
     #[arg(long, global = true, value_enum, default_value = "auto", value_name = "WHEN")]
     progress: ProgressArg,
+    /// Use this folder for the saved client folders and settings instead of the default data folder
+    #[arg(long, global = true, value_name = "DIR")]
+    data_dir: Option<std::path::PathBuf>,
     /// Print the version
     #[arg(short = 'V', long = "version")]
     show_version: bool,
@@ -56,10 +73,46 @@ struct Cli {
     command: Option<Command>,
 }
 
+#[derive(clap::Args)]
+#[command(arg_required_else_help = true, subcommand_required = true)]
+struct ArchiveGroup {
+    #[command(subcommand)]
+    cmd: cmd::archive::Cmd,
+}
+
+#[derive(clap::Args)]
+#[command(arg_required_else_help = true, subcommand_required = true)]
+struct PatchGroup {
+    #[command(subcommand)]
+    cmd: cmd::patch::Cmd,
+}
+
+#[derive(clap::Args)]
+#[command(arg_required_else_help = true, subcommand_required = true)]
+struct SdataGroup {
+    #[command(subcommand)]
+    cmd: cmd::sdata::Cmd,
+}
+
+#[derive(clap::Args)]
+#[command(arg_required_else_help = true, subcommand_required = true)]
+struct ClientsGroup {
+    #[command(subcommand)]
+    cmd: cmd::clients::Cmd,
+}
+
 #[derive(Subcommand)]
 enum Command {
     /// Identify files and describe them (kind, size, details, optional SHA-256)
     Info(cmd::info::Args),
+    /// Work with data.sah/data.saf archives: list, extract, edit with a backup, compare, pack
+    Archive(ArchiveGroup),
+    /// Patch files: build, verify, apply with a backup, roll back, sign
+    Patch(PatchGroup),
+    /// SData files: info, check, decrypt, encrypt
+    Sdata(SdataGroup),
+    /// The saved "my client folders" list (use them as @name)
+    Clients(ClientsGroup),
     /// Print the version, git revision and target
     Version,
 }
@@ -96,6 +149,7 @@ fn run() -> u8 {
         }
     };
     let ctx = Ctx {
+        data_dir: cli.data_dir.clone(),
         json: cli.json,
         quiet: cli.quiet,
         verbose: cli.verbose,
@@ -114,10 +168,17 @@ fn run() -> u8 {
             output::emit(&ctx, &cmd::version::current());
             0
         }
-        Some(Command::Info(args)) => {
+        Some(command) => {
             let sink = progress::TermProgress::new(ctx.progress, ctx.quiet, std::io::stderr().is_terminal());
             let job = Job::new(&sink, Cancel::new());
-            let code = cmd::info::run(&ctx, &args, &job);
+            let code = match command {
+                Command::Info(args) => cmd::info::run(&ctx, &args, &job),
+                Command::Archive(g) => cmd::archive::run(&ctx, &g.cmd, &job),
+                Command::Patch(g) => cmd::patch::run(&ctx, &g.cmd, &job),
+                Command::Sdata(g) => cmd::sdata::run(&ctx, &g.cmd, &job),
+                Command::Clients(g) => cmd::clients::run(&ctx, &g.cmd),
+                Command::Version => unreachable!("handled above"),
+            };
             sink.finish();
             code as u8
         }

@@ -469,6 +469,11 @@ impl Archive {
     /// `path` is a folder holding data.sah (any case) or the .sah file itself; the .saf is the sibling with the same stem.
     pub fn open(path: &Path) -> Result<Archive> {
         let (sah, index) = Self::open_index(path)?;
+        Self::open_parsed(sah, index)
+    }
+
+    /// Opens the `.saf` of an index that was already read (no second parse).
+    pub fn open_parsed(sah: PathBuf, index: Index) -> Result<Archive> {
         let saf = saf_of(&sah);
         let file = File::open(&saf).map_err(|e| Error::io(&saf, e))?;
         let saf_len = file.metadata().map_err(|e| Error::io(&saf, e))?.len();
@@ -574,7 +579,7 @@ impl Archive {
 }
 
 /// The `.saf` that goes with a `.sah`: the sibling with the same stem (found in any case on case-sensitive systems).
-pub(crate) fn saf_of(sah: &Path) -> PathBuf {
+pub fn saf_of(sah: &Path) -> PathBuf {
     let dir = sah.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or(Path::new(".")).to_path_buf();
     let stem = sah.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
     find_in_dir(&dir, &format!("{stem}.saf")).unwrap_or_else(|| sah.with_extension("saf"))
