@@ -1,0 +1,48 @@
+name: Client or episode support
+description: A client or episode that does not work
+labels: ["client-support"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this for a client the tools cannot read or parse. **Never attach game files**; the output of `shaiya info` is enough to start with.
+  - type: input
+    id: file
+    attributes:
+      label: File
+      description: Which file fails (for example data.sah, Item.SData, game.exe).
+    validations:
+      required: true
+  - type: input
+    id: region
+    attributes:
+      label: Region
+      placeholder: "US / RU / FR / CN / KR / other"
+    validations:
+      required: true
+  - type: input
+    id: episode
+    attributes:
+      label: Episode or version
+      placeholder: "ep5.4, patch 108, v68 ..."
+    validations:
+      required: true
+  - type: textarea
+    id: info
+    attributes:
+      label: Output of `shaiya info --hash --json` for the file
+      render: json
+    validations:
+      required: true
+  - type: textarea
+    id: error
+    attributes:
+      label: The error with its byte offset
+      description: For example `Item.SData: SEED checksum failed (at byte 40)`.
+    validations:
+      required: true
+  - type: textarea
+    id: more
+    attributes:
+      label: Anything else
+      description: Where the client comes from, what you tried, what you know about the format.

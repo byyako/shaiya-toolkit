@@ -1,0 +1,19 @@
+name: Feature request
+description: An idea for a tool or an improvement
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: need
+    attributes:
+      label: What do you want to do?
+      description: The task, not the solution. Who you are (server operator, modder, reverse engineer, other) helps.
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: How could the toolkit help?
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: What do you do today?

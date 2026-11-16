@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Documentation
+    url: https://github.com/byyako/shaiya-toolkit/tree/main/docs
+    about: Formats, tools and the developer guide.
+  - name: Report a security problem
+    url: https://github.com/byyako/shaiya-toolkit/security/advisories/new
+    about: Please report vulnerabilities privately.
