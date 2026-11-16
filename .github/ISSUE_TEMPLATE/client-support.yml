@@ -38,7 +38,7 @@ body:
     id: error
     attributes:
       label: The error with its byte offset
-      description: For example `Item.SData: SEED checksum failed (at byte 40)`.
+      description: "For example: Item.SData: SEED checksum failed (at byte 40)"
     validations:
       required: true
   - type: textarea
