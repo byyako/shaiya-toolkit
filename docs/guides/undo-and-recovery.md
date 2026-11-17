@@ -67,7 +67,7 @@ The journal stays and is marked `rolled back`. `shaiya patch history --prune N` 
 If the power fails or the process is killed during a change, a file named **`data.toolkit-pending`** stays in the client folder. The next toolkit command that writes to this client (and the Workbench when it opens the client) reads it, works out how far the change got, and either undoes the unfinished change or finishes it, then says so on a `note:` line:
 
 - `removed the unfinished change ...`: the index had not been replaced yet; `data.saf` was cut back. Nothing changed.
-- `finished the interrupted change ...; shaiya patch history shows it and shaiya patch rollback can undo it`: the index was already replaced; the loose files were written and the journal marked applied.
+- `finished the interrupted change ...; shaiya patch history CLIENT shows it and shaiya patch rollback CLIENT can undo it`: the index was already replaced; the loose files were written and the journal marked applied.
 - `finished the interrupted rollback of ...` / `an interrupted rollback of ... had not started`.
 
 Nothing for you to do. The same applies to compaction (`data.sah.compact`, `data.saf.compact`, `data.compact-commit`) and archive swaps (`data.swap-journal`): they are completed or discarded automatically before the next write.

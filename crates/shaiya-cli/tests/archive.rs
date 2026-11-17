@@ -421,3 +421,44 @@ fn unreadable_inputs_exit_3() {
         assert_eq!(code(&sh(&w.data, &args)), 3, "{args:?}");
     }
 }
+
+#[test]
+fn check_output_has_the_documented_lines_and_agreeing_plurals() {
+    let w = world();
+    let o = sh(&w.data, &["archive", "check", p(&w.client)]);
+    assert_eq!(code(&o), 0);
+    let t = out(&o);
+    println!("{t}");
+    let lines: Vec<&str> = t.lines().collect();
+    assert!(lines[0].starts_with("data.sah  version 0, 7 files, 0 shadowed, "), "{t}");
+    assert!(lines[1].starts_with("data.saf  ") && lines[1].contains(" bytes, all referenced, 0 gaps, 0 overlaps"), "{t}");
+    assert_eq!(*lines.last().unwrap(), "OK: 0 problems, 0 warnings");
+    for bad in ["1 gaps", "1 overlaps", "1 bytes", "1 problems", "1 warnings", "1 files", "1 folders"] {
+        assert!(!t.contains(bad), "{bad} in {t}");
+    }
+}
+
+#[test]
+fn printed_undo_hint_keeps_the_journal_folder_and_quotes_the_client() {
+    let w = world();
+    let mods = w.tmp.path().join("mods");
+    std::fs::create_dir_all(&mods).unwrap();
+    std::fs::write(mods.join("t1.txt"), "x").unwrap();
+    let journals = w.tmp.path().join("my journals");
+    let o = sh(&w.data, &["archive", "add", p(&w.client), p(&mods), "--in-place", "--journal-dir", p(&journals)]);
+    assert_eq!(code(&o), 0, "{}", err(&o));
+    let t = out(&o);
+    assert!(t.contains("shaiya patch rollback") && t.contains(&format!("--journal-dir \"{}\"", journals.display())), "{t}");
+    // the hint works as printed
+    let o = sh(&w.data, &["patch", "history", p(&w.client), "--journal-dir", p(&journals)]);
+    assert!(out(&o).contains("possible"), "{}", out(&o));
+}
+
+#[test]
+fn compact_help_does_not_promise_a_way_back() {
+    let w = world();
+    let o = sh(&w.data, &["archive", "compact", "--help"]);
+    let t = out(&o);
+    assert!(t.contains("makes no journal") && t.contains("earlier changes can no longer be rolled back"), "{t}");
+    assert!(!t.contains("reversible"), "{t}");
+}

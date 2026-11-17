@@ -481,14 +481,14 @@ fn apply(ctx: &Ctx, a: &ApplyArgs, job: &Job) -> Result<i32> {
                         size(r.bytes)
                     );
                     if let Some(j) = &r.journal {
-                        outln!(w, "backup: {}  (undo: {})", j.display(), undo_hint(&a.client));
+                        outln!(w, "backup: {}  (undo: {})", j.display(), undo_hint(&a.client, a.journal_dir.as_deref()));
                     }
                 }
                 done.push(r);
             }
             Err(e) => {
                 if !done.is_empty() {
-                    eprintln!("error: {} failed after {} applied; those stay applied (`shaiya patch history {}` lists them)", file_name(p), count(done.len(), "patch"), a.client);
+                    eprintln!("error: {} failed after {} applied; those stay applied (`{}` lists them)", file_name(p), count(done.len(), "patch"), history_hint(&a.client, a.journal_dir.as_deref()));
                 }
                 if ctx.json {
                     print_json(&json!({"client": dir.display().to_string(), "results": done.iter().map(|r| serde_json::to_value(r).unwrap_or(Value::Null)).collect::<Vec<_>>(),
@@ -512,7 +512,7 @@ fn rollback(ctx: &Ctx, a: &RollbackArgs, job: &Job) -> Result<i32> {
     let root = journal_root(&dir, a.journal_dir.as_deref());
     let all = journal::list(&dir, &root)?;
     let target = match &a.id {
-        Some(id) => all.iter().find(|(j, _)| &j.id == id || j.id.ends_with(id.as_str())).ok_or_else(|| Error::io(id, std::io::Error::new(std::io::ErrorKind::NotFound, "no such journal (hint: shaiya patch history)")))?,
+        Some(id) => all.iter().find(|(j, _)| &j.id == id || j.id.ends_with(id.as_str())).ok_or_else(|| Error::io(id, std::io::Error::new(std::io::ErrorKind::NotFound, format!("no such journal (hint: {})", history_hint(&a.client, a.journal_dir.as_deref())))))?,
         None => all
             .iter()
             .rev()
@@ -530,7 +530,7 @@ fn rollback(ctx: &Ctx, a: &RollbackArgs, job: &Job) -> Result<i32> {
             print_json(&json!({"dry_run": true, "journal": serde_json::to_value(j).unwrap_or(Value::Null)}));
         } else {
             println!(
-                "would roll back {} (applied {}): restore the index, cut data.saf back to {} bytes, restore {} and delete {}",
+                "would roll back {} (applied {}): restore the index, cut data.saf back to {}, restore {} and delete {}",
                 j.label,
                 j.created_utc,
                 num(j.saf_len_before),
@@ -545,7 +545,7 @@ fn rollback(ctx: &Ctx, a: &RollbackArgs, job: &Job) -> Result<i32> {
         print_json(&serde_json::to_value(&r).unwrap_or(Value::Null));
     } else {
         println!(
-            "rolled back {} (applied {}): index restored, data.saf truncated to {} bytes, {} restored, {} deleted",
+            "rolled back {} (applied {}): index restored, data.saf truncated to {}, {} restored, {} deleted",
             j.label,
             j.created_utc,
             num(r.truncated_to),

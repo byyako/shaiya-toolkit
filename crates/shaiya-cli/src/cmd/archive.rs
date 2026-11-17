@@ -77,6 +77,9 @@ pub enum Cmd {
     Remove(RemoveArgs),
     /// Rewrite data.saf without unused space (and drop shadowed entries and the free list)
     ///
+    /// With --in-place this replaces data.saf and the index and makes no journal: the compaction itself cannot be undone (data.sah.bak
+    /// keeps only the old index) and earlier changes can no longer be rolled back. -o writes a compacted copy and leaves the client alone.
+    ///
     /// Example: shaiya archive compact "@us" --in-place
     Compact(CompactArgs),
     /// Compare two archives
@@ -225,7 +228,7 @@ pub struct CatArgs {
 
 #[derive(clap::Args, Clone)]
 pub struct Target {
-    /// Change the client folder's own data.sah/data.saf (a journal and backups make it reversible)
+    /// Change the client folder's own data.sah/data.saf (journaled and backed up, so it can usually be rolled back; `compact` is the exception)
     #[arg(long)]
     pub in_place: bool,
     /// Write a new archive pair instead: a .sah path (the .saf gets the same stem) or a folder
@@ -548,7 +551,7 @@ fn stats(ctx: &Ctx, a: &StatsArgs) -> Result<i32> {
         (Some(n), Some(dead)) => {
             let pct = if n > 0 { dead as f64 * 100.0 / n as f64 } else { 0.0 };
             let saf_name = o.saf_path().map(|p| file_name(&p)).unwrap_or_default();
-            outln!(w, "{saf_name}  {} bytes, {} live, {} unused ({pct:.1} %) in {} gaps", num(n), num(l.live_bytes), num(dead), num(l.gap_count as u64));
+            outln!(w, "{saf_name}  {}, {} live, {} unused ({pct:.1} %) in {}", count(n as usize, "byte"), num(l.live_bytes), num(dead), count(l.gap_count, "gap"));
         }
         _ => outln!(w, "data.saf  not found; data ends at {}", num(l.data_end)),
     }
@@ -597,7 +600,7 @@ fn check(ctx: &Ctx, a: &CheckArgs, job: &Job) -> Result<i32> {
     );
     if let (Some(n), Some(dead), Some(p)) = (l.saf_len, l.dead_bytes, o.saf_path()) {
         let referenced = if dead == 0 { "all referenced".to_string() } else { format!("{} unused", num(dead)) };
-        outln!(w, "{}  {} bytes, {referenced}, {} gaps, {} overlaps", file_name(&p), num(n), num(l.gap_count as u64), num(l.overlaps as u64));
+        outln!(w, "{}  {}, {referenced}, {}, {}", file_name(&p), count(n as usize, "byte"), count(l.gap_count, "gap"), count(l.overlaps, "overlap"));
     }
     for f in report.findings.iter().filter(|f| f.severity != Severity::Info) {
         let sev = if f.severity == Severity::Problem { "problem" } else { "warning" };
@@ -613,7 +616,7 @@ fn check(ctx: &Ctx, a: &CheckArgs, job: &Job) -> Result<i32> {
         }
     }
     for (off, bytes) in l.largest_gaps.iter().take(a.gaps) {
-        outln!(w, "gap       {} bytes at offset {} (0x{off:x})", num(*bytes), num(*off));
+        outln!(w, "gap       {} at offset {} (0x{off:x})", count(*bytes as usize, "byte"), num(*off));
     }
     outln!(w, "{}: {}, {}", if ok { "OK" } else { "FAILED" }, count(report.problems(), "problem"), count(report.warnings(), "warning"));
     Ok(if ok { 0 } else { 1 })
@@ -829,7 +832,7 @@ fn edit_cmd(ctx: &Ctx, kind: Kind, archive: &str, src: &[PathBuf], at: &str, as_
         if t.dry_run {
             let idx = Index::read(&files.sah)?;
             let r = edit::preview(&idx, &plan)?;
-            print_edit(ctx, &r, true, None, archive);
+            print_edit(ctx, &r, true, None, archive, t.journal_dir.as_deref());
             return Ok(0);
         }
         if t.no_journal {
@@ -838,7 +841,7 @@ fn edit_cmd(ctx: &Ctx, kind: Kind, archive: &str, src: &[PathBuf], at: &str, as_
         let root = journal_root(&dir, t.journal_dir.as_deref());
         let opts = InPlaceOptions { journal: if t.no_journal { JournalMode::None } else { JournalMode::In(root) }, legacy_bak: true, check_in_use: false };
         let r = edit::apply_in_place(&dir, &plan, &opts, job)?;
-        print_edit(ctx, &r, false, None, archive);
+        print_edit(ctx, &r, false, None, archive, t.journal_dir.as_deref());
         return Ok(0);
     }
     let out = t.out.as_ref().expect("checked by need_target");
@@ -846,15 +849,15 @@ fn edit_cmd(ctx: &Ctx, kind: Kind, archive: &str, src: &[PathBuf], at: &str, as_
     let sah = out_sah(out)?;
     if t.dry_run {
         let r = edit::preview(a.index(), &plan)?;
-        print_edit(ctx, &r, true, Some(&sah), archive);
+        print_edit(ctx, &r, true, Some(&sah), archive, t.journal_dir.as_deref());
         return Ok(0);
     }
     let r = edit::write_new(&a, &plan, &sah, if t.force { Existing::Overwrite } else { Existing::Refuse }, job)?;
-    print_edit(ctx, &r, false, Some(&sah), archive);
+    print_edit(ctx, &r, false, Some(&sah), archive, t.journal_dir.as_deref());
     Ok(0)
 }
 
-fn print_edit(ctx: &Ctx, r: &EditReport, dry: bool, out: Option<&std::path::Path>, client_arg: &str) {
+fn print_edit(ctx: &Ctx, r: &EditReport, dry: bool, out: Option<&std::path::Path>, client_arg: &str, journal_dir: Option<&std::path::Path>) {
     if ctx.json {
         let mut v = serde_json::to_value(r).unwrap_or(Value::Null);
         if dry {
@@ -894,7 +897,7 @@ fn print_edit(ctx: &Ctx, r: &EditReport, dry: bool, out: Option<&std::path::Path
         outln!(w, "  ? {p} (not in the archive)");
     }
     if let Some(j) = &r.journal {
-        outln!(w, "backup: {}  (undo: {})", j.display(), undo_hint(client_arg));
+        outln!(w, "backup: {}  (undo: {})", j.display(), undo_hint(client_arg, journal_dir));
     }
 }
 
@@ -927,13 +930,13 @@ fn compact_cmd(ctx: &Ctx, a: &CompactArgs, job: &Job) -> Result<i32> {
                 println!("would rewrite data.saf: {} now, {} live, {} unused; drops {} and the free list", size(saf), size(live), size(dead), count(shadowed, "shadowed entry"));
                 println!("needs about {} free on that drive while it runs", size(live + (256 << 20)));
                 if blocked > 0 {
-                    println!("{blocked} earlier changes can no longer be rolled back after compacting");
+                    println!("{} can no longer be rolled back after compacting", count(blocked, "earlier change"));
                 }
             }
             return Ok(0);
         }
         if blocked > 0 {
-            note(ctx, &format!("note: {blocked} earlier changes can no longer be rolled back after compacting"));
+            note(ctx, &format!("note: {} can no longer be rolled back after compacting", count(blocked, "earlier change")));
         }
         let c = compact::compact(&dir, job)?;
         if ctx.json {

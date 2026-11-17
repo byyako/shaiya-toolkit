@@ -160,19 +160,50 @@ pub fn journal_root(dir: &Path, custom: Option<&Path>) -> PathBuf {
     custom.map(Path::to_path_buf).unwrap_or_else(|| dir.join(journal::DEFAULT_DIR))
 }
 
-/// An argument as it should be printed in a command a person will paste: `@name` and anything with spaces or shell
-/// characters in double quotes (works in cmd and PowerShell; a bare `@name` is PowerShell's splatting syntax).
+/// An argument as it should be printed in a command a person will paste (cmd.exe, PowerShell 5.1 and PowerShell 7).
+///
+/// - A bare `@name` is PowerShell's splatting syntax, so `@name`, anything with white space and anything with a shell character is quoted.
+/// - Double quotes are the default: they work in all three shells. `%` stays literal there unless it spells a variable that is defined.
+/// - `$` and a backtick are special inside PowerShell's double quotes, so those arguments use single quotes (`'` doubled), which PowerShell
+///   keeps literal.
+/// - A backslash at the end of a quoted argument is dropped (PowerShell 5.1 and 7 pass it to programs differently, and `C:\dir\` is
+///   `C:\dir`); a drive root becomes `C:\.`.
 pub fn shell_arg(arg: &str) -> String {
-    if arg.starts_with('@') || arg.contains(|c: char| c.is_whitespace() || "&|<>()^;,'`$%".contains(c)) {
-        format!("\"{arg}\"")
+    let special = |c: char| c.is_whitespace() || "&|<>()^;,'`$%\"{}[]!#=".contains(c);
+    if !(arg.is_empty() || arg.starts_with('@') || arg.contains(special)) {
+        return arg.to_string();
+    }
+    let trimmed = arg.trim_end_matches(['\\', '/']);
+    let a = if trimmed.is_empty() {
+        arg.to_string() // only separators: keep as given
+    } else if trimmed.len() == 2 && trimmed.ends_with(':') {
+        format!("{trimmed}\\.") // a drive root
     } else {
-        arg.to_string()
+        trimmed.to_string()
+    };
+    if a.contains(['$', '`']) {
+        format!("'{}'", a.replace('\'', "''"))
+    } else {
+        format!("\"{}\"", a.replace('"', "\\\""))
+    }
+}
+
+/// The CLIENT argument and `--journal-dir` as the commands that read journals need them .
+pub fn client_args(client_arg: &str, journal_dir: Option<&Path>) -> String {
+    match journal_dir {
+        Some(d) => format!("{} --journal-dir {}", shell_arg(client_arg), shell_arg(&d.display().to_string())),
+        None => shell_arg(client_arg),
     }
 }
 
 /// The command a person can run to undo the newest change.
-pub fn undo_hint(client_arg: &str) -> String {
-    format!("shaiya patch rollback {}", shell_arg(client_arg))
+pub fn undo_hint(client_arg: &str, journal_dir: Option<&Path>) -> String {
+    format!("shaiya patch rollback {}", client_args(client_arg, journal_dir))
+}
+
+/// The command a person can run to list the changes made to a client.
+pub fn history_hint(client_arg: &str, journal_dir: Option<&Path>) -> String {
+    format!("shaiya patch history {}", client_args(client_arg, journal_dir))
 }
 
 /// `-o OUT` for a new archive pair: a path ending in `.sah` names the index, any other path is a folder that gets `data.sah`.
@@ -196,4 +227,38 @@ pub fn need_target(in_place: bool, out: &Option<PathBuf>) -> Result<()> {
         ));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn shell_arg_quotes_for_cmd_and_powershell() {
+        assert_eq!(shell_arg("plain"), "plain");
+        assert_eq!(shell_arg(r"C:\Games\Shaiya"), r"C:\Games\Shaiya");
+        assert_eq!(shell_arg("@us"), "\"@us\"");
+        assert_eq!(shell_arg(r"C:\My Games\Shaiya"), r#""C:\My Games\Shaiya""#);
+        assert_eq!(shell_arg("a&b"), "\"a&b\"");
+        assert_eq!(shell_arg("100%"), "\"100%\"");
+        // PowerShell expands $ and the backtick inside double quotes: single quotes, with ' doubled
+        assert_eq!(shell_arg(r"C:\a $x b"), r"'C:\a $x b'");
+        assert_eq!(shell_arg("it's $x"), "'it''s $x'");
+        assert_eq!(shell_arg("a`b"), "'a`b'");
+        // a trailing backslash would escape the closing quote in cmd and PowerShell 5.1: dropped; a drive root keeps a dot
+        assert_eq!(shell_arg(r"C:\My Games\"), r#""C:\My Games""#);
+        assert_eq!(shell_arg(r"C:\My Games\\"), r#""C:\My Games""#);
+        assert_eq!(shell_arg(r"D:\"), r"D:\");
+        assert_eq!(shell_arg(r"&:\"), r#""&:\.""#);
+        assert_eq!(shell_arg(""), "\"\"");
+    }
+
+    #[test]
+    fn hints_name_the_client_and_keep_the_journal_folder() {
+        assert_eq!(undo_hint("@us", None), "shaiya patch rollback \"@us\"");
+        assert_eq!(history_hint(r"C:\My Games\Shaiya", None), r#"shaiya patch history "C:\My Games\Shaiya""#);
+        let j = Path::new(r"D:\my journals");
+        assert_eq!(undo_hint("@us", Some(j)), r#"shaiya patch rollback "@us" --journal-dir "D:\my journals""#);
+        assert_eq!(history_hint("@us", Some(Path::new("J"))), "shaiya patch history \"@us\" --journal-dir J");
+    }
 }

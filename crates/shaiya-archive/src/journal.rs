@@ -452,7 +452,7 @@ pub(crate) fn recover_marker(dir: &Path) -> Result<Option<String>> {
                     }
                 }
                 Marker::remove(dir);
-                Ok(Some(format!("finished the interrupted change {}; `shaiya patch history` shows it and `shaiya patch rollback` can undo it", m.label)))
+                Ok(Some(format!("finished the interrupted change {}; `shaiya patch history CLIENT` shows it and `shaiya patch rollback CLIENT` can undo it", m.label)))
             } else {
                 Err(stuck())
             }
