@@ -162,7 +162,8 @@ pub fn group(n: u64) -> String {
     out
 }
 
-fn counted(n: u64, one: &str, many: &str) -> String {
+/// `1 file` / `2 files`, with thousands separators.
+pub fn counted(n: u64, one: &str, many: &str) -> String {
     format!("{} {}", group(n), if n == 1 { one } else { many })
 }
 
@@ -218,6 +219,10 @@ pub fn inspect(path: &Path, opts: &Options, job: &Job) -> Result<Info> {
         saf_details(path, size, &mut problems)
     } else if head.starts_with(b"SAH") {
         sah_details(path, size, &name, &mut problems)
+    } else if has_ext(path, "saf") && shaiya_seed::is_encrypted(&head) {
+        // A lone .saf is not SAF data (that needs its .sah) and is not an SData file either: do not run the SData checks on a whole archive.
+        problems.push(format!("{name} starts like an SData file, but a .saf is archive data only beside its .sah and none was found; not checked as SData"));
+        (Kind::Unknown, Details::Unknown { magic_hex: to_hex(&head[..head.len().min(16)]) })
     } else if shaiya_seed::is_encrypted(&head) {
         seed_details(path, size, &head, &name, &mut problems)
     } else if head.starts_with(b"PK\x03\x04") && zip_is_patch(path, size, &head) {
@@ -391,7 +396,13 @@ mod tests {
         let alone = d.path().join("alone").join("data.saf");
         std::fs::create_dir_all(alone.parent().unwrap()).unwrap();
         std::fs::write(&alone, &first).unwrap();
-        assert_eq!(info(&alone).kind, Kind::SdataSeed);
+        let a = info(&alone);
+        assert_eq!(a.kind, Kind::Unknown, "{a:?}");
+        assert!(a.problems.iter().any(|p| p.contains("none was found")), "{a:?}");
+        // the same bytes under another name are still an SData file
+        let seed = d.path().join("alone").join("x.sdata");
+        std::fs::write(&seed, &first).unwrap();
+        assert_eq!(info(&seed).kind, Kind::SdataSeed);
     }
 
     #[test]
