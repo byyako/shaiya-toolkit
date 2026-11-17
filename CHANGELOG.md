@@ -4,7 +4,9 @@ All notable changes are listed here, newest first. The format follows [Keep a Ch
 
 ## [Unreleased]
 
-No release yet. This covers the first foundation of the toolkit and the archive and patch tools.
+## [0.1.0] - 2026-11-17
+
+First release: the foundation of the toolkit and the archive and patch tools.
 
 ### shaiya (CLI)
 
