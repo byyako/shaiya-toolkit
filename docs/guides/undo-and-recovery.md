@@ -33,8 +33,8 @@ Because step 5 only appends, `data.saf` grows with every change, and replaced or
 ## Undo the newest change
 
 ```
-shaiya patch history @us
-shaiya patch rollback @us
+shaiya patch history "@us"
+shaiya patch rollback "@us"
 ```
 
 `history` lists every journal with its state (`applied`, `rolled back`, `pending`) and whether it can be rolled back right now. `rollback` undoes the newest one (`--id ID` names another, but only the newest applied journal can be undone). It:
@@ -87,7 +87,7 @@ The marker is a short text file. Open it in a text editor and read `label=` (the
 4. Cut `data.saf` back to `saf_len_before` bytes. The toolkit's `patch rollback` does this for ordinary journals; by hand, a tool that truncates files (for example PowerShell: `$f=[IO.File]::OpenWrite("data.saf"); $f.SetLength(1991954802); $f.Close()` with your number) is needed.
 5. Delete leftover `.shaiya-tmp` files and the `staged=` files named in the marker (hidden temporary names such as `.notice.txt.1234.shaiya-tmp`).
 6. Delete `data.toolkit-pending`.
-7. Run `shaiya archive check @name`; it should end with `0 problems`.
+7. Run `shaiya archive check "@name"`; it should end with `0 problems`.
 
 If you are unsure, restore your own backup of the client instead: the toolkit's journals are a safety net, not a replacement for a copy of anything you cannot get again.
 
@@ -107,4 +107,4 @@ If `data.swap-journal` is damaged, open it: each line is `FROM<TAB>TO`, a rename
 
 - Keep your own copy of anything you cannot download again; journals are on the same disk as the client.
 - Close the game before any change; Windows refuses, Linux and macOS cannot tell.
-- After a rollback or a compaction, run `shaiya archive check @name`.
+- After a rollback or a compaction, run `shaiya archive check "@name"`.

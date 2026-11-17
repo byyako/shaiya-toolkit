@@ -6,7 +6,7 @@ The full message is `error: refused: data.saf is open in another program; close 
 
 ## Windows says "Windows protected your PC" (SmartScreen)
 
-The programs are not code signed. Choose **More info**, then **Run anyway**. Check the download against `SHA256SUMS.txt` first ([install.md](install.md#check-the-download)). If double-clicking `shaiya.exe` shows a window that closes, it is a command-line program: open a terminal and run `shaiya --help`.
+The programs are not code signed. Choose **More info**, then **Run anyway**. Check the download against `SHA256SUMS.txt` first ([install.md](install.md#check-the-download)). `shaiya.exe` is a command-line program. If you double-click it, it prints its help, says to open a terminal and waits for Enter before closing; open a terminal and run `shaiya --help` instead.
 
 ## macOS says the developer is unidentified
 
@@ -17,6 +17,7 @@ Right-click the app and choose Open, or run `xattr -dr com.apple.quarantine "Sha
 - **`unsupported version`** (exit 3): the `data.sah` has a version the toolkit does not know. Versions 0 and 1 work. Please report the client (region, episode) and the output of `shaiya info data.sah` without attaching game files.
 - Archives, patches and SData wrappers work on every client in the [version matrix](version-matrix.md). What does not work everywhere is reading the *tables inside* SData files: the Monster and NpcQuest readers in `shaiya-clientdata` only understand the layouts of some clients, and the table says `fails` where the layout is newer. The SData commands still decrypt and re-encrypt those files.
 - A `.sah` without its `.saf` can be listed, counted and checked (index only), but not extracted, previewed or changed.
+- `error: the following required arguments were not provided: <ARCHIVE>` right after you typed `@name` in PowerShell: PowerShell treats a bare `@name` as splatting and passes nothing. Write the name in double quotes, `"@name"` (this works in `cmd.exe` too; single quotes work in PowerShell only).
 - `error: ... no data.sah in this folder`: `@name` or the path does not point at the client folder; `shaiya clients list` shows what is saved.
 
 ## What do the exit codes mean?
@@ -39,7 +40,7 @@ Commands that change an archive need to know where to write: `--in-place` for th
 
 ## How do I undo a change?
 
-`shaiya patch history @name`, then `shaiya patch rollback @name`. In the Workbench: Apply & history > Roll back.... What blocks it (a newer change, a compaction, a swap, `--no-journal`) and how interrupted changes are recovered: [undo and recovery](guides/undo-and-recovery.md).
+`shaiya patch history "@name"`, then `shaiya patch rollback "@name"`. In the Workbench: Apply & history > Roll back.... What blocks it (a newer change, a compaction, a swap, `--no-journal`) and how interrupted changes are recovered: [undo and recovery](guides/undo-and-recovery.md).
 
 ## Where are the backups?
 
@@ -47,11 +48,11 @@ Journals are in `<client folder>/shaiya-toolkit-backups/`, one folder per change
 
 ## The game does not start, or shows wrong data, after a change
 
-Roll the change back (`shaiya patch rollback @name`) and check the client with `shaiya archive check @name --deep`. Typical causes: an SData file re-encrypted without `--like` (see [SData files](guides/sdata-files.md)), a replaced file in the wrong format, or a patch applied to a different client generation than it was made for.
+Roll the change back (`shaiya patch rollback "@name"`) and check the client with `shaiya archive check "@name" --deep`. Typical causes: an SData file re-encrypted without `--like` (see [SData files](guides/sdata-files.md)), a replaced file in the wrong format, or a patch applied to a different client generation than it was made for.
 
 ## `data.saf` keeps growing
 
-Every change appends to `data.saf` and leaves the old bytes behind. `shaiya archive stats @name` shows the unused space; `shaiya archive compact @name --in-place` reclaims it, but it cannot be undone and ends rollback for earlier changes. Use `compact -o NEWDIR` for a compacted copy.
+Every change appends to `data.saf` and leaves the old bytes behind. `shaiya archive stats "@name"` shows the unused space; `shaiya archive compact "@name" --in-place` reclaims it, but it cannot be undone and ends rollback for earlier changes. Use `compact -o NEWDIR` for a compacted copy.
 
 ## "signature not checked" when applying a patch
 

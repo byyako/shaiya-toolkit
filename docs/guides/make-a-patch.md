@@ -70,15 +70,15 @@ Never test on a client you care about. Copy a client folder, save it, and run th
 ```
 shaiya clients add testcopy C:\Games\ShaiyaTest
 shaiya patch verify ps0110.patch --key public.key --check-version 3
-shaiya patch apply @testcopy ps0110.patch --key public.key --check-version 3 --dry-run
-shaiya patch apply @testcopy ps0110.patch --key public.key --check-version 3
-shaiya patch verify ps0110.patch --client @testcopy
-shaiya archive check @testcopy --deep
+shaiya patch apply "@testcopy" ps0110.patch --key public.key --check-version 3 --dry-run
+shaiya patch apply "@testcopy" ps0110.patch --key public.key --check-version 3
+shaiya patch verify ps0110.patch --client "@testcopy"
+shaiya archive check "@testcopy" --deep
 ```
 
-`verify` checks the ZIP's structure and, with a key, the signature (`signature valid`; `MISSING` and `invalid` are failures with `--require-signature`, and `invalid` always is). `apply` with a key refuses any patch whose signature does not verify, before writing anything. `verify --client` confirms each file is present and identical, each removal is gone and each loose file matches. `check --deep` reads every file once. Start the game from the copy. If something is wrong, `shaiya patch rollback @testcopy` puts the copy back.
+`verify` checks the ZIP's structure and, with a key, the signature (`signature valid`; `MISSING` and `invalid` are failures with `--require-signature`, and `invalid` always is). `apply` with a key refuses any patch whose signature does not verify, before writing anything. `verify --client` confirms each file is present and identical, each removal is gone and each loose file matches. `check --deep` reads every file once. Start the game from the copy. If something is wrong, `shaiya patch rollback "@testcopy"` puts the copy back.
 
-To test several patches in order, give them all to one command: `shaiya patch apply @testcopy ps0110.patch ps0111.patch ...`. Each is applied and journaled separately.
+To test several patches in order, give them all to one command: `shaiya patch apply "@testcopy" ps0110.patch ps0111.patch ...`. Each is applied and journaled separately.
 
 ## 6. Publish
 

@@ -33,7 +33,7 @@ They may come before or after the command.
 
 - **ARCHIVE arguments** (`archive`, `sdata --from`) accept a client folder (the one holding `data.sah`, in any letter case), a `.sah` file (its `.saf` is the file with the same stem next to it), or `@name` from the saved client folders ([`clients`](#shaiya-clients)). Read-only commands that only need the index (`list`, `stats`, `index`, `check`, `diff --quick`) also accept a `.sah` whose `.saf` is missing and say `note: data.saf not found; working from the index only`.
 - **CLIENT arguments** (`patch apply`, `patch rollback`, `patch history`, `archive swap`) accept a client folder or `@name`. Commands that change the archive in place only work on a folder's own `data.sah`/`data.saf`; for any other pair write a new one with `-o`.
-- **`@name`** is looked up in the saved list. An unknown name stops with exit 3 and `hint: shaiya clients list`.
+- **`@name`** is looked up in the saved list. An unknown name stops with exit 3 and a message ending `hint: shaiya clients list`. **In PowerShell a bare `@name` is splatting, not text: write it in double quotes (`"@us"`).** Double quotes work the same in `cmd.exe`, so the pages here use them. Single quotes work in PowerShell only; in `cmd.exe` they are passed on literally and the name is not found. Patterns such as `"*.SData"` are quoted the same way.
 - **Writing a client in place.** `archive add`, `replace`, `remove`, `compact` and `patch apply` need either `--in-place` (the client's own files; `patch apply` is always in place) or `-o OUT` (a new archive pair, nothing else touched). Giving neither stops with exit 4. `-o OUT` ending in `.sah` names the index (the `.saf` gets the same stem); any other path is a folder that receives `data.sah` and `data.saf`. An existing output stops with exit 4 unless `--force`; an output is never allowed to be one of its inputs.
 - **`--dry-run`** prints what would happen, in the shape of the real output, and changes nothing. With `--json` the document has `"dry_run": true`.
 - **Backups and journals.** Every in-place change records a *journal* in `<client>/shaiya-toolkit-backups/<UTC stamp>-<label>/` (a copy of the old index, a small `journal.txt`, and a copy of every loose file the change overwrote). `shaiya patch rollback` undoes it. See [undo and recovery](../guides/undo-and-recovery.md) for exactly what is kept and what blocks a rollback.
@@ -123,16 +123,16 @@ Details:
 Output shapes (numbers illustrative):
 
 ```
-$ shaiya archive list @us '*.SData' --long
+$ shaiya archive list "@us" "*.SData" --long
 0x00a1b2c3d4   2,960,114  2010-05-17T03:12:44Z  Item/Item.SData
 
-$ shaiya archive check @us
+$ shaiya archive check "@us"
 data.sah  version 0, 19,939 files, 0 shadowed, 166 folders, no free list
 data.saf  1,991,954,802 bytes, all referenced, 0 gaps, 0 overlaps
 info      zero_length: 0 files
 OK: 0 problems, 0 warnings
 
-$ shaiya archive add @us mods/ --in-place --replace
+$ shaiya archive add "@us" mods/ --in-place --replace
 added 1, replaced 1, removed 0 (2.9 MB appended to data.saf)
   + interface/t1.txt
   ~ Item/Item.SData
@@ -163,7 +163,7 @@ JSON (`--json`):
 |---|---|---|
 | `build` | `-o OUT.patch` `--files DIR` `--loose DIR` `--remove LIST` `--diff OLD NEW` `--timestamp T` `--sign KEY --check-version N` `--force` `--dry-run` | 0; 3; 4 |
 | `list` | `PATCH` | 0; 3 |
-| `verify` | `PATCH...` `--key PUBLIC.key` or `--public-hex HEX` with `--check-version N` `--client CLIENT` `--require-signature` | 0; 1 a check failed; 3 |
+| `verify` | `PATCH...` `--key PUBLIC.key` or `--public-hex HEX` with `--check-version N` `--client CLIENT` `--require-signature` | 0; 1 a check failed; 3; 4 `--require-signature` without a key, or a key without `--check-version` |
 | `apply` | `CLIENT PATCH...` `--dry-run` `--key PUBLIC.key` or `--public-hex HEX` with `--check-version N` `--protect NAME` `--no-journal` `--journal-dir DIR` | 0; 3; 4 |
 | `rollback` | `CLIENT` `--id ID` `--force` `--dry-run` `--journal-dir DIR` | 0; 3; 4 blocked |
 | `history` | `CLIENT` `--prune KEEP` `--journal-dir DIR` | 0; 3 |
@@ -189,7 +189,7 @@ ps0109.patch  ZIP 1.9 MB (3.0 MB unpacked), update.sah version 0, signature file
   remove                                     test/junk.eft
 1 archive file (2.9 MB), 1 loose file, 1 removal
 
-$ shaiya patch apply @us ps0109.patch --dry-run
+$ shaiya patch apply "@us" ps0109.patch --dry-run
 ps0109.patch -> C:\Games\Shaiya (data.sah, 19,939 files)
   would add 0, replace 1, remove 1 (0 not present), write 1 loose file (overwrites notice.txt)
   would append 2.9 MB to data.saf; needs about 5.8 MB free on that drive while applying
@@ -199,7 +199,7 @@ $ shaiya patch verify ps0109.patch ps0110.patch --key public.key --check-version
 ps0109.patch  structure OK (1 archive file, 1 loose, 1 removal); signature valid
 ps0110.patch  structure OK (4 archive files); signature MISSING (ps0110.patch.sig not found)
 
-$ shaiya patch rollback @us
+$ shaiya patch rollback "@us"
 rolled back ps0109.patch (applied 2026-11-15T12:00:00Z): index restored, data.saf truncated to 1,991,954,802 bytes, 1 loose file restored, 0 deleted
 ```
 
@@ -219,15 +219,15 @@ JSON: `build` gives `{"out", "files": [...], "loose": [...], "removals": [...], 
 - `--in-place` replaces the input after copying the original to `NAME.bak` (the note says so; an existing `.bak` is not overwritten, a time-stamped name is used instead). Do not use it on files inside a client's archive: use `--from` with `-o`, then put the result back with `archive replace` or a patch.
 - `decrypt` copies a plain (unencrypted) file unchanged (status "plain, copied") unless `--skip-plain`. A file whose CRC fails is exit 3 for that file and the batch continues, unless `--unchecked` (written anyway, status "checksum mismatch", exit 1).
 - `encrypt` copies an already encrypted file unless `--skip-encrypted`. `--like` takes a file (one input), a folder of originals or an ARCHIVE: each output reuses the original's header padding and tail, so an unchanged file comes out byte-identical, and a plain original stays plain.
-- The summary line (`9 files: 6 decrypted, 3 plain copied, 0 failed`) goes to stderr.
+- The summary line (`9 files: 6 done, 3 copied, 0 skipped, 0 failed`) goes to stderr.
 
 ```
 $ shaiya sdata info Item.SData GuildHouse.SData
 Item.SData        SEED, plaintext 2,960,114 bytes, CRC 0x8c1f02aa OK, header padding zero, tail zero
 GuildHouse.SData  not encrypted, 41,220 bytes
 
-$ shaiya sdata decrypt --from @us -o plain/
-$ shaiya sdata encrypt plain/ -o enc/ --like @us
+$ shaiya sdata decrypt --from "@us" -o plain/
+$ shaiya sdata encrypt plain/ -o enc/ --like "@us"
 ```
 
 JSON: `{"items": [{"name", "status", "size", "plain_size", "crc", "crc_ok", "padding_zero", "tail_zero", "out", "message"}], "summary": {"<status>": count}}`.

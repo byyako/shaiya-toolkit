@@ -21,15 +21,17 @@ On Windows the first run may show SmartScreen ("Windows protected your PC"): cho
 shaiya clients add practice C:\Games\ShaiyaPractice --note "practice copy"
 ```
 
-From now on `@practice` means that folder in every command. `shaiya clients list` shows what is saved. (The Workbench uses the same list.)
+From now on `"@practice"` means that folder in every command. `shaiya clients list` shows what is saved. (The Workbench uses the same list.)
+
+**Keep the double quotes around `"@practice"`.** In PowerShell a bare `@practice` is not text (the `@` makes PowerShell try to splat a variable), so the command fails with a confusing "required arguments were not provided" error. Double quotes work the same way in PowerShell and in `cmd.exe`, so every command on this page can be pasted into either. (Single quotes, `'@practice'`, work in PowerShell only; `cmd.exe` would pass them on literally.) The same goes for patterns such as `"*.SData"`.
 
 ## 2. Look inside
 
 ```
 shaiya info C:\Games\ShaiyaPractice\data.sah
-shaiya archive stats @practice
-shaiya archive list @practice "*.SData" --long
-shaiya archive check @practice
+shaiya archive stats "@practice"
+shaiya archive list "@practice" "*.SData" --long
+shaiya archive check "@practice"
 ```
 
 `info` says what a file is. `stats` counts files and unused space. `list` shows files (here every SData file; patterns are case-insensitive and `*.SData` matches in any folder). `check` looks for problems and ends with a line like `OK: 0 problems, 0 warnings`. None of these change anything.
@@ -37,7 +39,7 @@ shaiya archive check @practice
 ## 3. Extract a file
 
 ```
-shaiya archive extract @practice "*.SData" -o C:\work\extracted
+shaiya archive extract "@practice" "*.SData" -o C:\work\extracted
 ```
 
 The files appear under `C:\work\extracted` in their archive folders. If any of them already exist the command stops and tells you; add `--force` to overwrite or `--skip-existing` to leave them.
@@ -59,10 +61,10 @@ The first `build` is a dry run: it prints what would go in and writes nothing. T
 ## 5. Apply it to the practice copy
 
 ```
-shaiya patch apply @practice C:\work\ps0001.patch --dry-run
-shaiya patch apply @practice C:\work\ps0001.patch
-shaiya archive list @practice "shaiya-test/*"
-shaiya patch verify C:\work\ps0001.patch --client @practice
+shaiya patch apply "@practice" C:\work\ps0001.patch --dry-run
+shaiya patch apply "@practice" C:\work\ps0001.patch
+shaiya archive list "@practice" "shaiya-test/*"
+shaiya patch verify C:\work\ps0001.patch --client "@practice"
 ```
 
 The dry run shows what would happen, including the free disk space needed. The real run prints `applied ps0001.patch: ...` and a `backup:` line naming the journal folder. `list` now shows `shaiya-test/hello.txt`, and `verify --client` says `applied to the client: yes`.
@@ -74,9 +76,9 @@ You will see `signature not checked`: patches can be signed so that only your ow
 ## 6. Undo it
 
 ```
-shaiya patch history @practice
-shaiya patch rollback @practice
-shaiya archive list @practice "shaiya-test/*"
+shaiya patch history "@practice"
+shaiya patch rollback "@practice"
+shaiya archive list "@practice" "shaiya-test/*"
 ```
 
 `history` lists the change and says `rollback possible`. `rollback` restores the old index, cuts `data.saf` back to its old length and removes anything the patch created. The last `list` finds nothing. Journals live in `C:\Games\ShaiyaPractice\shaiya-toolkit-backups`; [undo and recovery](guides/undo-and-recovery.md) explains what is kept and what can block a rollback.

@@ -8,8 +8,8 @@ All commands are in [`shaiya sdata`](../tools/shaiya.md#shaiya-sdata); the Workb
 
 ```
 shaiya sdata info Item.SData
-shaiya sdata info --from @mymod
-shaiya sdata check --from @mymod
+shaiya sdata info --from "@mymod"
+shaiya sdata check --from "@mymod"
 ```
 
 `info` says for each file: `SEED`, the plaintext size, whether the CRC matches and whether the header padding and tail are zero, or `not encrypted`. `check` is the same but exits 1 when a CRC fails. `--from ARCHIVE [PATTERN]...` reads straight out of a client's archive (default pattern `*.sdata`); folders given as inputs are searched for `*.SData`.
@@ -17,9 +17,9 @@ shaiya sdata check --from @mymod
 ## Decrypt, edit, encrypt
 
 ```
-shaiya sdata decrypt --from @mymod "Item/Item.SData" -o C:\work\plain\
+shaiya sdata decrypt --from "@mymod" "Item/Item.SData" -o C:\work\plain\
 (edit C:\work\plain\Item\Item.SData with your editor)
-shaiya sdata encrypt C:\work\plain -o C:\work\enc\ --like @mymod
+shaiya sdata encrypt C:\work\plain -o C:\work\enc\ --like "@mymod"
 ```
 
 - `decrypt` writes the plaintext under the same relative name. If the client stores the file plain, it is copied unchanged (`plain, copied`) unless you pass `--skip-plain`.
@@ -31,10 +31,10 @@ shaiya sdata encrypt C:\work\plain -o C:\work\enc\ --like @mymod
 Then put the encrypted file into the client with a patch or an edit (the paths in `C:\work\enc` mirror the archive):
 
 ```
-shaiya archive replace @mymod C:\work\enc --in-place
+shaiya archive replace "@mymod" C:\work\enc --in-place
 ```
 
-or `shaiya patch build -o ps0001.patch --files C:\work\enc`. Both keep a journal you can roll back. See [mod files](mod-files.md).
+or `shaiya patch build -o ps0001.patch --files C:\work\enc`. `archive replace --in-place` and `patch apply` keep a journal you can roll back; `patch build` only writes the patch file, so there is nothing to undo until you apply it. See [mod files](mod-files.md).
 
 ## Unencrypted clients
 
