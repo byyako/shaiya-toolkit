@@ -24,7 +24,7 @@ shaiya-inspect = { path = "crates/shaiya-inspect" }
 shaiya-ui = { path = "crates/shaiya-ui" }
 shaiya-testkit = { path = "crates/shaiya-testkit" }
 shaiya-build = { path = "crates/shaiya-build" }
-# external crates (versions match the client repo's Cargo.lock where it has them)
+# external crates
 encoding_rs = "0.8"
 sha2 = "0.10"
 zip = { version = "2.2", default-features = false, features = ["deflate"] }

@@ -118,7 +118,7 @@ pub const CLIENTS: [&str; 9] = ["us-108", "ru-ep3", "ru-ep45", "ru-ep54", "fr-ep
 use Cell::{Fails as F, NotAvailable as NA, Ok as O, Plain as P};
 
 /// Expected cells, one row per capability in `CAPS` order, one column per client in `CLIENTS` order. `ru-ep54` has an
-/// index only (its SAF returns 404) and no game.exe. The two "fails" rows for kr-ep8, fawkes-v68 and cn-ep4 assert that parsing returns
+/// index only (no SData available for this client) and no game.exe. The two "fails" rows for kr-ep8, fawkes-v68 and cn-ep4 assert that parsing returns
 /// an error; a future schema fix shows up as a test asking for this table to be updated.
 ///
 /// Note: the 9 EP8 `DB*Data` binary-header files of kr-ep8 and fawkes-v68 do not survive `seed::unwrap` + CRC
