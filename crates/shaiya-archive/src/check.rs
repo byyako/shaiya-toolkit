@@ -111,19 +111,19 @@ pub fn check_index(index: &Index, saf_len: Option<u64>) -> CheckReport {
     // out of bounds
     for p in &layout.out_of_bounds {
         let size = saf_len.unwrap_or(0);
-        add(&mut findings, Severity::Problem, "out_of_bounds", Some(p.clone()), format!("lies outside data.saf ({} bytes)", size));
+        add(&mut findings, Severity::Problem, "out_of_bounds", Some(p.clone()), format!("lies outside data.saf ({})", counted(size, "byte", "bytes")));
     }
     if layout.out_of_bounds_count > layout.out_of_bounds.len() {
-        add(&mut findings, Severity::Problem, "out_of_bounds", None, format!("and {} more entries outside data.saf", layout.out_of_bounds_count - layout.out_of_bounds.len()));
+        add(&mut findings, Severity::Problem, "out_of_bounds", None, format!("and {} outside data.saf", counted((layout.out_of_bounds_count - layout.out_of_bounds.len()) as u64, "more entry", "more entries")));
     }
 
     // overlaps: partial overlaps are warnings, exactly shared ranges are info
     let partial = layout.overlaps.saturating_sub(layout.shared_ranges);
     if partial > 0 {
-        add(&mut findings, Severity::Warning, "overlap", None, format!("{partial} entries start inside the data of an earlier entry (partial overlap)"));
+        add(&mut findings, Severity::Warning, "overlap", None, format!("{} the data of an earlier entry (partial overlap)", if partial == 1 { "1 entry starts inside".to_string() } else { format!("{partial} entries start inside") }));
     }
     if layout.shared_ranges > 0 {
-        add(&mut findings, Severity::Info, "overlap", None, format!("{} entries share exactly the same data range as another entry", layout.shared_ranges));
+        add(&mut findings, Severity::Info, "overlap", None, format!("{} exactly the same data range as another entry", if layout.shared_ranges == 1 { "1 entry shares".to_string() } else { format!("{} entries share", layout.shared_ranges) }));
     }
 
     // shadowed entries: name the visible one
@@ -166,7 +166,7 @@ pub fn check_index(index: &Index, saf_len: Option<u64>) -> CheckReport {
     }
 
     // informational
-    add(&mut findings, Severity::Info, "zero_length", None, format!("{} files", layout.zero_length));
+    add(&mut findings, Severity::Info, "zero_length", None, counted(layout.zero_length as u64, "file", "files"));
     match saf_len {
         None => add(&mut findings, Severity::Info, "saf_missing", None, "data.saf not found; checked the index only".to_string()),
         Some(n) => {
@@ -178,7 +178,7 @@ pub fn check_index(index: &Index, saf_len: Option<u64>) -> CheckReport {
                 Severity::Info,
                 "dead_space",
                 None,
-                format!("{} unused ({pct:.1} %) in {} gaps{}", human_size(dead), layout.gap_count, if top.is_empty() { String::new() } else { format!("; largest: {}", top.join(", ")) }),
+                format!("{} unused ({pct:.1} %) in {}{}", human_size(dead), counted(layout.gap_count as u64, "gap", "gaps"), if top.is_empty() { String::new() } else { format!("; largest: {}", top.join(", ")) }),
             );
         }
     }
@@ -190,8 +190,8 @@ pub fn check_index(index: &Index, saf_len: Option<u64>) -> CheckReport {
             "free_list",
             None,
             match outside {
-                Some(o) => format!("{} entries, {o} lie outside data.saf (the client ignores the list)", index.free.len()),
-                None => format!("{} entries (the client ignores the list)", index.free.len()),
+                Some(o) => format!("{}, {} outside data.saf (the client ignores the list)", counted(index.free.len() as u64, "entry", "entries"), if o == 1 { "1 lies".to_string() } else { format!("{o} lie") }),
+                None => format!("{} (the client ignores the list)", counted(index.free.len() as u64, "entry", "entries")),
             },
         );
     }
@@ -246,6 +246,11 @@ pub fn check_archive(archive: &Archive, opts: &CheckOptions, job: &Job) -> Resul
         }
     }
     Ok(report)
+}
+
+/// `1 entry` / `2 entries`.
+fn counted(n: u64, one: &str, many: &str) -> String {
+    format!("{n} {}", if n == 1 { one } else { many })
 }
 
 #[cfg(test)]
