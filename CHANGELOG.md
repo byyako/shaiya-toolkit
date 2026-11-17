@@ -36,3 +36,4 @@ No release yet. This covers the first foundation of the toolkit and the archive 
 ### Documentation
 
 - Pages for the command line and the Workbench, a getting-started page, guides for modding files, making patches, SData files and undo and recovery, an FAQ, and the archive and patch format pages extended.
+- A documentation site (MkDocs Material, offline-safe: no external fonts, scripts or analytics) built from `docs/` and deployed to GitHub Pages.

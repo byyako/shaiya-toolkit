@@ -55,4 +55,4 @@ The programs are `target/release/shaiya` and `target/release/shaiya-workbench`. 
 
 MIT, see [LICENSE](LICENSE). Made by byyako. Third-party components: [THIRD-PARTY-NOTICES.txt](THIRD-PARTY-NOTICES.txt).
 
-Support the project: https://buymeacoffee.com/tylernol
+[Support the project](https://buymeacoffee.com/tylernol)

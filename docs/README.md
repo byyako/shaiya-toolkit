@@ -50,7 +50,11 @@ US, RU, FR, CN, Phoenix, KR episode 8 and Fawkes v68. What works on which client
 | [dev/testing.md](dev/testing.md) | Test levels, the testkit, opt-in tests on your own client, the matrix |
 | [dev/releasing.md](dev/releasing.md) | Versions, the changelog, tags, the release workflow |
 | [dev/adding-a-tool.md](dev/adding-a-tool.md) | Checklist for a new tool |
+| [dev/docs-site.md](dev/docs-site.md) | Editing these docs: links, new pages, screenshots, previewing the site, publishing to GitHub Pages |
+| [Contributing](../CONTRIBUTING.md) | How to propose a change |
+| [Security](../SECURITY.md) | Reporting a vulnerability |
+| [Changelog](../CHANGELOG.md) | What changed in each version |
 
 ## Support the project
 
-https://buymeacoffee.com/tylernol
+[Support the project](https://buymeacoffee.com/tylernol)

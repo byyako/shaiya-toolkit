@@ -24,18 +24,27 @@ Make a virtual environment outside the repository, then from the repository root
 
 ```
 python -m venv <somewhere outside the repo>
-<venv>/bin/python -m pip install -r .github/docs-site/requirements.txt
-mkdocs serve
+<venv>/Scripts/python -m pip install -r .github/docs-site/requirements.txt
+<venv>/Scripts/python -m mkdocs serve
 ```
 
-On Windows the venv programs are in `Scripts` instead of `bin`. Before a pull request, run the same checks as CI:
+On Linux and macOS the venv programs are in `bin` instead of `Scripts`: `<venv>/bin/python -m pip ...` and `<venv>/bin/python -m mkdocs serve`. Before a pull request, run the same checks as CI:
 
 ```
-mkdocs build --strict
-python -I .github/docs-site/check_site.py site
+<venv>/Scripts/python -m mkdocs build --strict
+<venv>/Scripts/python -I .github/docs-site/check_site.py site
 ```
 
 The theme prints a notice about its end of life. Set `NO_MKDOCS_2_WARNING=1` to silence it. `site/` is ignored by git.
+
+## Publishing
+
+The workflow `docs.yml` publishes the site. The repository owner does these steps once:
+
+1. Settings > Pages > Source: choose **GitHub Actions**.
+2. Settings > Environments > `github-pages`: add a deployment tag rule `v*` (the `main` branch rule stays), so releases can deploy.
+
+A Pages site is public even when the repository is private. On a private repository, Pages needs a paid plan, so the deploy job fails (red) until the repository is public and Pages is enabled.
 
 ## Updating the pins
 

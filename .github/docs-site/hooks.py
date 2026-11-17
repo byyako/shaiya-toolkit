@@ -19,7 +19,11 @@ ROOT_PAGES = {"CHANGELOG.md": "changelog.md", "CONTRIBUTING.md": "contributing.m
 SCREENSHOTS = "assets/screenshots/"
 LINK = re.compile(r"(!?)\[([^\]]*)\]\(([^)\s]+)\)")
 SCHEME = re.compile(r"^(?:[a-z][a-z0-9+.-]*:|#|/)", re.I)
-FENCE = re.compile(r"^(```|~~~).*?^\1", re.M | re.S)
+# a fenced block (any indentation, ``` or ~~~, closed by the same fence or the end of the page) or an inline code span
+SKIP = re.compile(
+    r"^[ \t]*(?P<f>`{3,}|~{3,})[^\n]*\n.*?(?:^[ \t]*(?P=f)[`~]*[ \t]*$|\Z)|(?P<t>`+)(?!`).+?(?<!`)(?P=t)(?!`)",
+    re.M | re.S,
+)
 
 
 def _repo_root(config):
@@ -64,9 +68,9 @@ def on_page_markdown(markdown, page, config, files):
         rel = posixpath.relpath(dest, page_dir or ".")
         return f"{bang}[{text}]({rel}{sep}{frag})"
 
-    # leave fenced code blocks alone
+    # leave fenced code blocks and inline code spans alone
     out, last = [], 0
-    for f in FENCE.finditer(markdown):
+    for f in SKIP.finditer(markdown):
         out.append(LINK.sub(fix, markdown[last:f.start()]))
         out.append(f.group(0))
         last = f.end()
