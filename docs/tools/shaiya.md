@@ -4,7 +4,16 @@
 shaiya [GLOBAL FLAGS] <COMMAND> [ARGS]
 ```
 
-Commands in this version: `info` and `version` (and clap's `help`). The command groups `archive`, `patch`, `sdata`, `log` and later `svmap` are reserved for later releases.
+| Command | What it does |
+|---|---|
+| [`info`](#shaiya-info) | Identify files and describe them |
+| [`archive`](#shaiya-archive) | List, check, extract, edit, compare, pack, swap `data.sah` / `data.saf` |
+| [`patch`](#shaiya-patch) | Build, verify, apply and roll back `psNNNN.patch` files; sign them |
+| [`sdata`](#shaiya-sdata) | Describe, check, decrypt and encrypt SData files |
+| [`clients`](#shaiya-clients) | The saved "my client folders" list (`@name`) |
+| [`version`](#shaiya-version) | Version, git revision, target |
+
+Planned: `log` and `svmap`. New to the toolkit? Start with [the five-minute guide](../getting-started.md).
 
 ## Global flags
 
@@ -16,17 +25,30 @@ They may come before or after the command.
 | `-q`, `--quiet` | No progress and no notes; errors still go to stderr. |
 | `-v`, `--verbose` | More detail (elapsed times); repeatable. |
 | `--progress <auto\|always\|never>` | `auto` shows progress only when stderr is a terminal; `always` prints a line per 10% (useful for logs). |
-| `-h`, `--help` | Help. |
+| `--data-dir DIR` | Keep the saved client folders and settings in `DIR` instead of the default data folder (see [install.md](../install.md#portable-mode-and-where-settings-live)). The Workbench takes the same flag. |
+| `-h`, `--help` | Help. Every command has one: `shaiya archive extract --help`. |
 | `-V`, `--version` | The version line. |
 
 ## Conventions (every command follows them)
 
-- Writing commands take `-o, --out PATH`. `--in-place` writes the input after making a backup (`<file>.bak`, or `<file>.<UTC stamp>.bak` when that exists). `--force` allows overwriting an existing output that is not the input. `--dry-run` prints what would be written and writes nothing. A command that would change a file but was given neither `--out` nor `--in-place` stops with exit code 4. (No command in this version writes; the rule is fixed for the next ones.)
-- Archive paths are shown with `/`, matched case-insensitively, and taken as UTF-8 then encoded in code page 949 for the lookup.
-- Human output goes to **stdout**; progress, notes and errors go to **stderr** (`error: <message>`, optional `hint: <text>` lines).
-- `--json`: stdout holds exactly one JSON value, the result object or an error object, for example `{"error": {"kind": "format", "message": "Item.SData: SEED checksum failed (at byte 40)", "file": "Item.SData", "offset": 40}}`. Keys are snake_case, sizes are integers in bytes, hashes lower-case hex, times ISO-8601 UTC, archive paths use `/`. Adding a key is not a breaking change; renaming or removing one is (CHANGELOG "Breaking").
-- Progress line (stderr, at most 10 updates per second): `[stage]  45%  900.0 MB / 2.0 GB  120.0 MB/s  ETA 8 s`.
-- Writes are atomic (temporary file, then rename), so an interrupted run leaves the input as it was and at most a `*.shaiya-tmp` file, which a later run removes after 24 hours.
+- **ARCHIVE arguments** (`archive`, `sdata --from`) accept a client folder (the one holding `data.sah`, in any letter case), a `.sah` file (its `.saf` is the file with the same stem next to it), or `@name` from the saved client folders ([`clients`](#shaiya-clients)). Read-only commands that only need the index (`list`, `stats`, `index`, `check`, `diff --quick`) also accept a `.sah` whose `.saf` is missing and say `note: data.saf not found; working from the index only`.
+- **CLIENT arguments** (`patch apply`, `patch rollback`, `patch history`, `archive swap`) accept a client folder or `@name`. Commands that change the archive in place only work on a folder's own `data.sah`/`data.saf`; for any other pair write a new one with `-o`.
+- **`@name`** is looked up in the saved list. An unknown name stops with exit 3 and `hint: shaiya clients list`.
+- **Writing a client in place.** `archive add`, `replace`, `remove`, `compact` and `patch apply` need either `--in-place` (the client's own files; `patch apply` is always in place) or `-o OUT` (a new archive pair, nothing else touched). Giving neither stops with exit 4. `-o OUT` ending in `.sah` names the index (the `.saf` gets the same stem); any other path is a folder that receives `data.sah` and `data.saf`. An existing output stops with exit 4 unless `--force`; an output is never allowed to be one of its inputs.
+- **`--dry-run`** prints what would happen, in the shape of the real output, and changes nothing. With `--json` the document has `"dry_run": true`.
+- **Backups and journals.** Every in-place change records a *journal* in `<client>/shaiya-toolkit-backups/<UTC stamp>-<label>/` (a copy of the old index, a small `journal.txt`, and a copy of every loose file the change overwrote). `shaiya patch rollback` undoes it. See [undo and recovery](../guides/undo-and-recovery.md) for exactly what is kept and what blocks a rollback.
+  - `--journal-dir DIR` puts the journals elsewhere.
+  - `--no-journal` skips the journal. The previous index is still copied to `data.sah.bak`, but that is a plain copy that **the next change overwrites**, there is no rollback command for it, and loose files overwritten under `--no-journal` have **no backup at all**.
+  - `compact --in-place` is not journaled: it replaces `data.saf` with a rewritten one, keeps only an index backup (`data.sah.bak`), and ends rollback for every earlier journal.
+- **In-use check.** Before a write the toolkit tries to open `data.sah`, `data.saf` and `game.exe` for writing. On Windows a running game (or another program holding the files) stops the command: `error: refused: data.saf is open in another program; close the game (and any other program using this client, Workbench included) and try again`, exit 4. On Linux and macOS the toolkit cannot tell and prints `warning: cannot check whether the game is running on this system; make sure it is closed`.
+- **Recovery.** Before every write the toolkit finishes or discards the leftovers of an interrupted change and prints each as a `note:` line.
+- **Patterns** (`archive list|extract|diff`, `sdata ... --from`): globs, case-insensitive. `*` and `?` stay inside one path segment, `**` as a whole segment crosses segments, `[a-z]` and `[!x]` are character classes, a pattern without `/` matches the file name in any folder, a pattern with `/` is anchored at the archive root, a trailing `/` means everything under that folder, `\` is read as `/`. No regular expressions. `--exclude PAT` (repeatable) removes matches; `--min-size` and `--max-size` take `1500`, `64k` (1000s), `2MiB` (1024s), `1.5MB`, `3G`; `--list FILE` reads paths from a file (one per line; only the first tab-separated column is used, `#` lines and a header line `path` are skipped).
+- **Shadowed entries.** When two entries have the same name (any case) in one folder, the client loads the later one; the earlier is *shadowed*. Commands show only visible files; `--include-shadowed` adds the others (extract names them `name~shadowed-N.ext`). See [the archive format](../formats/archive.md#shadowing).
+- Archive paths are shown with `/`, matched case-insensitively, and handled in code page 949 in the archive.
+- Human output goes to **stdout** (one record per line for listings; summaries go to stderr); progress, notes, warnings and errors go to **stderr** (`error: <message>`, optional `hint: <text>` lines).
+- **`--json`**: stdout holds exactly one JSON value, the result object or an error object, for example `{"error": {"kind": "format", "message": "Item.SData: SEED checksum failed (at byte 40)", "file": "Item.SData", "offset": 40}}`. Keys are snake_case, sizes are integers in bytes, hashes lower-case hex, times ISO-8601 UTC, archive paths use `/`. Adding a key is not a breaking change; renaming or removing one is (CHANGELOG "Breaking").
+- Progress line (stderr, at most 10 updates per second): `[stage]  45%  900.0 MB / 2.0 GB  120.0 MB/s  ETA 8 s`, shown for jobs over 64 MiB or 2 seconds.
+- Output files are written atomically (temporary file, then rename), so an interrupted run leaves the target as it was and at most a `*.shaiya-tmp` file.
 - On Windows, when `shaiya.exe` is started by double-click, it prints the help and "This is a command-line program. Open a terminal and run `shaiya --help`." and waits for Enter.
 
 ## Exit codes
@@ -34,16 +56,20 @@ They may come before or after the command.
 | Code | Meaning |
 |---|---|
 | 0 | Success; checks passed; no differences. |
-| 1 | The answer is "no": differences found, a check or verification failed. |
+| 1 | The answer is "no": differences found, a check, a CRC or a verification failed. |
 | 2 | Usage error (unknown flag, missing argument). |
-| 3 | Input error: unreadable or missing file, bad format, checksum failure, unsupported version. |
-| 4 | Refused by a safety rule. |
+| 3 | Input error: unreadable or missing file, unknown `@name`, bad format, checksum failure, unsupported version. |
+| 4 | Refused by a safety rule: existing output, no `--in-place` or `-o`, the game or another program has the files open, blocked rollback, bad names. |
 | 5 | Internal error (a panic); the message asks for a bug report. |
 | 130 | Cancelled. |
 
 A command over several inputs continues past bad inputs, reports each, and exits with the highest code met.
 
-## `shaiya info [--hash] <PATH>...`
+## `shaiya info`
+
+```
+shaiya info [--hash] <PATH>...
+```
 
 Identifies each file **by content first, name second** and describes it:
 
@@ -56,9 +82,170 @@ game.exe  Windows program (x86), linked 2010-04-26 03:12:44 UTC, 3,203,072 bytes
 
 Kinds: SAH index, SAF data (with the file count and live bytes from a `.sah` next to it), SData (SEED-encrypted, checksum checked; or plain), patch (archive files, loose files, removals, whether a `.sig` sits next to it), patch signature, Windows program (machine and link time), unknown (the first 16 bytes). A damaged file is reported with a `problem:` line, not a failure; files over 512 MiB are not decrypted for the checksum check.
 
-`--hash` adds a `sha256 <64 hex digits>` line per file and runs with progress (files over 64 MiB show the progress line).
+`--hash` adds a `sha256 <64 hex digits>` line per file and runs with progress.
 
-Exit code 0 when every path was read and none has problems; 3 when a path could not be read or has problems. With `--json` the result is `{"files": [ ... ]}` with one object per path (`path`, `size`, `kind`, `details`, `sha256`, `problems`); paths that could not be read at all are listed under `errors`.
+Exit 0 when every path was read and none has problems; 3 when a path could not be read or has problems. With `--json` the result is `{"files": [ ... ]}` with one object per path (`path`, `size`, `kind`, `details`, `sha256`, `problems`); paths that could not be read at all are listed under `errors`.
+
+## `shaiya archive`
+
+| Command | Arguments and flags | Exit |
+|---|---|---|
+| `list` | `ARCHIVE [PATTERN]...` `--exclude PAT` `--list FILE` `--min-size N` `--max-size N` `--include-shadowed` `--long` `--tree` `--folders` `--names-only` `--sort name\|size\|offset\|version` `--reverse` | 0; 3 |
+| `stats` | `ARCHIVE` `--top N` (rows per table, default 15) | 0; 3 |
+| `check` | `ARCHIVE` `--deep` (read every visible file) `--strict` (warnings count as problems) `--gaps N` (largest gaps to print, default 10) | 0 no problems; 1 problems; 3 |
+| `index` | `SAH` | 0 rewrite identical; 1 not identical; 3 |
+| `extract` | `ARCHIVE [PATTERN]... -o DIR` `--exclude PAT` `--list FILE` `--min-size` `--max-size` `--include-shadowed` `--force` or `--skip-existing` `--no-times` `--dry-run` | 0; 3; 4 targets exist |
+| `cat` | `ARCHIVE PATH` `-o FILE` `--force` | 0; 3; 4 |
+| `add` | `ARCHIVE SRC...` (`--in-place` or `-o OUT`) `--at PREFIX` `--as PATH` `--replace` `--timestamp T` `--dry-run` `--force` `--no-journal` `--journal-dir DIR` | 0; 3; 4 |
+| `replace` | as `add`, with `--add-missing` instead of `--replace` | 0; 3; 4 |
+| `remove` | `ARCHIVE [PATH]...` (`--in-place` or `-o OUT`) `--list FILE` `--ignore-missing` `--dry-run` `--force` `--no-journal` `--journal-dir DIR` | 0; 3; 4 |
+| `compact` | `ARCHIVE` (`--in-place` or `-o OUT`) `--min-dead N` `--dry-run` `--force` `--journal-dir DIR` | 0; 3; 4 |
+| `diff` | `OLD NEW [PATTERN]...` `--quick` `--include-shadowed` `--only added,removed,different,unknown` `--show-same` `--summary` | 0 same; 1 differences; 3 |
+| `pack` | `FOLDER -o OUT` `--sah-version 0\|1` `--timestamp T` `--include-all` `--exclude PAT` `--force` `--dry-run` | 0; 3; 4 |
+| `swap` | `CLIENT OTHER` `--dry-run` | 0; 3; 4 |
+
+Details:
+
+- **`list`**: one line per file: size then path (`--long`: offset in hex, size, pack time, path; `--names-only`: just paths; `--tree` groups by folder; `--folders` shows folders only with file counts and sizes). The summary (`9 of 19,939 files, 6.6 MB`) goes to stderr.
+- **`stats`**: SAH version, file counts (visible, shadowed), folders, free-list entries, trailer, `data.saf` size, live and unused bytes, and tables by folder and by extension.
+- **`check`** findings: `out_of_bounds` (problem); `unreadable_entry` (problem, `--deep`); `overlap` (warning for a partial overlap, info for an exactly shared range); `shadowed` (warning, one per shadowed entry, names the visible one); `hash_collision` (warning: different names, same lookup hash, which the client also shadows); `undecodable_name` (warning: not valid code page 949); `escaped_name` (info: would be renamed on extract); `zero_length`, `dead_space`, `free_list`, `saf_missing`, `trailer` (info). Ends with `OK: 0 problems, 0 warnings` or the counts. `--strict` turns warnings into problems for the exit code.
+- **`index`**: parses `data.sah`, writes it back in memory and compares with the file.
+- **`extract`**: folders are created; existing files stop the command with exit 4 unless `--force` (overwrite) or `--skip-existing`. File times are set from the pack time unless `--no-times`. Names Windows cannot hold are changed (a `:` becomes `%3A`, reserved names like `CON` get escaped) and are never written outside `-o`. A failed entry is reported and the rest continue (exit 3).
+- **`cat`**: writes one file to `-o FILE`, or to stdout when stdout is not a terminal; to a terminal without `-o` it stops with exit 4.
+- **`add` / `replace`**: `SRC` is files and folders. A file goes to `PREFIX/<file name>`; a folder's files go to `PREFIX/<path relative to that folder>` (the folder's own name is not a path segment). `--as PATH` gives a single file's exact archive path. The entry's time is the file's modification time or `--timestamp` (Unix seconds, `2026-11-15` or `2026-11-15T12:00:00Z`). `add` refuses paths that already exist unless `--replace`; `replace` refuses paths that do not exist unless `--add-missing`. Refusals list every path at once (exit 4). Names must be encodable in code page 949.
+- **`remove`**: paths as arguments and/or `--list FILE`. A path that is not in the archive stops the command unless `--ignore-missing` (those are reported as "not present").
+- **In place** (`--in-place`): the new bytes are appended to `data.saf`, the index is replaced last, and a journal is written (see conventions). `-o OUT` instead writes a fresh, compacted pair (shadowed entries and the free list are dropped) and leaves the client alone.
+- **`compact`**: rewrites `data.saf` with only the bytes the index uses, drops shadowed entries and the free list. `--dry-run` prints size, live and unused bytes, and the free space needed (live bytes plus 256 MB). `--min-dead N` does nothing when fewer than N bytes are unused. **In place, it ends rollback** of every earlier journal of that client; the command says how many ("N earlier changes can no longer be rolled back after compacting"). `-o OUT` writes a compacted copy and changes nothing else.
+- **`diff`**: `--quick` compares indexes only (equal length and pack time count as the same); otherwise contents are compared (a side without `data.saf` switches to `--quick` with a note). Lines are `+ added`, `- removed`, `~ different`, `? unknown` (and `= same` with `--show-same`); `--summary` prints only the counts line.
+- **`pack`**: builds a new pair from a folder (sorted, names in code page 949; `Thumbs.db`, `desktop.ini` and similar are skipped unless `--include-all`). `--sah-version 1` writes the version-1 index.
+- **`swap`**: puts another archive pair (a folder or a `.sah`) in place of the client's own. The old pair is kept as `data.<UTC stamp>.sah` / `.saf` in the same folder, and the command prints the `swap` command that goes back. `--dry-run` prints the four renames. It is crash safe (see [undo and recovery](../guides/undo-and-recovery.md#swap-back)).
+
+Output shapes (numbers illustrative):
+
+```
+$ shaiya archive list @us '*.SData' --long
+0x00a1b2c3d4   2,960,114  2010-05-17T03:12:44Z  Item/Item.SData
+
+$ shaiya archive check @us
+data.sah  version 0, 19,939 files, 0 shadowed, 166 folders, no free list
+data.saf  1,991,954,802 bytes, all referenced, 0 gaps, 0 overlaps
+info      zero_length: 0 files
+OK: 0 problems, 0 warnings
+
+$ shaiya archive add @us mods/ --in-place --replace
+added 1, replaced 1, removed 0 (2.9 MB appended to data.saf)
+  + interface/t1.txt
+  ~ Item/Item.SData
+backup: C:\Games\Shaiya\shaiya-toolkit-backups\20261115T120000Z-archive-edit-2-files  (undo: shaiya patch rollback @us)
+
+$ shaiya archive diff data.orig.sah data.sah --quick --summary
+476 removed, 8 added, 0 different, 19,931 same, 0 unknown
+```
+
+JSON (`--json`):
+
+| Command | Document |
+|---|---|
+| `list` | `{"archive": {"sah", "saf" (or null), "sah_version", "files"}, "entries": [{"path", "size", "offset", "version", "version_utc", "shadowed", "raw_hex" (only for names that are not valid code page 949)}], "shown", "shadowed_hidden", "total_size"}`; `--tree` and `--folders` add `"folders": [{"path", "files", "bytes"}]` |
+| `stats` | `{"sah_version", "files", "visible", "shadowed", "dirs", "free_entries", "trailer_hex", "data_end", "saf_len", "live_bytes", "dead_bytes", "zero_length", "by_folder": [{"name", "files", "bytes"}], "by_extension": [{"ext", "files", "bytes"}]}` |
+| `check` | `{"ok", "problems", "warnings", "sah_version", "files", "visible", "dirs", "free_entries", "trailer", "layout": {"saf_len", "data_end", "live_bytes", "dead_bytes", "gap_count", "largest_gaps", "overlaps", "shared_ranges", "zero_length", "out_of_bounds", "out_of_bounds_count"}, "findings": [{"code", "severity", "message", "path"}]}` |
+| `index` | `{"sah", "sah_version", "files", "free_entries", "trailer_hex", "identical", "first_difference"}` |
+| `extract` | the extract report (written, skipped, escaped names, bytes) plus `"out"`; `cat -o`: `{"path", "size", "out"}` |
+| `add`, `replace`, `remove` | `{"added": [...], "replaced": [...], "removed": [...], "missing": [...], "loose": [...], "bytes_appended", "saf_len_before", "saf_len_after", "journal"}`; with `-o` also `"out_sah"`, `"out_saf"`; dry run adds `"dry_run": true` |
+| `compact` | in place: `{"before", "after", "duplicates": [...]}`; dry run: `{"dry_run", "nothing_to_do", "size", "live_bytes", "dead_bytes", "shadowed", "free_entries", "needs_free_bytes"}`; with `-o` as `add` |
+| `diff` | `{"summary": {"added", "removed", "different", "same", "unknown"}, "entries": [...]}` (entries empty with `--summary`) |
+| `pack` | the pack report plus `"out_sah"`, `"out_saf"` |
+| `swap` | `{"installed_from", "kept_as": [sah, saf]}` |
+
+## `shaiya patch`
+
+| Command | Arguments and flags | Exit |
+|---|---|---|
+| `build` | `-o OUT.patch` `--files DIR` `--loose DIR` `--remove LIST` `--diff OLD NEW` `--timestamp T` `--sign KEY --check-version N` `--force` `--dry-run` | 0; 3; 4 |
+| `list` | `PATCH` | 0; 3 |
+| `verify` | `PATCH...` `--key PUBLIC.key` or `--public-hex HEX` with `--check-version N` `--client CLIENT` `--require-signature` | 0; 1 a check failed; 3 |
+| `apply` | `CLIENT PATCH...` `--dry-run` `--key PUBLIC.key` or `--public-hex HEX` with `--check-version N` `--protect NAME` `--no-journal` `--journal-dir DIR` | 0; 3; 4 |
+| `rollback` | `CLIENT` `--id ID` `--force` `--dry-run` `--journal-dir DIR` | 0; 3; 4 blocked |
+| `history` | `CLIENT` `--prune KEEP` `--journal-dir DIR` | 0; 3 |
+| `keygen` | `--secret FILE --public FILE` | 0; 3; 4 a file exists |
+| `sign` | `FILE... --key SECRET.key --check-version N` `--force` | 0; 3; 4 a `.sig` exists |
+| `sign-updater` | `EXE --key SECRET.key --updater-version V --check-version N` `--force` | 0; 3; 4 |
+
+- **`build`** inputs: `--files DIR` mirrors archive paths (`DIR/Item/Item.SData` becomes `Item/Item.SData`); `--loose DIR` holds files for the client folder itself (for example `game.exe`); `--remove LIST` names archive paths to delete (one per line, same format as `--list`); `--diff OLD NEW` builds the patch that turns archive OLD into archive NEW (instead of `--files`/`--remove`; it may be combined with `--loose`). The same inputs always give the same bytes (file order, times and compression are fixed; `--timestamp` sets the entry time of every file, otherwise file times are used). The build warns on stderr (it never fails for these) when the output name is not `psNNNN.patch` (the original updater only fetches that name), when the patch carries removals (`remove.txt` is honoured by the toolkit and the replacement updater, not by the original `Updater.exe`), and when it is empty. Names that cannot be written (unencodable in code page 949, reserved toolkit names, `..` paths, names differing only by case) stop the build with exit 4 and list every offender. `--sign KEY --check-version N` also writes `OUT.patch.sig`. `--dry-run` prints the contents table and sizes.
+- **`list`**: prints what is inside (`archive`, `loose`, `remove` lines) and a count line.
+- **`verify`**: one block per patch: structure (ZIP opens, `update.sah` parses, `update.saf` covers every entry, every entry reads to its end, removal and loose names valid, no case duplicates) and signature (`valid`, `MISSING`, `invalid`, or "not checked" without a key). A key needs `--check-version`. `--require-signature` makes a missing `.sig` a failure. `--client CLIENT` adds whether the patch is **applied**: every file present and equal, every removal absent, every loose file equal by SHA-256 (`applied to the client: yes` or a list of what differs).
+- **`apply`**: patches are applied in the order given (a warning when the `psNNNN` numbers are not ascending), each with its own journal. With `--key` (or `--public-hex`) and `--check-version`, **every** patch's signature is verified before the first write (exit 4 on failure); without a key the output says `signature not checked`. A failure stops at that patch; earlier ones stay applied and are listed. `--protect NAME` writes a loose file of that name as `NAME.new` instead of overwriting it. `--dry-run` shows, per patch, what would be added, replaced, removed, written, how many bytes are appended and how much free space is needed.
+- **`rollback`**: undoes the newest change (or `--id ID`; ids are in `history`). It restores the old index, cuts `data.saf` back to its earlier length, restores the loose files the change overwrote and deletes the ones it created. A loose file that changed after the patch blocks it unless `--force` (the changed file is saved first). It is blocked, with the reason printed, by a newer journal, a compaction, a swap or any other change of `data.sah`; see [undo and recovery](../guides/undo-and-recovery.md#what-blocks-a-rollback). Exit 4 when blocked.
+- **`history`**: a table of id, label, kind (`patch` or `archive-edit`), created, state (`applied`, `rolled back <time>`, `pending`) and whether rollback is possible. `--prune KEEP` deletes all but the newest KEEP journals (rolling back a pruned journal is then impossible).
+- **`keygen`**: writes an Ed25519 key pair (hex text files), refuses to overwrite either, prints the public key and reminders: keep the secret key off the patch server and backed up (on Windows: in a folder only you can open), and never sign a different file under a patch number you have already published.
+- **`sign`**: writes `FILE.sig` next to each file. The signature covers the file name, the CheckVersion and the file's SHA-256 ([patch format](../formats/patch.md#signatures)).
+- **`sign-updater`**: signs an updater executable under `shaiya-updater-<V>.exe`.
+
+```
+$ shaiya patch list ps0109.patch
+ps0109.patch  ZIP 1.9 MB (3.0 MB unpacked), update.sah version 0, signature file present
+  archive   2,960,114  2010-05-17T03:12:44Z  Item/Item.SData
+  loose        12,345                        notice.txt
+  remove                                     test/junk.eft
+1 archive file (2.9 MB), 1 loose file, 1 removal
+
+$ shaiya patch apply @us ps0109.patch --dry-run
+ps0109.patch -> C:\Games\Shaiya (data.sah, 19,939 files)
+  would add 0, replace 1, remove 1 (0 not present), write 1 loose file (overwrites notice.txt)
+  would append 2.9 MB to data.saf; needs about 5.8 MB free on that drive while applying
+  signature not checked
+
+$ shaiya patch verify ps0109.patch ps0110.patch --key public.key --check-version 3
+ps0109.patch  structure OK (1 archive file, 1 loose, 1 removal); signature valid
+ps0110.patch  structure OK (4 archive files); signature MISSING (ps0110.patch.sig not found)
+
+$ shaiya patch rollback @us
+rolled back ps0109.patch (applied 2026-11-15T12:00:00Z): index restored, data.saf truncated to 1,991,954,802 bytes, 1 loose file restored, 0 deleted
+```
+
+JSON: `build` gives `{"out", "files": [...], "loose": [...], "removals": [...], "archive_bytes", "loose_bytes", "signature", "dry_run"}`; `list` gives `{"files": [{"path", "length", "version"}], "loose": [[name, size]], "removals": [...], "sah_version", "signature_file", "zip_size", "unpacked_size"}`; `verify` gives `{"patches": [{"patch", "problems": [...], "signature": {"status"}, "not_applied": null or [...]}]}`; `apply` gives `{"client", "results": [{"added", "replaced", "removed", "missing", "loose", "bytes", "journal"}]}` (dry run: `{"dry_run": true, "plans": [{"patch", "added", "replaced", "removed", "missing", "loose": [{"name", "target", "size", "overwrites", "protected"}], "bytes", "temp_bytes"}]}`); `rollback` gives `{"journal", "restored_index", "truncated_to", "restored_loose", "deleted_loose"}`; `history` gives `{"journals": [{"id", "dir", "kind", "label", "created_utc", "tool", "sah_name", "saf_name", "saf_len_before", "saf_len_after", "sah_sha256_before", "sah_sha256_after", "loose": [...], "state", "rollback": {"possible", "reason"}}], "pruned": [...]}`; `keygen` gives `{"public_hex", "secret_file", "public_file"}`; `sign` and `sign-updater` give `{"signed": [{"file", "sig", "name", "check_version"}]}`.
+
+## `shaiya sdata`
+
+| Command | Arguments and flags | Exit |
+|---|---|---|
+| `info` | `INPUT...` or `--from ARCHIVE [PATTERN]...` `--all-files` | 0; 3 |
+| `check` | same as `info` | 0 all OK or plain; 1 a CRC failed; 3 |
+| `decrypt` | `INPUT...` (`-o PATH` or `--in-place`) or `--from ARCHIVE [PATTERN]... -o PATH` `--unchecked` `--skip-plain` `--force` or `--skip-existing` `--all-files` `--dry-run` | 0; 1 CRC failed with `--unchecked`; 3; 4 |
+| `encrypt` | `INPUT...` (`-o PATH` or `--in-place`) `--like PATH\|ARCHIVE` `--skip-encrypted` `--force` or `--skip-existing` `--all-files` `--dry-run` | 0; 3; 4 |
+
+- Inputs are files, or folders searched recursively for names ending in `.SData` (any case; every file with `--all-files`). With `--from`, the inputs are patterns over the archive's visible files (default `*.sdata`).
+- `-o PATH` is a file when there is exactly one input and `PATH` is not an existing folder and does not end in `/` or `\`; otherwise it is a folder (created) that receives each file under its own relative name. `-o` equal to an input folder without `--in-place` stops with exit 4. Existing outputs stop the command (exit 4) unless `--force` or `--skip-existing`.
+- `--in-place` replaces the input after copying the original to `NAME.bak` (the note says so; an existing `.bak` is not overwritten, a time-stamped name is used instead). Do not use it on files inside a client's archive: use `--from` with `-o`, then put the result back with `archive replace` or a patch.
+- `decrypt` copies a plain (unencrypted) file unchanged (status "plain, copied") unless `--skip-plain`. A file whose CRC fails is exit 3 for that file and the batch continues, unless `--unchecked` (written anyway, status "checksum mismatch", exit 1).
+- `encrypt` copies an already encrypted file unless `--skip-encrypted`. `--like` takes a file (one input), a folder of originals or an ARCHIVE: each output reuses the original's header padding and tail, so an unchanged file comes out byte-identical, and a plain original stays plain.
+- The summary line (`9 files: 6 decrypted, 3 plain copied, 0 failed`) goes to stderr.
+
+```
+$ shaiya sdata info Item.SData GuildHouse.SData
+Item.SData        SEED, plaintext 2,960,114 bytes, CRC 0x8c1f02aa OK, header padding zero, tail zero
+GuildHouse.SData  not encrypted, 41,220 bytes
+
+$ shaiya sdata decrypt --from @us -o plain/
+$ shaiya sdata encrypt plain/ -o enc/ --like @us
+```
+
+JSON: `{"items": [{"name", "status", "size", "plain_size", "crc", "crc_ok", "padding_zero", "tail_zero", "out", "message"}], "summary": {"<status>": count}}`.
+
+Guide: [SData files](../guides/sdata-files.md).
+
+## `shaiya clients`
+
+The saved client folders live in the toolkit's data folder (`shared.json`), shared by the CLI and the Workbench. The toolkit never scans your disks for clients.
+
+| Command | What it does | Exit |
+|---|---|---|
+| `list` | Table of name, status (`found` or `missing`), path, note. JSON: `{"clients": [{"name", "path", "note", "added_utc", "exists"}]}` | 0 |
+| `add NAME PATH [--note TEXT]` | Saves a folder (stored as an absolute path; it must hold `data.sah`). `NAME` is 1 to 40 characters without `/`, `\` or `@` | 0; 3 no `data.sah`; 4 bad or duplicate name |
+| `remove NAME` | Forgets the name; no file is touched | 0; 3 unknown name |
+| `show NAME` | Path, SAH version, file count, `Version.ini` CheckVersion and CurrentVersion, whether `game.exe` is there, number of journals. JSON: `{"name", "path", "note", "added_utc", "sah_version", "files", "check_version", "current_version", "game_exe", "journals"}` | 0; 3 |
+
+Any `ARCHIVE` or `CLIENT` argument may then be `@name` (names are matched case-insensitively).
 
 ## `shaiya version`
 
