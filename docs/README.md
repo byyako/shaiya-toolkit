@@ -1,4 +1,34 @@
-# Documentation
+# Shaiya Toolkit
+
+Command-line and desktop tools for Shaiya game data, built on one tested Rust core: the `shaiya` command line and Shaiya Workbench. Browse, extract and edit a client's `data.sah`/`data.saf`, build, sign, apply and roll back `psNNNN.patch` files, convert SData files, and identify any client file. Changes to a client folder are journaled so they can usually be rolled back.
+
+> **These tools work on your own copy of the game. The repository and the releases contain no game files, and the tools never download any. Changes to a client folder are recorded in a journal so they can usually be rolled back, but not changes made with --no-journal or archive compact --in-place, which keep at most the previous index (data.sah.bak). Everything else is written only to a path you name.**
+
+![Shaiya Workbench with a client's archive open: folder tree, file list and preview](assets/screenshots/workbench-overview.png)
+
+## Download
+
+No release has been published yet. Releases will carry these files:
+
+| Program | Windows | Linux | macOS |
+|---|---|---|---|
+| Everything | `shaiya-toolkit-<version>-windows-x86_64.zip` | `shaiya-toolkit-<version>-linux-x86_64.zip` | `shaiya-toolkit-<version>-macos-universal.zip` |
+| `shaiya` (command line) | `shaiya-<version>-windows-x86_64.zip` | `shaiya-<version>-linux-x86_64.zip` | `shaiya-<version>-macos-universal.zip` |
+| Shaiya Workbench | `shaiya-workbench-<version>-windows-x86_64.zip` | `shaiya-workbench-<version>-linux-x86_64.zip` | `shaiya-workbench-<version>-macos-universal.zip` |
+
+All downloads are on the [releases page](https://github.com/byyako/shaiya-toolkit/releases). Every release has a `SHA256SUMS.txt`; [install.md](install.md#check-the-download) shows how to check a download against it.
+
+## Which clients work
+
+US, RU, FR, CN, Phoenix, KR episode 8 and Fawkes v68. What works on which client is in [version-matrix.md](version-matrix.md).
+
+## Start here
+
+- [getting-started.md](getting-started.md): five minutes from inspecting a file to building a patch on a copy and undoing it.
+- Guides: [modding files](guides/mod-files.md), [making patches](guides/make-a-patch.md), [SData files](guides/sdata-files.md), [undo and recovery](guides/undo-and-recovery.md).
+- [faq.md](faq.md): the common errors.
+
+## All pages
 
 | Page | What it covers |
 |---|---|
@@ -21,6 +51,6 @@
 | [dev/releasing.md](dev/releasing.md) | Versions, the changelog, tags, the release workflow |
 | [dev/adding-a-tool.md](dev/adding-a-tool.md) | Checklist for a new tool |
 
-These tools work on your own copy of the game. The repository and the releases contain no game files, and the tools never download any. Changes to a client folder are recorded in a journal so they can usually be rolled back, but not changes made with `--no-journal` or `archive compact --in-place`, which keep at most the previous index (`data.sah.bak`). Everything else is written only to a path you name.
+## Support the project
 
-Support the project: https://buymeacoffee.com/tylernol
+https://buymeacoffee.com/tylernol

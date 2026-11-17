@@ -44,4 +44,4 @@ The `README.txt` inside each zip carries the same sentence as the repository REA
 
 ## CI
 
-`ci.yml` runs on every push and pull request: `checks` (guard, notices, deps-check, clippy) and the tests on Ubuntu and Windows; macOS runs on pushes to `main`, pull requests, tags and manual runs. The real-window smoke step on Windows is non-blocking until it has passed on three consecutive runs.
+`ci.yml` runs on every push and pull request: `checks` (guard, notices, deps-check, clippy) and the tests on Ubuntu and Windows; macOS runs on pushes to `main`, pull requests, tags and manual runs. The real-window smoke step on Windows is non-blocking until it has passed on three consecutive runs. `docs.yml` builds the site on pull requests and publishes it to GitHub Pages from `main` and from `v*` tags.
