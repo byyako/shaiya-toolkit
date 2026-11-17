@@ -4,25 +4,35 @@ All notable changes are listed here, newest first. The format follows [Keep a Ch
 
 ## [Unreleased]
 
-First foundation of the toolkit (no release yet).
+No release yet. This covers the first foundation of the toolkit and the archive and patch tools.
 
 ### shaiya (CLI)
 
-- New `shaiya` program with the global flags `--json`, `-q/--quiet`, `-v/--verbose`, `--progress`, and the exit codes documented in `docs/tools/shaiya.md`.
-- `shaiya info [--hash] <PATH>...`: identifies SAH indexes, SAF data, SEED-encrypted and plain SData, patches and their signature files, and Windows programs (machine, link time); checks the SEED checksum; optional SHA-256 with progress.
-- `shaiya version` (text and `--json`).
+- New `shaiya` program with the global flags `--json`, `-q/--quiet`, `-v/--verbose`, `--progress`, `--data-dir DIR`, and the exit codes documented in `docs/tools/shaiya.md`.
+- `shaiya info [--hash] <PATH>...`: identifies SAH indexes, SAF data, SEED-encrypted and plain SData, patches and their signature files, and Windows programs (machine, link time); checks the SEED checksum; optional SHA-256 with progress. `shaiya version`.
+- `shaiya archive`: `list`, `stats`, `check` (`--deep`, `--strict`), `index`, `extract`, `cat`, `add`, `replace`, `remove`, `compact`, `diff`, `pack`, `swap`. Case-insensitive glob patterns, `@name` for saved client folders, shadowed entries hidden unless asked for, `-o` for a new archive pair or `--in-place` on a client with a journal, `--dry-run`, JSON for every command.
+- `shaiya patch`: `build` (from folders, loose files, removals or the difference of two archives; deterministic output; optional signing), `list`, `verify` (structure, signature, applied to a client), `apply` (several patches in order, signature required with a key, `--protect`, `--dry-run`), `rollback`, `history` (`--prune`), `keygen`, `sign`, `sign-updater`.
+- `shaiya sdata`: `info`, `check`, `decrypt`, `encrypt` over files, folders or a client's archive (`--from`); `--like` makes an unchanged file encrypt back byte-identical and keeps plain files plain.
+- `shaiya clients`: `list`, `add`, `remove`, `show`: the saved client folders shared with the Workbench.
+- Every change to a client folder is journaled in `<client>/shaiya-toolkit-backups/` and can be undone with `shaiya patch rollback`; interrupted changes are finished or discarded automatically. Writing refuses while the game has the files open (Windows). `--no-journal` keeps only the previous index as `data.sah.bak`; `archive compact --in-place` is not journaled and ends rollback of earlier changes.
 
 ### Workbench
 
-- New desktop program on the shared GUI shell: drop or open files, see what they are, compute SHA-256 as cancellable background tasks, copy a row as text or JSON.
+- New desktop program on the shared GUI shell with six tabs: **Archive** (folder tree, search, previews for images, text, SData and hex, extract, queued changes applied with confirmation, check, compare, compact), **Patch builder**, **Apply & history** (plan, apply, roll back, prune), **Sign & verify**, **SData** (decrypt and encrypt into a folder) and **Inspect** (identify files, SHA-256 as cancellable background tasks, copy as text or JSON).
+- Saved client folders shared with the command line, "Open other archive..." read-only, swap archive pair with a way back, confirmation and Retry prompts, keyboard shortcuts for every tab and action, command palette.
 - Shell: menus, command palette (Ctrl+Shift+P), Activity panel (Ctrl+J) with progress and cancel, error banner with copyable details, dark/light/system theme, UI scale, recent files with pins, settings that keep unknown keys, CJK font fallback from the system.
+- Help > Support the project opens the author's donation page in the default browser, only when clicked.
 
 ### Libraries
 
-- `shaiya-core`: one error type, jobs with progress and cancel, atomic writes and backups (`plan_output`), a bounds-checked reader, text encodings, hashing, UTC time.
-- `shaiya-seed`: SEED decrypt **and encrypt**, CRC-32, and a wrapper that round-trips SData files byte for byte; known-answer tests from a Python reference.
-- `shaiya-archive`: index parsing and editing, `Archive` read access, compaction as a cancellable job. Moved from the Shaiya client research code.
-- `shaiya-patch`: building, listing and applying `psNNNN.patch` files, Ed25519 signatures (message format unchanged). `apply` now refuses unsafe loose file names before it changes anything.
+- `shaiya-core`: one error type, jobs with progress and cancel, atomic writes and backups (`plan_output`), a bounds-checked reader, text encodings, hashing, UTC time; glob patterns and filters, byte sources, the saved client folders and the data folder.
+- `shaiya-seed`: SEED decrypt **and encrypt**, CRC-32, a wrapper that round-trips SData files byte for byte, and batch check, decrypt and encrypt; known-answer tests from an independent reference.
+- `shaiya-archive`: index parsing and editing (shadowed folders and free lists handled, offsets past 4 GiB), `Archive` read access, layout analysis and `check`, extract, in-place edits with journals, rollback and crash recovery, new-pair writes, compaction as a cancellable job, diff, pack, swap.
+- `shaiya-patch`: streaming deterministic builds, listing, verification, planning, journaled apply, and Ed25519 signatures (message format unchanged). `apply` refuses unsafe loose file names before it changes anything; the original `apply` call is kept.
 - `shaiya-clientdata`: read-only readers for client data (archive or folder, `.wld`, `.dg`, `.smod`, SData Monster and NpcQuest, sysmsg, textures); public API unchanged.
 - `shaiya-inspect`: identify and describe a file.
-- `shaiya-ui`: the GUI shell with a headless test harness. `shaiya-testkit`, `shaiya-build`, `shaiya-matrix-tests` and `xtask` support the build.
+- `shaiya-ui`: the GUI shell with a headless test harness. `shaiya-testkit` (archive, ZIP, image and PE builders), `shaiya-build`, `shaiya-matrix-tests` (nine new capability rows for the archive and patch tools, see `docs/version-matrix.md`) and `xtask` support the build.
+
+### Documentation
+
+- Pages for the command line and the Workbench, a getting-started page, guides for modding files, making patches, SData files and undo and recovery, an FAQ, and the archive and patch format pages extended.

@@ -8,27 +8,36 @@
 
 1. **Unit tests** in each crate.
 2. **Known-answer tests for SEED** (`crates/shaiya-seed/tests/vectors.rs`): produced once by a Python reference implementation and committed as hex, with the exact command in a comment.
-3. **Round trips on synthetic data:** an archive built by `SahBuilder` (versions 0 and 1, nested folders, cp949 names, free entries, a trailer) parses and writes back identically; `wrap(unwrap(x)) == x` for plain and encrypted data of many lengths; patch build, list and apply on a synthetic client; compaction; a cancelled compaction leaves both files byte-identical.
+3. **Round trips on synthetic data:** an archive built by `SahBuilder` (versions 0 and 1, nested folders, cp949 names, free entries, a trailer) parses and writes back identically; `wrap(unwrap(x)) == x` for plain and encrypted data of many lengths; patch build (twice gives identical bytes), list, verify and apply on a synthetic client; in-place edits and patch applies followed by rollback restore `data.sah` byte for byte and `data.saf` to its old length; an error or cancel during the append leaves both files as they were; every crash point of the pending marker, compaction and swap is simulated and recovered; rollback is blocked after compaction, swap or a newer change; compaction; a cancelled compaction leaves both files byte-identical.
 4. **Robustness:** truncation at every byte of a small index, SEED file and patch returns an error; a single-bit flip at every byte never panics; a flip inside a SEED body always fails the checksum.
-5. **CLI tests** (`crates/shaiya-cli/tests/cli.rs`) run the real `shaiya` binary and check text, JSON and exit codes.
-6. **GUI harness tests** (`shaiya-ui`, `shaiya-workbench`): headless frames with synthetic input: the empty state, drop, tasks with progress, cancel, the theme switch, the command palette, settings written with `--data-dir` and read back, `--no-settings` writing nothing, the contrast of both palettes.
+5. **CLI tests** (`crates/shaiya-cli/tests/{cli,archive,patch,sdata,clients}.rs`) run the real `shaiya` binary (`CARGO_BIN_EXE_shaiya`) with `--data-dir` pointing at a temporary folder, and check text, `--json` keys (parsed with `serde_json`), exit codes, `--dry-run` writing nothing, `@name` resolution and `--help` of every command. A patch end to end: keygen, build, sign, verify, apply with a key, history, rollback, verify against the client.
+6. **GUI harness tests** (`shaiya-ui`, `shaiya-workbench`): headless frames with synthetic input: the empty state, drop, tasks with progress, cancel, the theme switch, the command palette, settings written with `--data-dir` and read back, `--no-settings` writing nothing, the contrast of both palettes; in the Workbench also adding a client, opening an archive, search, folder navigation, previews, queueing changes and applying them, the apply and roll-back flow, the patch builder, signing and verifying, the SData tab, and the Retry dialog when a file is open on Windows.
 7. **Opt-in tests on your own client** (below).
 8. **Real-window smoke:** `shaiya-workbench --smoke report.txt`.
 
 ## The testkit
 
-`shaiya-testkit` (dev-dependency, std only) returns bytes and paths, never toolkit types: `TempDir`, `SahBuilder` (writes `data.sah` / `data.saf` by hand from the documented layout, so it is an oracle and not a mirror of the code under test), `pe_stub`, `truncate`, `flip`, `env_client`, `env_test_clients`.
+`shaiya-testkit` (dev-dependency, std only) returns bytes and paths, never toolkit types: `TempDir`, `SahBuilder` (writes `data.sah` / `data.saf` by hand from the documented layout, so it is an oracle and not a mirror of the code under test), `ZipBuilder` (writes a ZIP by hand with stored entries and entry names exactly as given, so `../x` and case-twin names can be tested without the `zip` crate), `tga_stub` and `bmp_stub` (tiny images for preview tests), `pe_stub`, `truncate`, `flip`, `env_client`, `env_test_clients`, `env_scratch`.
 
 ## Opt-in variables
 
 | Variable | Meaning |
 |---|---|
-| `SHAIYA_CLIENT` | A client folder with `data.sah` and `data.saf` (and `game.exe`). Tests then check a byte-identical index rewrite, `wrap(unwrap(x)) == x` for every SData, `inspect` on the files, the Monster and NpcQuest readers, and print timings. |
+| `SHAIYA_CLIENT` | A client folder with `data.sah` and `data.saf` (and `game.exe`; `Version.ini` and a stock pair `data.orig.sah` / `data.orig.saf` are used when present). **Read only.** Tests then check a byte-identical index rewrite, `wrap(unwrap(x)) == x` for every SData, `inspect` on the files, the Monster and NpcQuest readers, the archive library numbers (`check`, `stats`, `diff --quick` against the stock pair when it exists), SData extraction against `Archive::read`, and print timings. |
+| `SHAIYA_SCRATCH` | A folder **outside any repository** with room for a few GB, where tests may write. Used together with `SHAIYA_CLIENT`: the tests copy the client's `data.sah`, `data.saf` and `Version.ini` into `SHAIYA_SCRATCH/t1-us-copy-<pid>` and never touch the original. On the copy they build and apply a patch (an SData round trip, an added file, a removal, a loose file) with a journal, check `verify --client` and `check`, roll back and compare SHA-256 with the originals, then run `compact --in-place`, a content `diff` against the original (0 differences) and a swap and swap back, and print MB/s. The copy is removed at the end, also on failure. |
 | `SHAIYA_TEST_CLIENTS` | The matrix folder (below). |
+
+All of them skip with a message (`skipped: SHAIYA_CLIENT not set`) when unset, so a plain `cargo test --workspace` needs none. Example:
+
+```
+SHAIYA_CLIENT=D:\clients\us SHAIYA_SCRATCH=D:\scratch cargo test -p shaiya-matrix-tests --test us_copy -- --nocapture --test-threads=1
+```
 
 ## The version matrix
 
 `crates/shaiya-matrix-tests` holds an `EXPECTED` table (client, capability, `OK | fails | Plain | n/a`) that mirrors [../version-matrix.md](../version-matrix.md), one test per capability that walks the clients, and a test that prints the observed table as Markdown. A cell that differs from `EXPECTED` fails, an improvement included, with the message "update EXPECTED and docs/version-matrix.md". Update both in the same commit as the code.
+
+The T1 rows of the matrix (archive reading, in-place edit and patch apply with rollback on a stub `data.saf`, SData batch work) are listed in [../version-matrix.md](../version-matrix.md); everything that writes does so in a temporary copy.
 
 Folder layout of `SHAIYA_TEST_CLIENTS` (the ids are `ru-ep3`, `ru-ep45`, `ru-ep54`, `fr-ep54`, `phoenix-ep63`, `kr-ep8`, `fawkes-v68`, `cn-ep4`):
 

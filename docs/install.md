@@ -12,7 +12,7 @@ Every release has one zip per tool per platform, plus an everything zip:
 | `shaiya-<version>-<platform>.zip` | the `shaiya` command line only |
 | `shaiya-workbench-<version>-<platform>.zip` | Shaiya Workbench only |
 
-`<platform>` is `windows-x86_64`, `linux-x86_64` or `macos-universal`. Each zip holds a folder named like the zip with the program(s), `README.txt`, `LICENSE.txt` and `THIRD-PARTY-NOTICES.txt`. Unzip it anywhere; there is no installer. The GUI programs can run side by side and start each other from their Tools menu when they sit in the same folder.
+`<platform>` is `windows-x86_64`, `linux-x86_64` or `macos-universal`. Each zip holds a folder named like the zip with the program(s), `README.txt`, `LICENSE.txt` and `THIRD-PARTY-NOTICES.txt`. Unzip it anywhere; there is no installer. There is one GUI program today, Shaiya Workbench. Further GUI programs will start each other from their Tools menu when they sit in the same folder.
 
 ## Check the download
 
@@ -32,7 +32,9 @@ Releases built on a public repository also carry a build provenance attestation 
 
 ## Portable mode and where settings live
 
-By default settings, logs, recovery files and backups live in the user's configuration folder (`%APPDATA%\shaiya-toolkit` on Windows, `~/Library/Application Support/shaiya-toolkit` on macOS, `~/.config/shaiya-toolkit` or `$XDG_CONFIG_HOME/shaiya-toolkit` on Linux). Put an empty file named `portable.txt` next to the program to keep them in a `shaiya-toolkit-data` folder beside it instead. `SHAIYA_TOOLKIT_HOME` names any folder, and the GUI flag `--data-dir DIR` does the same for one run.
+By default settings, logs, recovery files and the saved client folders live in the user's configuration folder (`%APPDATA%\shaiya-toolkit` on Windows, `~/Library/Application Support/shaiya-toolkit` on macOS, `~/.config/shaiya-toolkit` or `$XDG_CONFIG_HOME/shaiya-toolkit` on Linux). Put an empty file named `portable.txt` next to the program to keep them in a `shaiya-toolkit-data` folder beside it instead. `SHAIYA_TOOLKIT_HOME` names any folder, and the flag `--data-dir DIR` does the same for one run, on the `shaiya` command line (`shaiya --data-dir DIR clients list`) and on the Workbench alike.
+
+**Backups of your game files are not kept there.** Journals, and with them everything needed to roll back a change, live **inside the client folder** you changed, in `shaiya-toolkit-backups/`, next to `data.sah.bak` (a copy of the previous index). They go with the folder when you copy, move or delete it, and they are not removed when you uninstall or delete the toolkit. See [undo and recovery](guides/undo-and-recovery.md).
 
 ## Build from source
 
@@ -41,3 +43,13 @@ cargo build --release
 ```
 
 with stock Rust (`rustup`, stable). The programs are in `target/release`.
+
+On Linux the GUI needs development packages (the names are those CI installs on Ubuntu):
+
+```
+sudo apt-get install -y libxkbcommon-dev libwayland-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libx11-dev pkg-config
+```
+
+Windows and macOS need nothing besides Rust.
+
+Next: [getting started in five minutes](getting-started.md).
