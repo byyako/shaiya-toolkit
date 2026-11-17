@@ -29,7 +29,7 @@ pub enum Cmd {
     /// "shadowed"; add --include-shadowed to see both). Patterns are globs, case-insensitive: `*` and `?` stay inside a path segment,
     /// `**` crosses segments, a pattern without `/` matches the file name in any folder, a trailing `/` means everything under that folder.
     ///
-    /// Example: shaiya archive list @us '*.SData' --long
+    /// Example: shaiya archive list "@us" "*.SData" --long
     List(ListArgs),
     /// Counts, sizes and unused space of an archive
     ///
@@ -39,7 +39,7 @@ pub enum Cmd {
     ///
     /// Exit 0 when there are no problems, 1 when there are. --deep reads every file once.
     ///
-    /// Example: shaiya archive check @us --deep
+    /// Example: shaiya archive check "@us" --deep
     Check(CheckArgs),
     /// Parse data.sah, write it back in memory and compare with the file
     ///
@@ -54,30 +54,30 @@ pub enum Cmd {
     /// ("shadowed") ones are skipped unless --include-shadowed, and then get a `~shadowed-N` name. Names Windows cannot hold are changed
     /// (a `:` becomes `%3A`), never written outside the output folder.
     ///
-    /// Example: shaiya archive extract @us '*.dds' -o out/
+    /// Example: shaiya archive extract "@us" "*.dds" -o out/
     Extract(ExtractArgs),
     /// Write one file of an archive to a file or to standard output
     ///
-    /// Example: shaiya archive cat @us Item/Item.SData -o Item.SData
+    /// Example: shaiya archive cat "@us" Item/Item.SData -o Item.SData
     Cat(CatArgs),
     /// Add files to an archive (in the client folder with a backup, or into a new archive pair)
     ///
     /// A file goes to PREFIX/<file name>; a folder's files go to PREFIX/<path inside the folder>. The change is appended to data.saf and
     /// undone with `shaiya patch rollback`.
     ///
-    /// Example: shaiya archive add @us mods/ --in-place --replace
+    /// Example: shaiya archive add "@us" mods/ --in-place --replace
     Add(AddArgs),
     /// Replace files that are already in an archive
     ///
-    /// Example: shaiya archive replace @us fixed/Item.SData --at Item --in-place
+    /// Example: shaiya archive replace "@us" fixed/Item.SData --at Item --in-place
     Replace(ReplaceArgs),
     /// Remove files from an archive
     ///
-    /// Example: shaiya archive remove @us test/junk.eft --in-place
+    /// Example: shaiya archive remove "@us" test/junk.eft --in-place
     Remove(RemoveArgs),
     /// Rewrite data.saf without unused space (and drop shadowed entries and the free list)
     ///
-    /// Example: shaiya archive compact @us --in-place
+    /// Example: shaiya archive compact "@us" --in-place
     Compact(CompactArgs),
     /// Compare two archives
     ///
@@ -91,7 +91,7 @@ pub enum Cmd {
     Pack(PackArgs),
     /// Put another archive pair in place of a client's own (the old pair is kept)
     ///
-    /// Example: shaiya archive swap @us D:\backups\us-stock
+    /// Example: shaiya archive swap "@us" D:\backups\us-stock
     Swap(SwapArgs),
 }
 
@@ -541,7 +541,7 @@ fn stats(ctx: &Ctx, a: &StatsArgs) -> Result<i32> {
         count(all.len(), "file"),
         all.len() - visible.len(),
         count(idx.dir_count(), "folder"),
-        if idx.free.is_empty() { "no free list".to_string() } else { format!("{} free-list entries", num(idx.free.len() as u64)) },
+        if idx.free.is_empty() { "no free list".to_string() } else { count(idx.free.len(), "free-list entry") },
         shaiya_core::hash::to_hex(&idx.trailer)
     );
     match (l.saf_len, l.dead_bytes) {
@@ -593,7 +593,7 @@ fn check(ctx: &Ctx, a: &CheckArgs, job: &Job) -> Result<i32> {
         count(report.files, "file"),
         report.files - report.visible,
         count(report.dirs, "folder"),
-        if report.free_entries == 0 { "no free list".to_string() } else { format!("{} free-list entries", num(report.free_entries as u64)) }
+        if report.free_entries == 0 { "no free list".to_string() } else { count(report.free_entries as usize, "free-list entry") }
     );
     if let (Some(n), Some(dead), Some(p)) = (l.saf_len, l.dead_bytes, o.saf_path()) {
         let referenced = if dead == 0 { "all referenced".to_string() } else { format!("{} unused", num(dead)) };
@@ -615,7 +615,7 @@ fn check(ctx: &Ctx, a: &CheckArgs, job: &Job) -> Result<i32> {
     for (off, bytes) in l.largest_gaps.iter().take(a.gaps) {
         outln!(w, "gap       {} bytes at offset {} (0x{off:x})", num(*bytes), num(*off));
     }
-    outln!(w, "{}: {} problems, {} warnings", if ok { "OK" } else { "FAILED" }, report.problems(), report.warnings());
+    outln!(w, "{}: {}, {}", if ok { "OK" } else { "FAILED" }, count(report.problems(), "problem"), count(report.warnings(), "warning"));
     Ok(if ok { 0 } else { 1 })
 }
 
@@ -637,11 +637,11 @@ fn index(ctx: &Ctx, a: &IndexArgs) -> Result<i32> {
         let mut w = out();
         outln!(
             w,
-            "{}: version {}, {}, {} free-list entries, trailer {} bytes ({}); rewrite identical: {}{}",
+            "{}: version {}, {}, {}, trailer {} bytes ({}); rewrite identical: {}{}",
             file_name(&sah),
             idx.version,
             count(idx.file_count(), "file"),
-            num(idx.free.len() as u64),
+            count(idx.free.len(), "free-list entry"),
             idx.trailer.len(),
             shaiya_core::hash::to_hex(&idx.trailer),
             if identical { "yes" } else { "no" },
@@ -924,7 +924,7 @@ fn compact_cmd(ctx: &Ctx, a: &CompactArgs, job: &Job) -> Result<i32> {
             } else if nothing {
                 println!("nothing to do: {} unused in data.saf", size(dead));
             } else {
-                println!("would rewrite data.saf: {} now, {} live, {} unused; drops {} shadowed entries and the free list", size(saf), size(live), size(dead), shadowed);
+                println!("would rewrite data.saf: {} now, {} live, {} unused; drops {} and the free list", size(saf), size(live), size(dead), count(shadowed, "shadowed entry"));
                 println!("needs about {} free on that drive while it runs", size(live + (256 << 20)));
                 if blocked > 0 {
                     println!("{blocked} earlier changes can no longer be rolled back after compacting");
@@ -939,7 +939,7 @@ fn compact_cmd(ctx: &Ctx, a: &CompactArgs, job: &Job) -> Result<i32> {
         if ctx.json {
             print_json(&serde_json::to_value(&c).unwrap_or(Value::Null));
         } else {
-            println!("compacted data.saf: {} -> {} ({} shadowed entries dropped)", size(c.before), size(c.after), c.duplicates.len());
+            println!("compacted data.saf: {} -> {} ({} dropped)", size(c.before), size(c.after), count(c.duplicates.len(), "shadowed entry"));
         }
         return Ok(0);
     }
@@ -1068,7 +1068,7 @@ fn swap_cmd(ctx: &Ctx, a: &SwapArgs, job: &Job) -> Result<i32> {
         print_json(&serde_json::to_value(&r).unwrap_or(Value::Null));
     } else {
         println!("installed {}; the old pair is kept as {} and {}", r.installed_from.display(), file_name(&r.kept_as.0), file_name(&r.kept_as.1));
-        println!("swap back with: shaiya archive swap {} {}", a.client, r.kept_as.0.display());
+        println!("swap back with: shaiya archive swap {} {}", shell_arg(&a.client), shell_arg(&r.kept_as.0.display().to_string()));
     }
     Ok(0)
 }

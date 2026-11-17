@@ -106,7 +106,7 @@ fn go(ctx: &Ctx, cmd: &Cmd) -> Result<i32> {
             if ctx.json {
                 print_json(&json!({"added": serde_json::to_value(&entry).unwrap_or(Value::Null)}));
             } else {
-                println!("saved {} -> {}  (use it as @{})", a.name, entry.path.display(), a.name);
+                println!("saved {} -> {}  (use it as \"@{}\")", a.name, entry.path.display(), a.name);
             }
             Ok(0)
         }

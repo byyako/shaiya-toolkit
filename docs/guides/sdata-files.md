@@ -43,5 +43,5 @@ Some clients store SData plain. `info` says `not encrypted`, `decrypt` copies, a
 ## Tips
 
 - Decrypt only the files you need (`"Item/Item.SData"`), not the whole client, unless you are exploring.
-- Re-encrypt the whole edited folder with one `--like @name`; each file finds its own original by path.
+- Re-encrypt the whole edited folder with one `--like "@name"`; each file finds its own original by path.
 - `sdata ... --in-place` replaces a standalone file after copying the original to `NAME.bak`. Do not use it on files that belong to a client archive; extract with `--from`, then put the result back with `archive replace` or a patch.

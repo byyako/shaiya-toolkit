@@ -160,10 +160,19 @@ pub fn journal_root(dir: &Path, custom: Option<&Path>) -> PathBuf {
     custom.map(Path::to_path_buf).unwrap_or_else(|| dir.join(journal::DEFAULT_DIR))
 }
 
+/// An argument as it should be printed in a command a person will paste: `@name` and anything with spaces or shell
+/// characters in double quotes (works in cmd and PowerShell; a bare `@name` is PowerShell's splatting syntax).
+pub fn shell_arg(arg: &str) -> String {
+    if arg.starts_with('@') || arg.contains(|c: char| c.is_whitespace() || "&|<>()^;,'`$%".contains(c)) {
+        format!("\"{arg}\"")
+    } else {
+        arg.to_string()
+    }
+}
+
 /// The command a person can run to undo the newest change.
 pub fn undo_hint(client_arg: &str) -> String {
-    let c = if client_arg.contains(' ') { format!("\"{client_arg}\"") } else { client_arg.to_string() };
-    format!("shaiya patch rollback {c}")
+    format!("shaiya patch rollback {}", shell_arg(client_arg))
 }
 
 /// `-o OUT` for a new archive pair: a path ending in `.sah` names the index, any other path is a folder that gets `data.sah`.

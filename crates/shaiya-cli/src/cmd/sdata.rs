@@ -21,21 +21,21 @@ pub enum Cmd {
     Info(InfoArgs),
     /// Check the checksums of SData files (exit 1 when one fails)
     ///
-    /// Example: shaiya sdata check --from @us
+    /// Example: shaiya sdata check --from "@us"
     Check(InfoArgs),
     /// Decrypt SData files to a folder (or in place with a backup)
     ///
     /// Plain files (some clients do not encrypt) are copied unchanged unless --skip-plain. Names are kept: decrypt to plain/, edit,
-    /// then `encrypt plain/ -o enc/ --like @us` gives the original names back.
+    /// then `encrypt plain/ -o enc/ --like "@us"` gives the original names back.
     ///
-    /// Example: shaiya sdata decrypt --from @us -o plain/
+    /// Example: shaiya sdata decrypt --from "@us" -o plain/
     Decrypt(DecryptArgs),
     /// Encrypt SData files to a folder (or in place with a backup)
     ///
     /// --like takes a file, a folder of originals or an archive: each output reuses its original's header padding and tail, so an
     /// unchanged file comes out byte-identical, and a plain original stays plain.
     ///
-    /// Example: shaiya sdata encrypt plain/ -o enc/ --like @us
+    /// Example: shaiya sdata encrypt plain/ -o enc/ --like "@us"
     Encrypt(EncryptArgs),
 }
 

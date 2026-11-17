@@ -96,7 +96,7 @@ If you are unsure, restore your own backup of the client instead: the toolkit's 
 `shaiya archive swap CLIENT OTHER` (or Workbench "Use another archive pair...") puts another `data.sah`/`data.saf` in place and keeps your pair as `data.<UTC stamp>.sah` / `data.<UTC stamp>.saf` in the same folder. The command prints the command that undoes it:
 
 ```
-swap back with: shaiya archive swap @us C:\Games\Shaiya\data.20261115T120000Z.sah
+swap back with: shaiya archive swap "@us" C:\Games\Shaiya\data.20261115T120000Z.sah
 ```
 
 Swapping needs both pairs on the same drive (it only renames files) and is crash safe: the four renames are written to `data.swap-journal` first and finished automatically next time. Journals made before a swap cannot be rolled back afterwards (the index is not the one they wrote); swapping back makes them possible again only if `data.sah` is byte-for-byte what they expect.

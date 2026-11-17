@@ -196,7 +196,7 @@ fn add_replace_remove_in_place_with_a_journal_and_undo() {
     // the real change
     let o = sh(&w.data, &["archive", "add", "@us", p(&mods), "--in-place", "--replace"]);
     assert_eq!(code(&o), 0, "{}", err(&o));
-    assert!(out(&o).contains("added 1, replaced 1") && out(&o).contains("backup:") && out(&o).contains("shaiya patch rollback @us"), "{}", out(&o));
+    assert!(out(&o).contains("added 1, replaced 1") && out(&o).contains("backup:") && out(&o).contains("shaiya patch rollback \"@us\""), "{}", out(&o));
     assert_eq!(out(&sh(&w.data, &["archive", "cat", "@us", "interface/t1.txt"])), "new file");
     assert_eq!(out(&sh(&w.data, &["archive", "cat", "@us", "Item/Item.SData"])), "replacement item data");
     // history shows it, rollback restores everything byte for byte

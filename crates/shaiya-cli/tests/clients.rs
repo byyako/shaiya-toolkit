@@ -15,7 +15,7 @@ fn add_list_show_remove() {
     // add
     let o = sh(&w.data, &["clients", "add", "US 108", p(&w.client), "--note", "stock US"]);
     assert_eq!(code(&o), 0, "{}", err(&o));
-    assert!(out(&o).contains("use it as @US 108"), "{}", out(&o));
+    assert!(out(&o).contains("use it as \"@US 108\""), "{}", out(&o));
     let o = sh(&w.data, &["clients", "list"]);
     assert!(out(&o).contains("US 108") && out(&o).contains("found") && out(&o).contains("stock US"), "{}", out(&o));
     let v = json(&sh(&w.data, &["clients", "list", "--json"]));

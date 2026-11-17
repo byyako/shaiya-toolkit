@@ -40,15 +40,15 @@ pub enum Cmd {
     ///
     /// Patches are applied in the order given, each with its own journal. --dry-run shows what each patch would do.
     ///
-    /// Example: shaiya patch apply @us ps0109.patch --key public.key --check-version 3
+    /// Example: shaiya patch apply "@us" ps0109.patch --key public.key --check-version 3
     Apply(ApplyArgs),
     /// Undo the newest change made by the toolkit to a client folder
     ///
-    /// Example: shaiya patch rollback @us
+    /// Example: shaiya patch rollback "@us"
     Rollback(RollbackArgs),
     /// List the changes the toolkit made to a client folder and whether each can be rolled back
     ///
-    /// Example: shaiya patch history @us
+    /// Example: shaiya patch history "@us"
     History(HistoryArgs),
     /// Make a signing key pair (Ed25519)
     ///
@@ -530,12 +530,12 @@ fn rollback(ctx: &Ctx, a: &RollbackArgs, job: &Job) -> Result<i32> {
             print_json(&json!({"dry_run": true, "journal": serde_json::to_value(j).unwrap_or(Value::Null)}));
         } else {
             println!(
-                "would roll back {} (applied {}): restore the index, cut data.saf back to {} bytes, restore {} and delete {} loose file(s)",
+                "would roll back {} (applied {}): restore the index, cut data.saf back to {} bytes, restore {} and delete {}",
                 j.label,
                 j.created_utc,
                 num(j.saf_len_before),
                 j.loose.iter().filter(|l| l.existed).count(),
-                j.loose.iter().filter(|l| !l.existed).count()
+                count(j.loose.iter().filter(|l| !l.existed).count(), "loose file")
             );
         }
         return Ok(0);
