@@ -1,0 +1,90 @@
+site_name: Shaiya Toolkit
+site_url: https://byyako.github.io/shaiya-toolkit/
+site_description: Command-line and desktop tools for your own copy of Shaiya game data.
+site_author: byyako
+copyright: MIT licence. Made by byyako.
+docs_dir: docs
+site_dir: site
+theme:
+  name: material
+  language: en
+  font: false
+  palette:
+    - media: "(prefers-color-scheme)"
+      toggle: {icon: material/brightness-auto, name: Switch to light mode}
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      toggle: {icon: material/brightness-7, name: Switch to dark mode}
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      toggle: {icon: material/brightness-4, name: Follow the system theme}
+  features:
+    - navigation.sections
+    - navigation.top
+    - navigation.footer
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+extra:
+  generator: false
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/byyako/shaiya-toolkit
+      name: Source on GitHub
+    - icon: fontawesome/solid/mug-hot
+      link: https://buymeacoffee.com/tylernol
+      name: Support the project
+plugins:
+  - search
+hooks:
+  - .github/docs-site/hooks.py
+watch:
+  - CHANGELOG.md
+  - CONTRIBUTING.md
+  - SECURITY.md
+  - .github/docs-site
+validation:
+  omitted_files: warn
+  absolute_links: warn
+  unrecognized_links: warn
+  anchors: warn
+markdown_extensions:
+  - admonition
+  - attr_list
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+      slugify: !!python/object/apply:pymdownx.slugs.slugify {kwds: {case: lower}}
+  - pymdownx.highlight
+  - pymdownx.inlinehilite
+  - pymdownx.superfences
+  - pymdownx.details
+nav:
+  - Home: README.md
+  - Install: install.md
+  - Getting started: getting-started.md
+  - Tools:
+      - shaiya CLI: tools/shaiya.md
+      - Workbench: tools/workbench.md
+  - Guides:
+      - Mod game files: guides/mod-files.md
+      - Make a patch: guides/make-a-patch.md
+      - SData files: guides/sdata-files.md
+      - Undo and recovery: guides/undo-and-recovery.md
+  - Formats:
+      - Archive: formats/archive.md
+      - Patch: formats/patch.md
+      - SData wrapper: formats/sdata-wrapper.md
+  - Version matrix: version-matrix.md
+  - FAQ: faq.md
+  - Developer docs:
+      - Architecture: dev/architecture.md
+      - GUI shell: dev/gui-shell.md
+      - Testing: dev/testing.md
+      - Releasing: dev/releasing.md
+      - Adding a tool: dev/adding-a-tool.md
+      - Editing these docs: dev/docs-site.md
+      - Contributing: contributing.md
+      - Security: security.md
+  - Changelog: changelog.md

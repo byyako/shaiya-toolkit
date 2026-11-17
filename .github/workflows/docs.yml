@@ -1,0 +1,52 @@
+name: Docs
+on:
+  pull_request:
+    paths: [docs/**, mkdocs.yml, .github/docs-site/**, .github/workflows/docs.yml, CHANGELOG.md, CONTRIBUTING.md, SECURITY.md]
+  push:
+    branches: [main]
+    tags: ["v*"]
+    paths: [docs/**, mkdocs.yml, .github/docs-site/**, .github/workflows/docs.yml, CHANGELOG.md, CONTRIBUTING.md, SECURITY.md]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      NO_MKDOCS_2_WARNING: "1"
+      PIP_DISABLE_PIP_VERSION_CHECK: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: .github/docs-site/requirements.txt
+      - name: Install the pinned toolchain
+        run: python -m pip install -r .github/docs-site/requirements.txt
+      - name: Build (strict: broken links and anchors fail)
+        run: mkdocs build --strict
+      - name: Offline link and external-asset check
+        run: python -I .github/docs-site/check_site.py site
+      - if: github.event_name != 'pull_request'
+        uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: site
+  deploy:
+    needs: build
+    if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    concurrency:
+      group: pages
+      cancel-in-progress: false
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1

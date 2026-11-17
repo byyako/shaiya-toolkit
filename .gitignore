@@ -12,3 +12,6 @@ dist/
 *.shaiya-tmp
 portable.txt
 shaiya-toolkit-data/
+
+# Documentation site build output
+site/
