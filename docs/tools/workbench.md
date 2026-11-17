@@ -62,7 +62,7 @@ Buttons say what they do and the risky one is marked.
 |---|---|
 | Apply pending changes | "Apply N changes to NAME (folder)? X will be appended to data.saf. A backup of the index (and of files it overwrites) goes to shaiya-toolkit-backups\...; Apply & history can roll it back. The game must be closed." **Apply N changes** / Cancel. On Linux and macOS the last sentence says the game cannot be checked. |
 | Apply patches | Counts, "Signatures: valid" or "NOT CHECKED", where backups go. **Apply N patches** / Cancel. An invalid signature with "Require" on disables the button and says why. |
-| Compact | "...rewrites X (needs about Y free)... N earlier changes can no longer be rolled back afterwards." **Compact** / Cancel. |
+| Compact | "...rewrites X (needs about Y free)... N earlier changes can no longer be rolled back afterwards, and compacting makes no journal, so it cannot be undone itself." **Compact** / Cancel. |
 | Roll back | What will be restored (index, `data.saf` length, loose files). **Roll back** / Cancel. |
 | Swap archives | "Put PAIR in place of NAME's data.sah/data.saf? The current pair is kept as data.<stamp>.sah/saf." **Swap archives** / Cancel. |
 | Existing outputs | Skip existing / Overwrite / Cancel (extract, SData); Overwrite / Cancel (patch); Replace signature / Cancel. |

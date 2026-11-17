@@ -293,7 +293,7 @@ impl SignTab {
                 None => self.sign_flow = SignFlow::Running(h),
                 Some(TaskOutcome::Done(r)) => {
                     let ok = r.iter().filter(|(_, o)| matches!(o, Outcome::Signed(_))).count();
-                    cx.shell.status(format!("Signed {ok} of {} files", r.len()));
+                    cx.shell.status(format!("Signed {ok} of {}", shaiya_inspect::counted((r.len()) as u64, "file", "files")));
                     self.sign_results = r;
                 }
                 Some(TaskOutcome::Failed(e)) => cx.shell.error("Signing failed", &e),

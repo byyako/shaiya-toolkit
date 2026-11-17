@@ -576,7 +576,7 @@ impl ArchiveView {
             Some(TaskOutcome::Done(r)) => {
                 self.saved_new = None;
                 let n = r.added.len() + r.replaced.len() + r.removed.len();
-                self.status_line = format!("Saved a new archive ({n} changes included)");
+                self.status_line = format!("Saved a new archive ({} included)", shaiya_inspect::counted((n) as u64, "change", "changes"));
                 cx.shell.status(self.status_line.clone());
             }
             Some(TaskOutcome::Failed(e)) => {
@@ -682,7 +682,7 @@ impl ArchiveView {
             Some(ExtractFlow::Confirm(req, n)) => {
                 let c = Confirm {
                     title: "Files already exist".into(),
-                    text: format!("{n} files already exist in {}.", req.out.display()),
+                    text: format!("{} already exist in {}.", shaiya_inspect::counted((n) as u64, "file", "files"), req.out.display()),
                     buttons: vec!["Skip existing".into(), "Overwrite".into(), "Cancel".into()],
                     danger: Some(1),
                 };
@@ -696,7 +696,7 @@ impl ArchiveView {
             Some(ExtractFlow::Running(mut h)) => match h.poll() {
                 None => self.extract = Some(ExtractFlow::Running(h)),
                 Some(TaskOutcome::Done(r)) => {
-                    let msg = format!("Extracted {} files ({})", r.written, human_size(r.bytes));
+                    let msg = format!("Extracted {} ({})", shaiya_inspect::counted((r.written) as u64, "file", "files"), human_size(r.bytes));
                     self.status_line = msg.clone();
                     cx.shell.status(msg);
                 }
@@ -775,7 +775,7 @@ impl ArchiveView {
                     match done {
                         Done::Edit(r) => {
                             let n = r.added.len() + r.replaced.len() + r.removed.len();
-                            self.status_line = format!("Applied {n} changes (undo in Apply & history)");
+                            self.status_line = format!("Applied {} (undo in Apply & history)", shaiya_inspect::counted((n) as u64, "change", "changes"));
                             cx.shell.status(self.status_line.clone());
                             self.pending.clear();
                             self.history = History::new(500);
@@ -845,7 +845,7 @@ impl ArchiveView {
                         "Apply {n} changes to {name} ({dir})? {} will be appended to data.saf. A backup of the index (and of files it overwrites) goes to shaiya-toolkit-backups\\...; Apply & history can roll it back. {last}",
                         human_size(bytes)
                     ),
-                    format!("Apply {n} changes"),
+                    format!("Apply {}", shaiya_inspect::counted((*n) as u64, "change", "changes")),
                 )
             }
             Excl::Compact => {
@@ -855,9 +855,11 @@ impl ArchiveView {
                 (
                     "Compact".into(),
                     format!(
-                        "Compact data.saf of {name}? It rewrites {} (needs about {} free on that drive) and drops {shadowed} shadowed entries and the free list. {later} earlier changes can no longer be rolled back afterwards.",
+                        "Compact data.saf of {name}? It rewrites {} (needs about {} free on that drive) and drops {} and the free list. {} no longer be rolled back afterwards, and compacting makes no journal, so it cannot be undone itself.",
                         human_size(live),
-                        human_size(live + (256 << 20))
+                        human_size(live + (256 << 20)),
+                        shaiya_inspect::counted((shadowed) as u64, "shadowed entry", "shadowed entries"),
+                        if later == 1 { "1 earlier change can".to_string() } else { format!("{} earlier changes can", later) }
                     ),
                     "Compact".into(),
                 )
@@ -909,7 +911,7 @@ impl ArchiveView {
         let handle = match ex {
             Excl::Apply(plan, _) => {
                 let root = dir.join(journal::DEFAULT_DIR);
-                cx.shell.tasks().spawn(TaskSpec { title: format!("Applying {} changes", plan.puts.len() + plan.removes.len()), cancellable: true, exclusive: Some(key) }, move |job| {
+                cx.shell.tasks().spawn(TaskSpec { title: format!("Applying {}", shaiya_inspect::counted((plan.puts.len() + plan.removes.len()) as u64, "change", "changes")), cancellable: true, exclusive: Some(key) }, move |job| {
                     let opts = InPlaceOptions { journal: JournalMode::In(root), legacy_bak: true, check_in_use: true };
                     edit::apply_in_place(&dir, &plan, &opts, job).map(Done::Edit)
                 })
@@ -929,7 +931,7 @@ impl ArchiveView {
         if self.pending.is_empty() {
             Vec::new()
         } else {
-            vec![format!("{} pending archive changes", self.pending.len())]
+            vec![shaiya_inspect::counted((self.pending.len()) as u64, "pending archive change", "pending archive changes")]
         }
     }
 
@@ -1587,7 +1589,7 @@ impl ArchiveView {
             };
             ui.horizontal_wrapped(|ui| {
                 ui.label(RichText::new(l.sah.parent().map(|p| p.display().to_string()).unwrap_or_default()).strong());
-                ui.label(format!("data.sah v{}, {} files ({} shadowed)  ·  {saf}", l.sah_version, l.visible, l.rows.len() - l.visible));
+                ui.label(format!("data.sah v{}, {} ({} shadowed)  ·  {saf}", l.sah_version, shaiya_inspect::counted((l.visible) as u64, "file", "files"), l.rows.len() - l.visible));
                 if !has_saf {
                     ui.label(RichText::new("browsing the index only: preview, extract and changes are off").color(pal.warning));
                 }
@@ -1779,7 +1781,7 @@ impl ArchiveView {
                     let (label, size, packed, ty, color, path) = match v {
                         ViewRow::Folder(n) => {
                             let nd = &l.tree.nodes[n];
-                            (format!("{}/", nd.name), human_size(nd.bytes), format!("{} files", nd.files), "folder".to_string(), pal.text, nd.path.clone())
+                            (format!("{}/", nd.name), human_size(nd.bytes), shaiya_inspect::counted((nd.files) as u64, "file", "files"), "folder".to_string(), pal.text, nd.path.clone())
                         }
                         ViewRow::File(i) => {
                             let r = &l.rows[i];
@@ -1988,7 +1990,7 @@ impl ArchiveView {
                             _ => "FAILED",
                         }
                     ));
-                    ui.label(format!("plaintext {} bytes", num(summary.plain_size)));
+                    ui.label(format!("plaintext {}", shaiya_inspect::counted((summary.plain_size) as u64, "byte", "bytes")));
                     ui.label(format!(
                         "header padding {}, tail {}",
                         if summary.padding_zero == Some(true) { "zero" } else { "not zero" },
@@ -2091,7 +2093,7 @@ impl ArchiveView {
                     ui.label("Checking...");
                 }
                 Some(r) => {
-                    ui.label(format!("{} problems, {} warnings", r.problems(), r.warnings()));
+                    ui.label(format!("{}, {}", shaiya_inspect::counted((r.problems()) as u64, "problem", "problems"), shaiya_inspect::counted((r.warnings()) as u64, "warning", "warnings")));
                     egui::ScrollArea::vertical().max_height(260.0).show(ui, |ui| {
                         for f in &r.findings {
                             let col = match f.severity {
@@ -2182,7 +2184,7 @@ impl ArchiveView {
         }
         // F5 with pending changes
         if self.reload_asked {
-            let c = Confirm { title: "Reload the archive".into(), text: format!("Reload the archive and discard {} pending changes?", self.pending.len()), buttons: vec!["Reload".into(), "Keep".into()], danger: Some(0) };
+            let c = Confirm { title: "Reload the archive".into(), text: format!("Reload the archive and discard {}?", shaiya_inspect::counted((self.pending.len()) as u64, "pending change", "pending changes")), buttons: vec!["Reload".into(), "Keep".into()], danger: Some(0) };
             match cx.shell.confirm("workbench-reload", &c) {
                 None => {}
                 Some(0) => {
@@ -2196,7 +2198,7 @@ impl ArchiveView {
         }
         // the discard question
         if self.discard_asked {
-            let c = Confirm { title: "Discard pending changes".into(), text: format!("Discard {} pending changes?", self.pending.len()), buttons: vec!["Discard".into(), "Keep".into()], danger: Some(0) };
+            let c = Confirm { title: "Discard pending changes".into(), text: format!("Discard {}?", shaiya_inspect::counted((self.pending.len()) as u64, "pending change", "pending changes")), buttons: vec!["Discard".into(), "Keep".into()], danger: Some(0) };
             match cx.shell.confirm("workbench-discard", &c) {
                 None => {}
                 Some(0) => {
@@ -2410,10 +2412,6 @@ enum MenuChoice {
 pub enum TabRequest {
     PatchFromPending,
     PatchFromDiff(PathBuf),
-}
-
-fn num(n: u64) -> String {
-    shaiya_inspect::group(n)
 }
 
 fn hex_view(ui: &mut egui::Ui, bytes: &[u8], base: u64) {

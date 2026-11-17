@@ -177,7 +177,7 @@ impl PatchBuilder {
     /// "From pending changes": the Archive tab's queue as the extra source.
     pub fn from_pending(&mut self, input: BuildInput) {
         let n = input.files.len() + input.removals.len();
-        self.extra = Some((format!("{n} pending changes of the Archive tab"), input));
+        self.extra = Some((format!("{} of the Archive tab", shaiya_inspect::counted((n) as u64, "pending change", "pending changes")), input));
         self.dirty = true;
     }
 
@@ -308,7 +308,7 @@ impl PatchBuilder {
             return Some("Nothing to build yet".into());
         }
         if !self.problems.is_empty() {
-            return Some(format!("{} problems in the contents", self.problems.len()));
+            return Some(format!("{} in the contents", shaiya_inspect::counted((self.problems.len()) as u64, "problem", "problems")));
         }
         if self.out_path().is_none() {
             return Some("Choose the output folder and file name".into());
@@ -451,7 +451,7 @@ impl PatchBuilder {
                         match path {
                             Some(p) => {
                                 ui.label(p.display().to_string());
-                                ui.label(format!("{} {}", count.unwrap_or(0), if card == Card::Remove { "paths" } else { "files" }));
+                                ui.label(if card == Card::Remove { shaiya_inspect::counted((count.unwrap_or(0)) as u64, "path", "paths") } else { shaiya_inspect::counted((count.unwrap_or(0)) as u64, "file", "files") });
                             }
                             None => {
                                 ui.label(RichText::new("empty").color(pal.weak));

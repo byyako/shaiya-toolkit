@@ -368,11 +368,11 @@ impl ApplyTab {
             let restored = j.loose.iter().filter(|l| l.existed).count();
             let deleted = j.loose.iter().filter(|l| !l.existed).count();
             format!(
-                "Roll back {} (applied {})? The index is restored, data.saf is cut back to {} bytes, {restored} loose file{} restored and {deleted} deleted.",
+                "Roll back {} (applied {})? The index is restored, data.saf is cut back to {}, {} restored and {deleted} deleted.",
                 j.label,
                 local_time(&j.created_utc),
-                shaiya_inspect::group(j.saf_len_before),
-                if restored == 1 { "" } else { "s" }
+                shaiya_inspect::counted((j.saf_len_before) as u64, "byte", "bytes"),
+                shaiya_inspect::counted((restored) as u64, "loose file", "loose files")
             )
         };
         let _ = name;
@@ -495,8 +495,8 @@ impl ApplyTab {
             Flow::RollRunning(dir, mut h) => match h.poll() {
                 None => self.flow = Flow::RollRunning(dir, h),
                 Some(TaskOutcome::Done(r)) => {
-                    cx.shell.status(format!("Rolled back: index restored, data.saf cut to {} bytes", shaiya_inspect::group(r.truncated_to)));
-                    self.result = vec![format!("Rolled back {} loose files restored, {} deleted", r.restored_loose.len(), r.deleted_loose.len())];
+                    cx.shell.status(format!("Rolled back: index restored, data.saf cut to {}", shaiya_inspect::counted((r.truncated_to) as u64, "byte", "bytes")));
+                    self.result = vec![format!("Rolled back: {} restored, {} deleted", shaiya_inspect::counted((r.restored_loose.len()) as u64, "loose file", "loose files"), r.deleted_loose.len())];
                     self.changed_counter += 1;
                     archive.changed_counter += 1;
                     archive.reopen(cx);
@@ -508,7 +508,7 @@ impl ApplyTab {
                 Some(_) => archive.reopen(cx),
             },
             Flow::PruneConfirm(dir, keep) => {
-                let c = Confirm { title: "Prune history".into(), text: format!("Delete the backups of all but the newest {keep} changes? Those changes can then no longer be rolled back."), buttons: vec!["Prune".into(), "Cancel".into()], danger: Some(0) };
+                let c = Confirm { title: "Prune history".into(), text: format!("Delete the backups of all but the newest {}? Those changes can then no longer be rolled back.", shaiya_inspect::counted((keep) as u64, "change", "changes")), buttons: vec!["Prune".into(), "Cancel".into()], danger: Some(0) };
                 match cx.shell.confirm("workbench-prune", &c) {
                     None => self.flow = Flow::PruneConfirm(dir, keep),
                     Some(0) => {
@@ -634,7 +634,7 @@ impl ApplyTab {
                             if v.problems.is_empty() {
                                 ui.label(RichText::new("structure OK").color(pal.ok));
                             } else {
-                                ui.label(RichText::new(format!("{} problems: {}", v.problems.len(), v.problems[0])).color(pal.error));
+                                ui.label(RichText::new(format!("{}: {}", shaiya_inspect::counted((v.problems.len()) as u64, "problem", "problems"), v.problems[0])).color(pal.error));
                             }
                             let (text, color) = match &v.signature {
                                 SigStatus::Valid => ("signature valid".to_string(), pal.ok),

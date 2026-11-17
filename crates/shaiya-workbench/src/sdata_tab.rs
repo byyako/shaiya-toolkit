@@ -238,7 +238,7 @@ impl SDataTab {
             Flow::Confirm(req) => {
                 let c = Confirm {
                     title: "Files already exist".into(),
-                    text: format!("{} files already exist in {}.", req.clashes, req.out.display()),
+                    text: format!("{} already exist in {}.", shaiya_inspect::counted((req.clashes) as u64, "file", "files"), req.out.display()),
                     buttons: vec!["Skip existing".into(), "Overwrite".into(), "Cancel".into()],
                     danger: Some(1),
                 };
@@ -255,9 +255,9 @@ impl SDataTab {
                     let count = |s: &[Status]| rows.iter().filter(|r| s.contains(&r.item.status)).count();
                     let failed = count(&[Status::Failed]);
                     let line = match action {
-                        Action::Check => format!("{} files: {} checksums OK, {} bad, {} failed", rows.len(), count(&[Status::CrcOk]), count(&[Status::CrcBad]), failed),
-                        Action::Decrypt => format!("{} files: {} decrypted, {} copied unchanged, {} skipped, {} failed", rows.len(), count(&[Status::Decrypted, Status::DecryptedCrcBad]), count(&[Status::PassedThrough]), count(&[Status::SkippedExisting, Status::SkippedUnchanged]), failed),
-                        Action::Encrypt => format!("{} files: {} encrypted, {} copied unchanged, {} skipped, {} failed", rows.len(), count(&[Status::EncryptedNew]), count(&[Status::PassedThrough]), count(&[Status::SkippedExisting, Status::SkippedUnchanged]), failed),
+                        Action::Check => format!("{}: {} checksums OK, {} bad, {} failed", shaiya_inspect::counted((rows.len()) as u64, "file", "files"), count(&[Status::CrcOk]), count(&[Status::CrcBad]), failed),
+                        Action::Decrypt => format!("{}: {} decrypted, {} copied unchanged, {} skipped, {} failed", shaiya_inspect::counted((rows.len()) as u64, "file", "files"), count(&[Status::Decrypted, Status::DecryptedCrcBad]), count(&[Status::PassedThrough]), count(&[Status::SkippedExisting, Status::SkippedUnchanged]), failed),
+                        Action::Encrypt => format!("{}: {} encrypted, {} copied unchanged, {} skipped, {} failed", shaiya_inspect::counted((rows.len()) as u64, "file", "files"), count(&[Status::EncryptedNew]), count(&[Status::PassedThrough]), count(&[Status::SkippedExisting, Status::SkippedUnchanged]), failed),
                     };
                     self.message = vec![line.clone()];
                     for r in rows.iter().filter(|r| r.item.status == Status::Failed) {
