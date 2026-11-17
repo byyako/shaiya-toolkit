@@ -56,7 +56,7 @@ pub fn readme(title: &str, tools: &[&Tool], platform: &str, version: &str) -> St
     for t in tools {
         s.push_str(&format!("  {:<34} {}\n", program_name(t, platform), if t.gui { "window program: double-click it, or drop files on it" } else { "command line: open a terminal here and run it with --help" }));
     }
-    s.push_str("\nThese tools work on your own copy of the game. The repository and the releases contain no game files, and the tools never download any. Changes to a client folder are recorded in a journal so they can be rolled back; with --no-journal only the previous index is kept (data.sah.bak) and overwritten loose files get no backup. Everything else is written only to a path you name.\n\n");
+    s.push_str("\nThese tools work on your own copy of the game. The repository and the releases contain no game files, and the tools never download any. Changes to a client folder are recorded in a journal so they can usually be rolled back, but not changes made with --no-journal or archive compact --in-place, which keep at most the previous index (data.sah.bak). Everything else is written only to a path you name.\n\n");
     s.push_str(platform_notes(platform));
     s.push_str("\n\nCheck the download against SHA256SUMS.txt from the release page.\n\nDocumentation: https://github.com/byyako/shaiya-toolkit/tree/main/docs\nLicence: MIT (LICENSE.txt). Third-party components: THIRD-PARTY-NOTICES.txt\nMade by byyako.\n");
     s

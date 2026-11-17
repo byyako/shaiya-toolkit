@@ -21,11 +21,6 @@ pub fn fail(ctx: &Ctx, e: &Error) -> i32 {
     if !ctx.json || !ctx.quiet {
         eprintln!("error: {e}");
     }
-    if let Error::Io { path: Some(p), .. } = e {
-        if p.to_string_lossy().starts_with('@') {
-            eprintln!("hint: shaiya clients list");
-        }
-    }
     if ctx.json {
         crate::output::print_json(&error_json(e));
     }

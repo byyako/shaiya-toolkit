@@ -452,7 +452,7 @@ fn list(ctx: &Ctx, a: &ListArgs) -> Result<i32> {
                     if printed.insert(p.to_lowercase()) {
                         let (files, bytes) = folders.get(&(p.to_lowercase(), p.clone())).copied().unwrap_or((0, 0));
                         let label = format!("{}{}/", "  ".repeat(n - 1), segs[n - 1]);
-                        outln!(w, "{label:<34}{:>8} files {:>10}", num(files as u64), size(bytes));
+                        outln!(w, "{label:<34}{:>14} {:>10}", count(files as usize, "file"), size(bytes));
                     }
                 }
             };
@@ -480,7 +480,7 @@ fn list(ctx: &Ctx, a: &ListArgs) -> Result<i32> {
             }
         }
         let _ = w.flush();
-        let mut s = format!("{} of {} files, {}", num(rows.len() as u64), num(all.len() as u64), size(total));
+        let mut s = format!("{} of {}, {}", num(rows.len() as u64), count(all.len(), "file"), size(total));
         if shadowed_hidden > 0 {
             s.push_str(&format!(" ({shadowed_hidden} shadowed hidden; --include-shadowed shows them)"));
         }
@@ -536,11 +536,11 @@ fn stats(ctx: &Ctx, a: &StatsArgs) -> Result<i32> {
     let sah_name = file_name(o.sah());
     outln!(
         w,
-        "{sah_name}  SAH version {}, {} files ({} shadowed) in {} folders, {}, trailer {}",
+        "{sah_name}  SAH version {}, {} ({} shadowed) in {}, {}, trailer {}",
         idx.version,
-        num(all.len() as u64),
+        count(all.len(), "file"),
         all.len() - visible.len(),
-        num(idx.dir_count() as u64),
+        count(idx.dir_count(), "folder"),
         if idx.free.is_empty() { "no free list".to_string() } else { format!("{} free-list entries", num(idx.free.len() as u64)) },
         shaiya_core::hash::to_hex(&idx.trailer)
     );
@@ -555,12 +555,12 @@ fn stats(ctx: &Ctx, a: &StatsArgs) -> Result<i32> {
     outln!(w);
     outln!(w, "By folder (largest {})", a.top);
     for (n, f, b) in &folders {
-        outln!(w, "  {n:<28}{:>9} files {:>10}", num(*f as u64), size(*b));
+        outln!(w, "  {n:<28}{:>15} {:>10}", count(*f as usize, "file"), size(*b));
     }
     outln!(w);
     outln!(w, "By extension (largest {})", a.top);
     for (n, f, b) in &exts {
-        outln!(w, "  {n:<28}{:>9} files {:>10}", num(*f as u64), size(*b));
+        outln!(w, "  {n:<28}{:>15} {:>10}", count(*f as usize, "file"), size(*b));
     }
     Ok(0)
 }
@@ -588,11 +588,11 @@ fn check(ctx: &Ctx, a: &CheckArgs, job: &Job) -> Result<i32> {
     let sah_name = file_name(o.sah());
     outln!(
         w,
-        "{sah_name}  version {}, {} files, {} shadowed, {} folders, {}",
+        "{sah_name}  version {}, {}, {} shadowed, {}, {}",
         report.sah_version,
-        num(report.files as u64),
+        count(report.files, "file"),
         report.files - report.visible,
-        num(report.dirs as u64),
+        count(report.dirs, "folder"),
         if report.free_entries == 0 { "no free list".to_string() } else { format!("{} free-list entries", num(report.free_entries as u64)) }
     );
     if let (Some(n), Some(dead), Some(p)) = (l.saf_len, l.dead_bytes, o.saf_path()) {
@@ -637,10 +637,10 @@ fn index(ctx: &Ctx, a: &IndexArgs) -> Result<i32> {
         let mut w = out();
         outln!(
             w,
-            "{}: version {}, {} files, {} free-list entries, trailer {} bytes ({}); rewrite identical: {}{}",
+            "{}: version {}, {}, {} free-list entries, trailer {} bytes ({}); rewrite identical: {}{}",
             file_name(&sah),
             idx.version,
-            num(idx.file_count() as u64),
+            count(idx.file_count(), "file"),
             num(idx.free.len() as u64),
             idx.trailer.len(),
             shaiya_core::hash::to_hex(&idx.trailer),

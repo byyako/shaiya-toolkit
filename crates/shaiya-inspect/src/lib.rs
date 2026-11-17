@@ -162,20 +162,24 @@ pub fn group(n: u64) -> String {
     out
 }
 
+fn counted(n: u64, one: &str, many: &str) -> String {
+    format!("{} {}", group(n), if n == 1 { one } else { many })
+}
+
 /// One line saying what the file is, the way `shaiya info` and Workbench show it
 /// (`SData, SEED-encrypted, plaintext 4,512,768 bytes, checksum OK`).
 pub fn describe(i: &Info) -> String {
     let size = group(i.size);
     match &i.details {
         Details::Sah { version, files, dirs, free_entries, data_end, .. } => format!(
-            "SAH index, version {version}, {} files in {} folders, {} free entries, data ends at {}",
-            group(*files as u64),
-            group(*dirs as u64),
-            group(*free_entries as u64),
+            "SAH index, version {version}, {} in {}, {}, data ends at {}",
+            counted(*files as u64, "file", "files"),
+            counted(*dirs as u64, "folder", "folders"),
+            counted(*free_entries as u64, "free entry", "free entries"),
             group(*data_end)
         ),
         Details::Saf { index_files, live_bytes } => match (index_files, live_bytes) {
-            (Some(n), Some(l)) => format!("SAF data, {size} bytes, its index lists {} files using {} bytes", group(*n as u64), group(*l)),
+            (Some(n), Some(l)) => format!("SAF data, {size} bytes, its index lists {} using {} bytes", counted(*n as u64, "file", "files"), group(*l)),
             _ => format!("SAF data, {size} bytes (no .sah next to it)"),
         },
         Details::SdataSeed { plain_size, crc_ok, .. } => {
@@ -183,7 +187,10 @@ pub fn describe(i: &Info) -> String {
         }
         Details::SdataPlain => format!("SData, plain (not encrypted), {size} bytes"),
         Details::Patch { files, loose, removals, signature_file } => format!(
-            "Patch, {files} archive files, {loose} loose files, {removals} removals, signature file {}, {size} bytes",
+            "Patch, {}, {}, {}, signature file {}, {size} bytes",
+            counted(*files as u64, "archive file", "archive files"),
+            counted(*loose as u64, "loose file", "loose files"),
+            counted(*removals as u64, "removal", "removals"),
             if *signature_file { "present" } else { "not found" }
         ),
         Details::PatchSignature { hex_len } => format!("Patch signature, {hex_len} hex digits"),
@@ -206,7 +213,10 @@ pub fn inspect(path: &Path, opts: &Options, job: &Job) -> Result<Info> {
     let name = file_name(path);
     let mut problems = Vec::new();
 
-    let (kind, details) = if head.starts_with(b"SAH") {
+    // A data.saf with its data.sah beside it is SAF data whatever its first bytes look like (an archive can start with an SData file).
+    let (kind, details) = if name.eq_ignore_ascii_case("data.saf") && sibling_with_ext(path, "sah").is_some() {
+        saf_details(path, size, &mut problems)
+    } else if head.starts_with(b"SAH") {
         sah_details(path, size, &name, &mut problems)
     } else if shaiya_seed::is_encrypted(&head) {
         seed_details(path, size, &head, &name, &mut problems)
@@ -216,16 +226,7 @@ pub fn inspect(path: &Path, opts: &Options, job: &Job) -> Result<Info> {
         let details = Details::Pe { machine, machine_name: machine_name(machine), timestamp, timestamp_utc: utc_iso_unix(timestamp as i64) };
         (Kind::Pe, details)
     } else if has_ext(path, "saf") {
-        let sah = sibling_with_ext(path, "sah");
-        let idx = sah.as_deref().and_then(|p| shaiya_archive::Index::read(p).ok());
-        let details = Details::Saf { index_files: idx.as_ref().map(|i| i.file_count()), live_bytes: idx.as_ref().map(live_bytes) };
-        if let Some(i) = &idx {
-            let end = i.files().iter().map(|(_, e)| e.offset + e.length as u64).max().unwrap_or(0);
-            if end > size {
-                problems.push(format!("the index {} refers to bytes up to {end}, but this file has only {size}", sah.as_deref().map(file_name).unwrap_or_default()));
-            }
-        }
-        (Kind::Saf, details)
+        saf_details(path, size, &mut problems)
     } else if name.to_ascii_lowercase().ends_with(".patch.sig") || (has_ext(path, "sig") && looks_like_hex_signature(&head)) {
         let text = String::from_utf8_lossy(&head);
         let hex_len = text.trim().len();
@@ -244,6 +245,19 @@ pub fn inspect(path: &Path, opts: &Options, job: &Job) -> Result<Info> {
 
     let sha256 = if opts.hash { Some(to_hex(&sha256_file(path, job)?)) } else { None };
     Ok(Info { path: path.display().to_string(), size, kind, details, sha256, problems })
+}
+
+fn saf_details(path: &Path, size: u64, problems: &mut Vec<String>) -> (Kind, Details) {
+    let sah = sibling_with_ext(path, "sah");
+    let idx = sah.as_deref().and_then(|p| shaiya_archive::Index::read(p).ok());
+    let details = Details::Saf { index_files: idx.as_ref().map(|i| i.file_count()), live_bytes: idx.as_ref().map(live_bytes) };
+    if let Some(i) = &idx {
+        let end = i.files().iter().map(|(_, e)| e.offset + e.length as u64).max().unwrap_or(0);
+        if end > size {
+            problems.push(format!("the index {} refers to bytes up to {end}, but this file has only {size}", sah.as_deref().map(file_name).unwrap_or_default()));
+        }
+    }
+    (Kind::Saf, details)
 }
 
 fn looks_like_hex_signature(head: &[u8]) -> bool {
@@ -360,6 +374,24 @@ mod tests {
         assert_eq!(s.kind, Kind::Saf);
         assert!(matches!(s.details, Details::Saf { index_files: Some(3), live_bytes: Some(8) }));
         assert!(s.problems.is_empty());
+    }
+
+    #[test]
+    fn data_saf_beside_its_sah_is_saf_even_if_it_starts_like_an_sdata() {
+        let d = TempDir::new("inspect-saf-sdata-first");
+        let mut first = shaiya_seed::SIGNATURE.to_vec();
+        first.resize(200, 7);
+        let (sah, saf) = SahBuilder::new(1).file(b"Cash.SData", &first).file(b"z.txt", b"zz").write_to(d.path());
+        let _ = sah;
+        let s = info(&saf);
+        assert_eq!(s.kind, Kind::Saf, "{s:?}");
+        assert!(matches!(s.details, Details::Saf { index_files: Some(2), .. }), "{s:?}");
+        assert!(s.problems.is_empty());
+        // without a data.sah beside it, content sniffing still applies
+        let alone = d.path().join("alone").join("data.saf");
+        std::fs::create_dir_all(alone.parent().unwrap()).unwrap();
+        std::fs::write(&alone, &first).unwrap();
+        assert_eq!(info(&alone).kind, Kind::SdataSeed);
     }
 
     #[test]

@@ -369,7 +369,7 @@ fn verify_cmd(ctx: &Ctx, a: &VerifyArgs, job: &Job) -> Result<i32> {
         let name = file_name(&r.patch);
         let structure = if r.problems.is_empty() {
             match contents(&r.patch) {
-                Ok(c) => format!("structure OK ({}, {}, {})", count(c.files.len(), "archive file"), count(c.loose.len(), "loose"), count(c.removals.len(), "removal")),
+                Ok(c) => format!("structure OK ({}, {}, {})", count(c.files.len(), "archive file"), count(c.loose.len(), "loose file"), count(c.removals.len(), "removal")),
                 Err(_) => "structure OK".to_string(),
             }
         } else {
@@ -430,7 +430,7 @@ fn apply(ctx: &Ctx, a: &ApplyArgs, job: &Job) -> Result<i32> {
         }
         let mut w = out();
         for p in &plans {
-            outln!(w, "{} -> {} ({}, {} files)", file_name(&p.patch), dir.display(), file_name(&files.sah), num(idx.file_count() as u64));
+            outln!(w, "{} -> {} ({}, {})", file_name(&p.patch), dir.display(), file_name(&files.sah), count(idx.file_count(), "file"));
             let overwrites: Vec<&str> = p.loose.iter().filter(|l| l.overwrites).map(|l| l.target.as_str()).collect();
             outln!(
                 w,
@@ -545,11 +545,11 @@ fn rollback(ctx: &Ctx, a: &RollbackArgs, job: &Job) -> Result<i32> {
         print_json(&serde_json::to_value(&r).unwrap_or(Value::Null));
     } else {
         println!(
-            "rolled back {} (applied {}): index restored, data.saf truncated to {} bytes, {} loose file(s) restored, {} deleted",
+            "rolled back {} (applied {}): index restored, data.saf truncated to {} bytes, {} restored, {} deleted",
             j.label,
             j.created_utc,
             num(r.truncated_to),
-            r.restored_loose.len(),
+            count(r.restored_loose.len(), "loose file"),
             r.deleted_loose.len()
         );
     }

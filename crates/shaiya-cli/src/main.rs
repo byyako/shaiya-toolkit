@@ -49,7 +49,7 @@ pub struct Ctx {
     about = "Tools for Shaiya game data. These work on your own copy of the game; nothing is downloaded.",
     disable_version_flag = true,
     arg_required_else_help = true,
-    after_help = "Your own copy: these tools never download game files. Changes to a client folder are journaled so they can be rolled back (not with --no-journal); other output goes only where you say."
+    after_help = "Your own copy: these tools never download game files. Changes to a client folder are journaled so they can usually be rolled back, but not with --no-journal or archive compact --in-place; other output goes only where you say."
 )]
 struct Cli {
     /// Print one JSON document on stdout instead of text

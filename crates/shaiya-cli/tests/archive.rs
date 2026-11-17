@@ -88,6 +88,7 @@ fn stats_check_and_index() {
         assert!(v.get(k).is_some(), "{k}");
     }
     assert_eq!(v["files"], 7);
+    assert!(!out(&o).contains("1 files") && !out(&o).contains("1 folders"), "{}", out(&o));
     // check: clean, json
     let o = sh(&w.data, &["archive", "check", p(&w.client)]);
     assert_eq!(code(&o), 0);

@@ -104,6 +104,7 @@ fn the_whole_life_of_a_patch() {
     let o = sh(&w.data, &["patch", "rollback", "@us"]);
     assert_eq!(code(&o), 0, "{}", err(&o));
     assert!(out(&o).contains("rolled back ps0109.patch") && out(&o).contains("index restored"), "{}", out(&o));
+    assert!(out(&o).contains(" loose file") && !out(&o).contains("file(s)"), "{}", out(&o));
     assert!(!w.client.join("notice.txt").exists());
     // verify --client now fails (exit 1), and a second rollback has nothing to do
     let o = sh(&w.data, &["patch", "verify", p(&patch), "--client", "@us"]);

@@ -67,7 +67,7 @@ fn info_text_for_every_kind() {
     assert!(out.contains("SAF data"), "{out}");
     assert!(out.contains("SData, SEED-encrypted, plaintext 10 bytes, checksum OK"), "{out}");
     assert!(out.contains("SData, plain (not encrypted)"), "{out}");
-    assert!(out.contains("Patch, 1 archive files, 0 loose files, 0 removals"), "{out}");
+    assert!(out.contains("Patch, 1 archive file, 0 loose files, 0 removals"), "{out}");
     assert!(out.contains("Windows program (x86), linked 2010-04-26 03:12:44 UTC"), "{out}");
     assert!(out.contains("Unknown file type, starts with 01020304"), "{out}");
 }
@@ -201,6 +201,21 @@ fn usage_errors_exit_2() {
     let o = run(&["--help"]);
     assert_eq!(o.status.code(), Some(0));
     assert!(text(&o.stdout).contains("info"));
+    let help = text(&o.stdout);
+    assert!(help.contains("usually be rolled back") && help.contains("archive compact --in-place"), "{help}");
+    assert!(!help.contains("can be undone"), "{help}");
+}
+
+#[test]
+fn info_on_data_saf_beside_its_sah_says_saf_even_when_it_starts_like_an_sdata() {
+    let d = TempDir::new("cli-info-saf-sdata");
+    let mut first = shaiya_seed::SIGNATURE.to_vec();
+    first.resize(300, 1);
+    let (_sah, saf) = SahBuilder::new(1).file(b"Cash.SData", &first).file(b"a.txt", b"x").write_to(d.path());
+    let o = with_paths(&["info"], &[&saf]);
+    assert_eq!(o.status.code(), Some(0), "{}", text(&o.stderr));
+    let t = text(&o.stdout);
+    assert!(t.contains("SAF data") && t.contains("2 files") && !t.contains("FAILED"), "{t}");
 }
 
 #[test]

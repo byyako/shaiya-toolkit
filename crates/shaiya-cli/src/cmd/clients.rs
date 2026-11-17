@@ -148,7 +148,7 @@ fn go(ctx: &Ctx, cmd: &Cmd) -> Result<i32> {
             } else {
                 let fmt = |v: Option<u32>| v.map(|n| n.to_string()).unwrap_or_else(|| "-".to_string());
                 println!("{}  {}", c.name, c.path.display());
-                println!("  archive:   SAH version {}, {} files", idx.version, num(idx.file_count() as u64));
+                println!("  archive:   SAH version {}, {}", idx.version, count(idx.file_count(), "file"));
                 println!("  Version.ini: CheckVersion {}, CurrentVersion {}", fmt(ini.and_then(|i| i.check_version)), fmt(ini.and_then(|i| i.current_version)));
                 println!("  game.exe:  {}", if files.game_exe.is_some() { "present" } else { "not found" });
                 println!("  changes made by the toolkit: {journals}");

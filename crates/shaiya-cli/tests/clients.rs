@@ -61,7 +61,7 @@ fn bad_names_duplicates_and_unknowns() {
     assert_eq!(code(&sh(&w.data, &["clients", "remove", "nobody"])), 3);
     let o = sh(&w.data, &["archive", "list", "@nobody"]);
     assert_eq!(code(&o), 3);
-    assert!(err(&o).contains("hint: shaiya clients list"), "{}", err(&o));
+    assert_eq!(err(&o).matches("hint: shaiya clients list").count(), 1, "the hint is printed once: {}", err(&o));
     let gone = w.tmp.path().join("gone");
     std::fs::rename(&w.client, &gone).unwrap();
     assert!(out(&sh(&w.data, &["clients", "list"])).contains("missing"));
