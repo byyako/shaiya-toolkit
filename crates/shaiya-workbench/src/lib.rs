@@ -1,5 +1,5 @@
-//! Shaiya Workbench (T1): the archive browser with queued changes, patch builder, apply with history, signing, SData
-//! shortcuts and the T0 file inspector, on the shared GUI shell. Every change to a client folder goes through the same crash-safe
+//! Shaiya Workbench: the archive browser with queued changes, patch builder, apply with history, signing, SData
+//! shortcuts and the file inspector, on the shared GUI shell. Every change to a client folder goes through the same crash-safe
 //! procedure as the command line (`shaiya_archive::edit`, `shaiya_patch::apply_with`), after a confirmation.
 
 pub mod apply_tab;
@@ -26,6 +26,8 @@ use shaiya_ui::{AppInfo, Command, Confirm, Cx, Menu, ToolApp};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
+/// Where Help > Support the project goes (opened in the default browser on click, never automatically).
+pub const SUPPORT_URL: &str = "https://buymeacoffee.com/tylernol";
 const HELP: &str = "Shaiya Workbench\n\nPick a client folder in the toolbar (Add client folder... remembers it for every toolkit program), or open any data.sah with Open other archive...\n\nArchive: browse, search and preview the files of the archive; extract them; queue changes (add, replace, remove) and apply them to the client with a backup. Nothing is written until you press Apply to client.\n\nPatch builder, Apply & history, Sign & verify: make, check, sign and apply patches; every applied change can be rolled back from Apply & history.\n\nSData: decrypt or encrypt SData files into a folder.\n\nInspect: identify files and compute SHA-256.\n\nKeys: Ctrl+1 to Ctrl+6 switch tabs, Ctrl+F search, Delete queues a removal, Insert adds files, Ctrl+E extracts, Ctrl+Enter applies, Ctrl+Z / Ctrl+Y undo and redo queued changes, F5 reloads. All actions are in the command palette (Ctrl+Shift+P).";
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
@@ -537,6 +539,13 @@ impl ToolApp for WorkbenchApp {
                 if ui.add_enabled(!self.inspect.is_empty(), egui::Button::new("Hash selected")).clicked() {
                     ui.close();
                     self.inspect.hash_selected(cx);
+                }
+            }
+            Menu::Help => {
+                // Opens the page in the default browser only when clicked; nothing is fetched or sent by the program itself.
+                if ui.button("Support the project").clicked() {
+                    ui.close();
+                    ui.ctx().open_url(egui::OpenUrl::new_tab(SUPPORT_URL));
                 }
             }
             _ => {}
