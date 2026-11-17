@@ -210,7 +210,9 @@ fn summary(items: &[ItemResult]) -> Value {
 }
 
 /// Runs `f` over the source the arguments describe.
-fn with_source(ctx: &Ctx, inputs: &[String], from: Option<&str>, all_files: bool, f: &mut dyn FnMut(&dyn ByteSource, &[PathBuf]) -> Result<i32>) -> Result<i32> {
+type SourceFn<'a> = dyn FnMut(&dyn ByteSource, &[PathBuf]) -> Result<i32> + 'a;
+
+fn with_source(ctx: &Ctx, inputs: &[String], from: Option<&str>, all_files: bool, f: &mut SourceFn) -> Result<i32> {
     match from {
         Some(a) => {
             let archive = open_full(ctx, a)?;

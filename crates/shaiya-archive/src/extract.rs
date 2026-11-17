@@ -319,6 +319,6 @@ mod tests {
             assert_eq!(e.metadata().unwrap().len(), 3_000_000, "{name} is complete");
             seen += 1;
         }
-        assert!(seen >= 1 && seen < 3, "{seen}");
+        assert!((1..3).contains(&seen), "{seen}");
     }
 }

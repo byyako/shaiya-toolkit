@@ -38,7 +38,7 @@ fn crypt_block(block: &[u8], encrypt: bool) -> [u8; 16] {
     let (mut l0, mut l1, mut r0, mut r1) = (w(0), w(1), w(2), w(3));
     for i in 0..16usize {
         let k = if encrypt { i * 2 } else { 30 - i * 2 };
-        if i % 2 == 0 {
+        if i.is_multiple_of(2) {
             let (a, b) = f(r0, r1, k);
             l0 ^= a;
             l1 ^= b;
@@ -108,7 +108,7 @@ pub fn info(data: &[u8], file: &str) -> Result<Option<SeedInfo>> {
         return Err(bad(file, data.len() as u64, "SEED header is cut short"));
     }
     let body_len = data.len() - HEADER_SIZE;
-    if body_len % 16 != 0 {
+    if !body_len.is_multiple_of(16) {
         return Err(bad(file, HEADER_SIZE as u64, "SEED body is not a whole number of 16-byte blocks"));
     }
     let crc = u32::from_le_bytes(data[40..44].try_into().expect("4 bytes"));
@@ -122,7 +122,7 @@ pub fn info(data: &[u8], file: &str) -> Result<Option<SeedInfo>> {
 
 fn decrypt_body(data: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(data.len() - HEADER_SIZE);
-    for block in data[HEADER_SIZE..].chunks_exact(16) {
+    for block in data[HEADER_SIZE..].as_chunks::<16>().0.iter() {
         out.extend_from_slice(&crypt_block(block, false));
     }
     out
@@ -153,7 +153,7 @@ fn build(plain: &[u8], padding: [u8; 16], tail: Option<&[u8]>) -> Vec<u8> {
         Some(t) if t.len() == padded_len - plain.len() => padded.extend_from_slice(t),
         _ => padded.resize(padded_len, 0),
     }
-    for block in padded.chunks_exact(16) {
+    for block in padded.as_chunks::<16>().0.iter() {
         out.extend_from_slice(&crypt_block(block, true));
     }
     out

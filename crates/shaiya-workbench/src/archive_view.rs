@@ -1797,7 +1797,7 @@ impl ArchiveView {
                                     PendingKind::Put { .. } => format!("~ {label}"),
                                 };
                             }
-                            (label, human_size(r.entry.length as u64), r.entry.version.gt(&0).then(|| utc_iso_unix(r.entry.version as i64)[..10].to_string()).unwrap_or_else(|| "-".into()), r.type_name(), self.color_for(r, &pal), r.path.clone())
+                            (label, human_size(r.entry.length as u64), if r.entry.version > 0 { utc_iso_unix(r.entry.version as i64)[..10].to_string() } else { "-".into() }, r.type_name(), self.color_for(r, &pal), r.path.clone())
                         }
                     };
                     let resp = ui.add_sized([cols[0], 20.0], egui::Button::selectable(selected, RichText::new(label).color(color)).truncate());

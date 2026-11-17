@@ -303,7 +303,7 @@ impl Wld {
                 return Err(r.fail(format!("terrain grid {n}x{n} does not fit in the file")));
             }
             let raw = r.bytes(cells * 2, "terrain heights")?;
-            let heights = raw.chunks_exact(2).map(|c| i16::from_le_bytes([c[0], c[1]])).collect();
+            let heights = raw.as_chunks::<2>().0.iter().map(|c| i16::from_le_bytes([c[0], c[1]])).collect();
             let tex_index = r.bytes(cells, "terrain texture indices")?.to_vec();
             terrain = Some(Terrain { size: size as u32, n, heights, tex_index });
             let nt = r.count(516, 256, "terrain texture count")?;

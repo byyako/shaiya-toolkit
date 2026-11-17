@@ -82,7 +82,7 @@ fn open_wrapper(data: &[u8], name: &str) -> Result<(Vec<u8>, Wrapper, bool)> {
     Ok((plain, Wrapper::Seed { crc: h.crc, size: h.size, padding: h.padding, tail }, ok))
 }
 
-fn find_original<'a>(like: &'a dyn ByteSource, name: &str) -> Option<String> {
+fn find_original(like: &dyn ByteSource, name: &str) -> Option<String> {
     let names = like.names();
     if let Some(n) = names.iter().find(|n| n.as_str() == name) {
         return Some(n.clone());

@@ -91,7 +91,7 @@ mod tests {
         assert_eq!(Error::Refused("output exists".into()).to_string(), "refused: output exists");
         assert_eq!(Error::Unsupported("SAH version 7".into()).kind(), ErrorKind::Unsupported);
         assert_eq!(Error::Cancelled.to_string(), "cancelled");
-        let plain: Error = std::io::Error::new(std::io::ErrorKind::Other, "boom").into();
+        let plain: Error = std::io::Error::other("boom").into();
         assert_eq!(plain.to_string(), "boom");
         assert!(std::error::Error::source(&plain).is_some());
     }

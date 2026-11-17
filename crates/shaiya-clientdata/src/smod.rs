@@ -58,7 +58,7 @@ impl Smod {
             let raw = r.bytes(nv * 36, "vertices")?;
             let f = |o: usize, c: &[u8]| f32::from_le_bytes(c[o..o + 4].try_into().unwrap());
             let vertices = raw
-                .chunks_exact(36)
+                .as_chunks::<36>().0.iter()
                 .map(|c| SmodVertex { pos: [f(0, c), f(4, c), f(8, c)], normal: [f(12, c), f(16, c), f(20, c)], colour: u32::from_le_bytes(c[24..28].try_into().unwrap()), uv: [f(28, c), f(32, c)] })
                 .collect();
             let faces = faces(&mut r, "faces")?;
@@ -71,7 +71,7 @@ impl Smod {
             let np = r.count(12, 10_000_000, "collision point count")?;
             let raw = r.bytes(np * 12, "collision points")?;
             let points = raw
-                .chunks_exact(12)
+                .as_chunks::<12>().0.iter()
                 .map(|c| {
                     let f = |o: usize| f32::from_le_bytes(c[o..o + 4].try_into().unwrap());
                     [f(0), f(4), f(8)]
@@ -92,7 +92,7 @@ impl Smod {
 fn faces(r: &mut Cur, what: &str) -> Result<Vec<[u16; 3]>> {
     let n = r.count(6, 10_000_000, what)?;
     let raw = r.bytes(n * 6, what)?;
-    Ok(raw.chunks_exact(6).map(|c| [u16::from_le_bytes([c[0], c[1]]), u16::from_le_bytes([c[2], c[3]]), u16::from_le_bytes([c[4], c[5]])]).collect())
+    Ok(raw.as_chunks::<6>().0.iter().map(|c| [u16::from_le_bytes([c[0], c[1]]), u16::from_le_bytes([c[2], c[3]]), u16::from_le_bytes([c[4], c[5]])]).collect())
 }
 
 /// Orientation of a placed model: the columns of the rotation that takes model space to world space. `dir` is the model's +z

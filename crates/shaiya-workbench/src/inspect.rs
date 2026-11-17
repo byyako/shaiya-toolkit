@@ -215,6 +215,12 @@ pub fn columns(s: &WorkbenchSettings) -> [f32; 4] {
     c
 }
 
+impl Default for InspectTab {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl InspectTab {
     pub fn new() -> InspectTab {
         InspectTab { rows: Vec::new(), next_id: 1, selected: HashSet::new() }

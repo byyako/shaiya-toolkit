@@ -15,7 +15,7 @@ impl Image {
     /// Average colour of the visible pixels (alpha > 0), used to tint the 2D terrain; mid grey for an empty image.
     pub fn average_colour(&self) -> [u8; 3] {
         let (mut r, mut g, mut b, mut n) = (0u64, 0u64, 0u64, 0u64);
-        for p in self.rgba.chunks_exact(4) {
+        for p in self.rgba.as_chunks::<4>().0.iter() {
             if p[3] > 0 {
                 r += p[0] as u64;
                 g += p[1] as u64;
@@ -34,7 +34,7 @@ impl Image {
         let mut rgba = Vec::with_capacity((size * size * 4) as usize);
         for y in 0..size {
             for x in 0..size {
-                let on = ((x / (size / 4).max(1)) + (y / (size / 4).max(1))) % 2 == 0;
+                let on = ((x / (size / 4).max(1)) + (y / (size / 4).max(1))).is_multiple_of(2);
                 rgba.extend_from_slice(if on { &[255, 0, 255, 255] } else { &[0, 0, 0, 255] });
             }
         }

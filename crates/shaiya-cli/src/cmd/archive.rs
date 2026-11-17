@@ -455,7 +455,7 @@ fn list(ctx: &Ctx, a: &ListArgs) -> Result<i32> {
                     if printed.insert(p.to_lowercase()) {
                         let (files, bytes) = folders.get(&(p.to_lowercase(), p.clone())).copied().unwrap_or((0, 0));
                         let label = format!("{}{}/", "  ".repeat(n - 1), segs[n - 1]);
-                        outln!(w, "{label:<34}{:>14} {:>10}", count(files as usize, "file"), size(bytes));
+                        outln!(w, "{label:<34}{:>14} {:>10}", count(files, "file"), size(bytes));
                     }
                 }
             };
@@ -558,12 +558,12 @@ fn stats(ctx: &Ctx, a: &StatsArgs) -> Result<i32> {
     outln!(w);
     outln!(w, "By folder (largest {})", a.top);
     for (n, f, b) in &folders {
-        outln!(w, "  {n:<28}{:>15} {:>10}", count(*f as usize, "file"), size(*b));
+        outln!(w, "  {n:<28}{:>15} {:>10}", count(*f, "file"), size(*b));
     }
     outln!(w);
     outln!(w, "By extension (largest {})", a.top);
     for (n, f, b) in &exts {
-        outln!(w, "  {n:<28}{:>15} {:>10}", count(*f as usize, "file"), size(*b));
+        outln!(w, "  {n:<28}{:>15} {:>10}", count(*f, "file"), size(*b));
     }
     Ok(0)
 }
@@ -1045,7 +1045,7 @@ fn pack_cmd(ctx: &Ctx, a: &PackArgs, job: &Job) -> Result<i32> {
         for (p, why) in &r.skipped {
             note(ctx, &format!("note: skipped {p} ({why})"));
         }
-        println!("{} {} in {} ({}) {} {}", if a.dry_run { "would pack" } else { "packed" }, count(r.files, "file"), count(r.dirs, "folder"), size(r.bytes), "->", sah.display());
+        println!("{} {} in {} ({}) -> {}", if a.dry_run { "would pack" } else { "packed" }, count(r.files, "file"), count(r.dirs, "folder"), size(r.bytes), sah.display());
     }
     Ok(0)
 }

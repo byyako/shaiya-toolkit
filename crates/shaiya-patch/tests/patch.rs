@@ -151,7 +151,7 @@ fn every_truncation_of_a_patch_is_an_error_and_flips_never_panic() {
         let _ = list(&probe);
         let _ = removals(&probe);
         // apply on a fresh client (every 6th byte, file work is slow on some disks): it may fail, it must not panic
-        if at % 6 == 0 {
+        if at.is_multiple_of(6) {
             let _ = fs::remove_dir_all(&client);
             fs::create_dir_all(&client).unwrap();
             client_in(&client);

@@ -67,11 +67,13 @@ impl<A: ToolApp> Harness<A> {
 
     fn run(&mut self, input_events: Vec<Event>, dropped: Vec<PathBuf>) {
         self.t += 0.05;
-        let mut input = RawInput::default();
-        input.screen_rect = Some(Rect::from_min_size(Pos2::ZERO, self.size));
-        input.time = Some(self.t);
-        input.events = input_events;
-        input.dropped_files = dropped.into_iter().map(|p| std::sync::Arc::new(TestFile(p)) as egui::DroppedFileHandle).collect();
+        let input = RawInput {
+            screen_rect: Some(Rect::from_min_size(Pos2::ZERO, self.size)),
+            time: Some(self.t),
+            events: input_events,
+            dropped_files: dropped.into_iter().map(|p| std::sync::Arc::new(TestFile(p)) as egui::DroppedFileHandle).collect(),
+            ..Default::default()
+        };
         let app = &mut self.app;
         let mut out = self.ctx.run_ui(input, |ui| app.frame(ui));
         out.textures_delta.clear();

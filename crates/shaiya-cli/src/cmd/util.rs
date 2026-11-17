@@ -52,8 +52,8 @@ pub fn resolve(ctx: &Ctx, arg: &str) -> Result<PathBuf> {
 pub fn count(n: usize, what: &str) -> String {
     let plural = if n == 1 {
         what.to_string()
-    } else if what.ends_with('y') {
-        format!("{}ies", &what[..what.len() - 1])
+    } else if let Some(stem) = what.strip_suffix('y') {
+        format!("{stem}ies")
     } else if what.ends_with("ch") || what.ends_with('s') {
         format!("{what}es")
     } else {

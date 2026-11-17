@@ -343,7 +343,7 @@ fn dropping_files_queues_changes_and_apply_writes_them_with_a_journal() {
     w.h.key(Key::Q, Modifiers::COMMAND);
     w.h.frames(3);
     assert!(w.h.text().contains("Unsaved changes") && w.h.text().contains("2 pending archive changes"), "{}", w.h.text());
-    assert!(with_cx(&mut w.h, |app, cx| shaiya_ui::ToolApp::save_all(app, cx)).is_err(), "Save all never writes to a client without its own confirmation");
+    assert!(with_cx(&mut w.h, shaiya_ui::ToolApp::save_all).is_err(), "Save all never writes to a client without its own confirmation");
     // apply through the confirmation
     with_cx(&mut w.h, |app, cx| app.archive.request_apply(cx));
     w.h.frames(3);
@@ -578,7 +578,7 @@ fn patch_builder_folder_sources_show_problems_and_effects() {
     std::fs::write(files.join("fresh.txt"), b"y").unwrap();
     go(&mut w.h, Tab::Patch);
     assert!(w.h.text().contains("Drop a folder of changed files here"), "{}", w.h.text());
-    w.h.drop_files(&[files.clone()]);
+    w.h.drop_files(std::slice::from_ref(&files));
     w.h.frames(3);
     let rows = w.h.app.app.patch.rows.clone();
     assert_eq!(rows.len(), 2, "{rows:?}");

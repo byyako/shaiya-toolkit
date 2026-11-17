@@ -17,7 +17,7 @@ use crate::texture::{self, Image};
 use crate::wld::Wld;
 
 enum Backing {
-    Archive(Archive),
+    Archive(Box<Archive>),
     Folder,
 }
 
@@ -45,7 +45,7 @@ impl ClientSource {
     pub fn open_archive(sah: &Path) -> Result<ClientSource> {
         let archive = Archive::open(sah)?;
         let dir = sah.parent().unwrap_or(Path::new(".")).to_path_buf();
-        Ok(ClientSource { dir, backing: Backing::Archive(archive), problems: Mutex::new(Vec::new()), reported: Mutex::new(HashSet::new()) })
+        Ok(ClientSource { dir, backing: Backing::Archive(Box::new(archive)), problems: Mutex::new(Vec::new()), reported: Mutex::new(HashSet::new()) })
     }
 
     pub fn dir(&self) -> &Path {

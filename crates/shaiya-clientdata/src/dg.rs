@@ -183,7 +183,7 @@ fn faces(r: &mut Cur, what: &str) -> Result<Vec<[u16; 3]>> {
     let n = r.count(6, 10_000_000, what)?;
     let raw = r.bytes(n * 6, what)?;
     Ok(raw
-        .chunks_exact(6)
+        .as_chunks::<6>().0.iter()
         .map(|c| [u16::from_le_bytes([c[0], c[1]]), u16::from_le_bytes([c[2], c[3]]), u16::from_le_bytes([c[4], c[5]])])
         .collect())
 }
@@ -207,7 +207,7 @@ fn node(r: &mut Cur, depth: usize) -> Result<DgNode> {
             let raw = r.bytes(nv * 44, "vertices")?;
             let f = |o: usize, c: &[u8]| f32::from_le_bytes(c[o..o + 4].try_into().unwrap());
             let vertices = raw
-                .chunks_exact(44)
+                .as_chunks::<44>().0.iter()
                 .map(|c| DgVertex {
                     pos: [f(0, c), f(4, c), f(8, c)],
                     normal: [f(12, c), f(16, c), f(20, c)],
@@ -225,7 +225,7 @@ fn node(r: &mut Cur, depth: usize) -> Result<DgNode> {
         let np = r.count(12, 10_000_000, "collision point count")?;
         let raw = r.bytes(np * 12, "collision points")?;
         let points = raw
-            .chunks_exact(12)
+            .as_chunks::<12>().0.iter()
             .map(|c| {
                 let f = |o: usize| f32::from_le_bytes(c[o..o + 4].try_into().unwrap());
                 [f(0), f(4), f(8)]

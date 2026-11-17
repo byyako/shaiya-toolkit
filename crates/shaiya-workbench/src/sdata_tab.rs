@@ -356,7 +356,7 @@ impl SDataTab {
                     (Some(c), _) => ui.label(RichText::new(format!("0x{c:08x} BAD")).color(pal.error)),
                     _ => ui.label("-"),
                 };
-                ui.label(i.plain_size.map(|n| shaiya_inspect::group(n)).unwrap_or_else(|| shaiya_inspect::group(i.size)));
+                ui.label(i.plain_size.map(shaiya_inspect::group).unwrap_or_else(|| shaiya_inspect::group(i.size)));
                 ui.label(match (i.padding_zero, i.tail_zero) {
                     (Some(p), Some(t)) => format!("padding {}, tail {}", if p { "zero" } else { "not zero" }, if t { "zero" } else { "not zero" }),
                     _ => "-".to_string(),

@@ -96,7 +96,7 @@ impl TermProgress {
             self.drawn.set(true);
         } else if self.lines {
             let Some(t) = self.total.get().filter(|&t| t > 0) else { return };
-            let decile = (self.done.get().min(t) * 10 / t) as u64;
+            let decile = self.done.get().min(t) * 10 / t;
             if decile > self.last_decile.get() {
                 self.last_decile.set(decile);
                 eprintln!("{}", self.render());

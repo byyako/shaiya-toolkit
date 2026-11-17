@@ -315,7 +315,9 @@ fn a_cancel_during_the_append_truncates_back() {
 }
 
 /// Builds the state a crash leaves, from a real change: returns (client, journal folder, before, after, marker).
-fn crashed_apply(d: &TempDir) -> (PathBuf, PathBuf, (Vec<u8>, Vec<u8>), (Vec<u8>, Vec<u8>), Marker) {
+type Pair = (Vec<u8>, Vec<u8>);
+
+fn crashed_apply(d: &TempDir) -> (PathBuf, PathBuf, Pair, Pair, Marker) {
     let c = d.path().join("c");
     make_client(&c);
     let before = snap(&c);
@@ -380,7 +382,7 @@ fn recovery_after_the_index_swap_finishes_the_change() {
     assert!(j.loose[0].sha256_after.is_some());
     assert!(!c.join("data.toolkit-pending").exists());
     // and it can still be rolled back
-    let rb = journal::list(&c, &jdir.parent().unwrap().to_path_buf()).unwrap();
+    let rb = journal::list(&c, jdir.parent().unwrap()).unwrap();
     assert_eq!(rb[0].1, Rollback::Possible);
 }
 

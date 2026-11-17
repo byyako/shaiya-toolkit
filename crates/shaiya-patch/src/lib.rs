@@ -137,8 +137,11 @@ pub fn patch_name(number: u32) -> String {
     format!("ps{number:04}.patch")
 }
 
+/// Archive paths with their lengths, and loose file names.
+pub type PatchListing = (Vec<(String, u32)>, Vec<String>);
+
 /// List a patch: (archive paths with their lengths, loose file names).
-pub fn list(patch: &Path) -> Result<(Vec<(String, u32)>, Vec<String>)> {
+pub fn list(patch: &Path) -> Result<PatchListing> {
     let c = contents(patch)?;
     Ok((c.files.into_iter().map(|f| (f.path, f.length)).collect(), c.loose.into_iter().map(|(n, _)| n).collect()))
 }

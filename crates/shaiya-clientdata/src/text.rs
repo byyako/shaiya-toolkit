@@ -8,10 +8,10 @@ use crate::error::{Error, Result};
 /// UTF-16LE (BOM optional) to a string; an odd trailing byte is an error.
 pub fn decode_utf16le(data: &[u8], file: &str) -> Result<String> {
     let data = data.strip_prefix(&[0xff, 0xfe][..]).unwrap_or(data);
-    if data.len() % 2 != 0 {
+    if !data.len().is_multiple_of(2) {
         return Err(Error::Format { file: file.into(), what: "UTF-16 text with an odd number of bytes".into(), offset: data.len() });
     }
-    let units: Vec<u16> = data.chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]])).collect();
+    let units: Vec<u16> = data.as_chunks::<2>().0.iter().map(|c| u16::from_le_bytes([c[0], c[1]])).collect();
     Ok(String::from_utf16_lossy(&units))
 }
 

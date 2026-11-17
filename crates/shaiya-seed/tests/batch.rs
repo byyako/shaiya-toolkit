@@ -98,7 +98,7 @@ fn encrypt_default_and_like_round_trip_byte_for_byte() {
     let r = run(&originals, &opts(Op::Decrypt { unchecked: false }, Output::Dir(plain_dir.clone())), &Job::silent()).unwrap();
     assert!(r.iter().all(|i| i.status != Status::Failed));
     // encrypt back with --like: identical to the originals
-    let src = FolderSource::new(&[plain_dir.clone()], &Filter::default()).unwrap();
+    let src = FolderSource::new(std::slice::from_ref(&plain_dir), &Filter::default()).unwrap();
     let enc = d.path().join("enc");
     let r = run(&src, &opts(Op::Encrypt { like: Some(&originals) }, Output::Dir(enc.clone())), &Job::silent()).unwrap();
     assert_eq!(by(&r, "Item/Item.SData").status, Status::EncryptedNew);
@@ -143,7 +143,7 @@ fn in_place_makes_a_backup_first_and_needs_files_on_disk() {
     let f = d.path().join("Item.SData");
     let original = encrypt(b"encrypted original");
     std::fs::write(&f, &original).unwrap();
-    let src = FolderSource::new(&[f.clone()], &Filter::default()).unwrap();
+    let src = FolderSource::new(std::slice::from_ref(&f), &Filter::default()).unwrap();
     let r = run(&src, &opts(Op::Decrypt { unchecked: false }, Output::InPlace), &Job::silent()).unwrap();
     assert_eq!(r[0].status, Status::Decrypted);
     assert_eq!(std::fs::read(&f).unwrap(), b"encrypted original");
@@ -155,7 +155,7 @@ fn in_place_makes_a_backup_first_and_needs_files_on_disk() {
     // dry run touches nothing
     let g = d.path().join("G.SData");
     std::fs::write(&g, &original).unwrap();
-    let src = FolderSource::new(&[g.clone()], &Filter::default()).unwrap();
+    let src = FolderSource::new(std::slice::from_ref(&g), &Filter::default()).unwrap();
     run(&src, &BatchOptions { dry_run: true, ..opts(Op::Decrypt { unchecked: false }, Output::InPlace) }, &Job::silent()).unwrap();
     assert_eq!(std::fs::read(&g).unwrap(), original);
     assert!(!d.path().join("G.SData.bak").exists());

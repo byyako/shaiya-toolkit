@@ -704,7 +704,8 @@ impl<A: ToolApp> ShellApp<A> {
         let mut out = Vec::new();
         let typing = ctx.egui_wants_keyboard_input();
         // most specific first: a consumed Ctrl+Shift+X must not also fire Ctrl+X
-        let table: [(KeyboardShortcut, fn() -> Action, bool); 17] = [
+        type Binding = (KeyboardShortcut, fn() -> Action, bool);
+        let table: [Binding; 17] = [
             (shortcut(cmd_shift(), Key::P), || Action::Palette, false),
             (shortcut(cmd_shift(), Key::O), || Action::OpenPathField, false),
             (shortcut(cmd_shift(), Key::S), || Action::SaveAs, false),

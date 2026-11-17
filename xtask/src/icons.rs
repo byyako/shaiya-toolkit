@@ -51,7 +51,9 @@ fn round_rect(p: (f32, f32), c: (f32, f32), h: (f32, f32), r: f32) -> f32 {
 }
 
 /// The mark as a list of (a, b) segments with a common stroke width.
-fn segments(mark: Mark) -> (Vec<((f32, f32), (f32, f32))>, f32) {
+type Segment = ((f32, f32), (f32, f32));
+
+fn segments(mark: Mark) -> (Vec<Segment>, f32) {
     match mark {
         Mark::Chevron => (vec![((165.0, 165.0), (270.0, 256.0)), ((270.0, 256.0), (165.0, 347.0)), ((300.0, 352.0), (375.0, 352.0))], 44.0),
         Mark::Box => {
@@ -200,7 +202,7 @@ pub fn write_all(dir: &Path) -> std::io::Result<Vec<String>> {
 
 /// Like [`scale`] for sizes that do not divide 512 (48): resample from the 256 image with a box filter on fractional bounds.
 fn at_any(big: &[u8], n: usize) -> Vec<u8> {
-    if BIG % n == 0 {
+    if BIG.is_multiple_of(n) {
         return scale(big, n);
     }
     let mut out = vec![0u8; n * n * 4];

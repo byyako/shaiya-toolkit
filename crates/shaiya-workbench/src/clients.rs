@@ -53,7 +53,7 @@ pub fn status_of(dir: &Path) -> ClientStatus {
         }
         Err(e) => s.problem = Some(e.to_string()),
     }
-    if let Some(f) = ClientFiles::locate(dir).ok() {
+    if let Ok(f) = ClientFiles::locate(dir) {
         if let Some(v) = read_version_ini(&f) {
             s.check_version = v.check_version;
             s.current_version = v.current_version;
