@@ -321,7 +321,7 @@ impl ClientsUi {
                                     _ => String::new(),
                                 };
                                 let saf = if st.saf_present { "" } else { ", data.saf missing" };
-                                ui.label(RichText::new(format!("found, SAH v{}, {} files{ini}{saf}", st.sah_version.unwrap_or(0), shaiya_inspect::group(st.files as u64))).color(pal.weak));
+                                ui.label(RichText::new(format!("found, SAH v{}, {} {}{ini}{saf}", st.sah_version.unwrap_or(0), shaiya_inspect::group(st.files as u64), if st.files == 1 { "file" } else { "files" })).color(pal.weak));
                             } else {
                                 ui.label(RichText::new(format!("not found{}", st.problem.map(|p| format!(": {p}")).unwrap_or_default())).color(pal.error));
                             }

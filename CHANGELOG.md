@@ -14,7 +14,7 @@ No release yet. This covers the first foundation of the toolkit and the archive 
 - `shaiya patch`: `build` (from folders, loose files, removals or the difference of two archives; deterministic output; optional signing), `list`, `verify` (structure, signature, applied to a client), `apply` (several patches in order, signature required with a key, `--protect`, `--dry-run`), `rollback`, `history` (`--prune`), `keygen`, `sign`, `sign-updater`.
 - `shaiya sdata`: `info`, `check`, `decrypt`, `encrypt` over files, folders or a client's archive (`--from`); `--like` makes an unchanged file encrypt back byte-identical and keeps plain files plain.
 - `shaiya clients`: `list`, `add`, `remove`, `show`: the saved client folders shared with the Workbench.
-- Every change to a client folder is journaled in `<client>/shaiya-toolkit-backups/` and can be undone with `shaiya patch rollback`; interrupted changes are finished or discarded automatically. Writing refuses while the game has the files open (Windows). `--no-journal` keeps only the previous index as `data.sah.bak`; `archive compact --in-place` is not journaled and ends rollback of earlier changes.
+- Every change to a client folder is journaled in `<client>/shaiya-toolkit-backups/` and can usually be undone with `shaiya patch rollback`; interrupted changes are finished or discarded automatically. Writing refuses while the game has the files open (Windows). `--no-journal` keeps only the previous index as `data.sah.bak`; `archive compact --in-place` is not journaled and ends rollback of earlier changes.
 
 ### Workbench
 
