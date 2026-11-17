@@ -305,7 +305,7 @@ mod tests {
         assert!(r.findings.iter().any(|f| f.code == "overlap" && f.severity == Severity::Warning));
         assert!(r.findings.iter().any(|f| f.code == "overlap" && f.severity == Severity::Info));
         let fl = r.findings.iter().find(|f| f.code == "free_list").unwrap();
-        assert!(fl.message.contains("1 entries, 1 lie outside"), "{}", fl.message);
+        assert!(fl.message.contains("1 entry, 1 lies outside"), "{}", fl.message);
         // no saf: info only, no dead space
         let r = check_index(&idx, None);
         assert!(r.findings.iter().any(|f| f.code == "saf_missing") && r.problems() == 0);
