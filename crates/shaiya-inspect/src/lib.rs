@@ -213,8 +213,8 @@ pub fn inspect(path: &Path, opts: &Options, job: &Job) -> Result<Info> {
     let name = file_name(path);
     let mut problems = Vec::new();
 
-    // A data.saf with its data.sah beside it is SAF data whatever its first bytes look like (an archive can start with an SData file).
-    let (kind, details) = if name.eq_ignore_ascii_case("data.saf") && sibling_with_ext(path, "sah").is_some() {
+    // A <stem>.saf with its <stem>.sah beside it is SAF data whatever its first bytes look like (an archive can start with an SData file).
+    let (kind, details) = if has_ext(path, "saf") && sibling_with_ext(path, "sah").is_some() {
         saf_details(path, size, &mut problems)
     } else if head.starts_with(b"SAH") {
         sah_details(path, size, &name, &mut problems)
@@ -392,6 +392,21 @@ mod tests {
         std::fs::create_dir_all(alone.parent().unwrap()).unwrap();
         std::fs::write(&alone, &first).unwrap();
         assert_eq!(info(&alone).kind, Kind::SdataSeed);
+    }
+
+    #[test]
+    fn any_stem_saf_beside_its_sah_is_saf_data() {
+        let d = TempDir::new("inspect-saf-other-stem");
+        let mut first = shaiya_seed::SIGNATURE.to_vec();
+        first.resize(200, 7);
+        let (sah, saf) = SahBuilder::new(1).file(b"Cash.SData", &first).file(b"z.txt", b"zz").write_to(d.path());
+        let new_sah = d.path().join("New.SAH");
+        let new_saf = d.path().join("New.SAF");
+        std::fs::rename(&sah, &new_sah).unwrap();
+        std::fs::rename(&saf, &new_saf).unwrap();
+        let s = info(&new_saf);
+        assert_eq!(s.kind, Kind::Saf, "{s:?}");
+        assert!(matches!(s.details, Details::Saf { index_files: Some(2), .. }), "{s:?}");
     }
 
     #[test]
