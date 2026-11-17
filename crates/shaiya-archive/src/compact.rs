@@ -1,7 +1,6 @@
 //! Compaction: rewrite `data.saf` without the dead space that replaced and removed files leave behind.
 //!
-//! Moved from `rust/archive/src/patch.rs` of the Shaiya EP4 Client repo (`usage`, `Compacted`, `compact`, `compact_inner`,
-//! `finish_compact`); the progress callback became a `shaiya_core::Job`.
+//! Progress and cancellation go through a `shaiya_core::Job`; `finish_compact` completes or discards an interrupted run.
 
 use crate::{Dir, Index};
 use shaiya_core::{Error, Job, Result, Unit};

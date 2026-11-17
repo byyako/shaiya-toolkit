@@ -1,11 +1,6 @@
-//! Known-answer tests for the SEED wrapper. The expected bytes were produced once by the Python reference of the Shaiya EP4 Client
-//! repo (`tools/sdata_crypt.py`, `encrypt()`), with this command run from any folder:
-//!
-//!     python -I make_vectors.py
-//!
-//! where make_vectors.py puts `<client repo>/tools` on `sys.path`, imports `sdata_crypt as s` and prints
-//! `s.encrypt(b"")`, `s.encrypt(b"hello")`, `s.encrypt(bytes(range(37)))` as hex and the SHA-256 of
-//! `s.encrypt(bytes(i % 251 for i in range(65536)))`. Each was checked to decrypt back with `s.decrypt`.
+//! Known-answer tests for the SEED wrapper. The expected bytes were produced once by an independent Python implementation of the
+//! SEED SData wrapper (not part of this repository). It encrypted the empty input, `b"hello"` and `bytes(range(37))` (hex below) and
+//! `bytes(i % 251 for i in range(65536))` (SHA-256 below). Each result was checked to decrypt back with the same implementation.
 
 use shaiya_core::hash::{sha256, to_hex};
 use shaiya_seed::{decrypt, encrypt};

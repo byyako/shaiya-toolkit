@@ -13,7 +13,7 @@
 //! (`shaiya-updater-<UpdaterVersion>.exe`), so a patch signature can never pass as an updater signature, and a signed
 //! updater cannot be offered under a higher version number than it was signed for.
 //!
-//! Moved from `rust/archive/src/sign.rs` of the Shaiya EP4 Client repo. The message format is unchanged: deployed updaters verify it.
+//! The message format is unchanged: deployed updaters verify it.
 
 use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
 use shaiya_core::fs::{write_atomic, Existing};

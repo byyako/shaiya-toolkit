@@ -334,7 +334,7 @@ impl SignTab {
                 if ui.button("Generate key pair...").clicked() {
                     gen = true;
                 }
-                ui.label(RichText::new("Two files: the secret key (keep it off the patch server, backed up) and the public key (put it in the updater).").color(pal.weak));
+                ui.label(RichText::new("Two files: the secret key (keep it off the patch server, backed up) and the public key (share it with whoever checks your patches).").color(pal.weak));
             });
             if let Some(g) = &self.generated {
                 ui.group(|ui| {
@@ -347,7 +347,7 @@ impl SignTab {
                             ui.ctx().copy_text(g.public_hex.clone());
                         }
                     });
-                    ui.label(RichText::new("Build the updater with SHAIYA_PATCH_PUBKEY set to the public key. Keep the secret key off the patch server and keep a backup.").color(pal.warning));
+                    ui.label(RichText::new("Give the public key to whoever checks your patches. Keep the secret key off the patch server and keep a backup.").color(pal.warning));
                     if cfg!(windows) {
                         ui.label(RichText::new("Windows does not restrict who can read the secret key file here: store it in a folder only you can open.").color(pal.warning));
                     }

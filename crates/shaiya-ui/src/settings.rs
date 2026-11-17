@@ -436,7 +436,7 @@ mod tests {
 
     #[test]
     fn path_key_is_stable_and_case_blind() {
-        assert_eq!(path_key("Z:\\Maps"), path_key("z:\\maps"));
+        assert_eq!(path_key("C:\\Maps"), path_key("c:\\maps"));
         assert_eq!(path_key("").len(), 16);
         assert_eq!(path_key("a"), "af63dc4c8601ec8c"); // FNV-1a 64 of "a"
     }

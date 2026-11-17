@@ -23,7 +23,7 @@ pub enum Cmd {
     List,
     /// Save a client folder under a name
     ///
-    /// Example: shaiya clients add us "Z:\Games\Shaiya" --note "US 108"
+    /// Example: shaiya clients add us "C:\Games\Shaiya" --note "US 108"
     Add(AddArgs),
     /// Forget a saved name (the files are not touched)
     ///

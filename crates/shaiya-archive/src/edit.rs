@@ -1,5 +1,5 @@
-//! Changing an archive: queued edits applied to a client folder in place (append, then swap the index; journal, marker and recovery per
-//! spec section 5) or written to a new pair.
+//! Changing an archive: queued edits applied to a client folder in place (append, then swap the index; journal, pending marker and
+//! recovery as described in docs/guides/undo-and-recovery.md) or written to a new pair.
 
 use crate::client::{self, ClientFiles};
 use crate::journal::{self, Journal, JournalMode, LooseRecord, Marker, State};
@@ -129,7 +129,7 @@ pub struct EditReport {
     pub journal: Option<PathBuf>,
 }
 
-/// Why a loose file name may not be written by a patch or an edit (spec D10); `None` when it is fine. Names that would overwrite the
+/// Why a loose file name may not be written by a patch or an edit; `None` when it is fine. Names that would overwrite the
 /// archive, toolkit files, paths that are not enclosed.
 pub fn loose_name_problem(name: &str) -> Option<String> {
     let n = name.replace('\\', "/");
@@ -287,7 +287,7 @@ fn abandon(client: &Path, files: &ClientFiles, saf_len: u64, journal: Option<&Pa
     }
 }
 
-/// Section 5.2's procedure on a client folder's `data.sah`/`data.saf`.
+/// The in-place procedure on a client folder's `data.sah`/`data.saf`: recover, check, validate, journal and marker, append, sync, swap the index, commit.
 pub fn apply_in_place(client: &Path, plan: &EditPlan, opts: &InPlaceOptions, job: &Job) -> Result<EditReport> {
     client::recover(client)?;
     let files = ClientFiles::locate(client)?;

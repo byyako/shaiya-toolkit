@@ -91,7 +91,7 @@ pub enum Cmd {
     Pack(PackArgs),
     /// Put another archive pair in place of a client's own (the old pair is kept)
     ///
-    /// Example: shaiya archive swap @us Z:\backups\us-stock
+    /// Example: shaiya archive swap @us D:\backups\us-stock
     Swap(SwapArgs),
 }
 

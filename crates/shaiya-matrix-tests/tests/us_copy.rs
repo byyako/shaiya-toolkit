@@ -1,4 +1,4 @@
-//! Opt-in tests on the author's own client (spec section 10.2).
+//! Opt-in tests on the author's own client.
 //!
 //! - `SHAIYA_CLIENT` (read only): the SData files extracted equal `Archive::read`, `sdata check --from` finds no bad checksum, the quick diff
 //!   of the stock and current pairs, timings printed.

@@ -1,4 +1,4 @@
-//! One glob syntax for every toolkit command and tab (spec D8), case-insensitive:
+//! One glob syntax for every toolkit command and tab case-insensitive:
 //!
 //! - `*` and `?` stay inside a path segment, `**` as a whole segment crosses segments (and matches zero of them);
 //! - `[a-z]`, `[!x]` character classes;
@@ -121,7 +121,7 @@ fn match_segs(segs: &[Seg], parts: &[Vec<char>]) -> bool {
 }
 
 impl Pattern {
-    /// Syntax of D8. `Error::Format` for an unclosed class or an empty pattern.
+    /// See the module docs for the syntax. `Error::Format` for an unclosed class or an empty pattern.
     pub fn new(text: &str) -> Result<Pattern> {
         let norm = text.trim().replace('\\', "/");
         if norm.is_empty() || norm == "/" {

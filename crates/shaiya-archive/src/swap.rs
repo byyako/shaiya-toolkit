@@ -1,4 +1,4 @@
-//! Putting another archive pair in place of a client's own, crash-safe through `data.swap-journal` (spec section 5.5).
+//! Putting another archive pair in place of a client's own, crash-safe through `data.swap-journal` (see docs/guides/undo-and-recovery.md).
 
 use crate::client::ClientFiles;
 use crate::{layout, saf_of, Index};

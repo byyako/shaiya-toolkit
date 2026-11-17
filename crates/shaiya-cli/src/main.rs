@@ -45,10 +45,11 @@ pub struct Ctx {
 #[derive(Parser)]
 #[command(
     name = "shaiya",
+    bin_name = "shaiya",
     about = "Tools for Shaiya game data. These work on your own copy of the game; nothing is downloaded.",
     disable_version_flag = true,
     arg_required_else_help = true,
-    after_help = "Your own copy: these tools never download game files and never change a file without a backup or an explicit output."
+    after_help = "Your own copy: these tools never download game files. Changes to a client folder are journaled so they can be rolled back (not with --no-journal); other output goes only where you say."
 )]
 struct Cli {
     /// Print one JSON document on stdout instead of text

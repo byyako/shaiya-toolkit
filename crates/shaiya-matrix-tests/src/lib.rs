@@ -1,4 +1,4 @@
-//! The version matrix: what the toolkit parses on which Shaiya client. `EXPECTED` mirrors `docs/version-matrix.md` (and spec section 9);
+//! The version matrix: what the toolkit parses on which Shaiya client. `EXPECTED` mirrors `docs/version-matrix.md`;
 //! `observe` measures one client folder; the tests in `tests/matrix.rs` compare the two on the clients the user has (opt-in through
 //! `SHAIYA_CLIENT` and `SHAIYA_TEST_CLIENTS`). No game data lives in the repository.
 //!
@@ -45,7 +45,7 @@ pub enum Cap {
     Monsters,
     NpcQuest,
     InspectPe,
-    // T1 (spec section 9)
+    // archive, patch and SData batch capabilities
     ArchiveVisibleCount,
     ArchiveCheckIndex,
     ArchiveFreeList,
@@ -77,7 +77,7 @@ pub const CAPS: [Cap; 17] = [
     Cap::SdataLikeRoundtrip,
 ];
 
-/// The T1 capabilities, which need a readable `data.sah` (they all fail with it).
+/// The archive and patch capabilities, which need a readable `data.sah` (they all fail with it).
 const SAH_CAPS: [Cap; 7] = [
     Cap::ArchiveVisibleCount,
     Cap::ArchiveCheckIndex,
@@ -117,11 +117,11 @@ pub const CLIENTS: [&str; 9] = ["us-108", "ru-ep3", "ru-ep45", "ru-ep54", "fr-ep
 
 use Cell::{Fails as F, NotAvailable as NA, Ok as O, Plain as P};
 
-/// Expected cells, one row per capability in `CAPS` order, one column per client in `CLIENTS` order (spec section 9). `ru-ep54` has an
+/// Expected cells, one row per capability in `CAPS` order, one column per client in `CLIENTS` order. `ru-ep54` has an
 /// index only (its SAF returns 404) and no game.exe. The two "fails" rows for kr-ep8, fawkes-v68 and cn-ep4 assert that parsing returns
 /// an error; a future schema fix shows up as a test asking for this table to be updated.
 ///
-/// T2 note: the T2 spec found that the 9 EP8 `DB*Data` binary-header files of kr-ep8 and fawkes-v68 do not survive `seed::unwrap` + CRC
+/// Note: the 9 EP8 `DB*Data` binary-header files of kr-ep8 and fawkes-v68 do not survive `seed::unwrap` + CRC
 /// (the SEED rows of those two clients may need `Fails` once a run shows it); a run that disagrees must be reported, not forced to pass.
 pub const EXPECTED: [[Cell; 9]; 17] = [
     /* IndexParse       */ [O, O, O, O, O, O, O, O, O],
@@ -143,7 +143,7 @@ pub const EXPECTED: [[Cell; 9]; 17] = [
     /* SdataLikeRoundtrip      */ [O, O, O, NA, O, O, O, O, O],
 ];
 
-/// The numbers the T1 rows assert (the "OK 19,939" style cells of spec section 9), in `CLIENTS` order; `None` = a plain "OK" cell.
+/// The numbers the T1 rows assert (the "OK 19,939" style cells of docs/version-matrix.md), in `CLIENTS` order; `None` = a plain "OK" cell.
 /// `ArchiveVisibleCount`: files minus shadowed. `ArchiveCheckIndex`: the `shadowed` warnings of the index-only check. `ArchiveFreeList`:
 /// free-list entries (preserved by an in-place edit). `ArchiveDataEnd`: `max(offset + length)`, asserted where the table gives it.
 pub const NUMBERS: [(Cap, [Option<u64>; 9]); 4] = [
@@ -279,7 +279,7 @@ pub fn observe(client: &str, dir: &Path) -> Observed {
         }
     }
 
-    // the SData batch capabilities (T1)
+    // the SData batch capabilities
     t1::sdata_caps_for(&mut o, dir, find_ci(dir, "data.saf").is_some());
 
     // the SData files

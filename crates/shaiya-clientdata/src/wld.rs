@@ -1,10 +1,10 @@
-//! `.wld` client maps (`world/<id>.wld`), parsed in full. Layout: `docs/formats.md` "World" (loader `FUN_004516f0`),
-//! ported from `tools/formats.py parse_wld`. The reader must consume the file to its last byte.
+//! `.wld` client maps (`world/<id>.wld`), parsed in full. Layout as observed in client files.
+//! The reader must consume the file to its last byte.
 
 use crate::error::{Cur, Error, Result};
 
 /// Height of a terrain corner in world units = `raw * HEIGHT_SCALE + HEIGHT_OFFSET` (checked against NPC and portal
-/// heights in `docs/svmap-editor.md` section 3).
+/// heights).
 pub const HEIGHT_SCALE: f32 = 0.02;
 pub const HEIGHT_OFFSET: f32 = -200.0;
 /// Distance between terrain corners in world units.
@@ -441,7 +441,7 @@ impl Wld {
                 extra: r.i32("area extra")?,
             });
         }
-        // NPC list: declared count n; after each record the client subtracts its extra point count from n (FUN_005254e0)
+        // NPC list: declared count n; after each record the client subtracts its extra point count from n
         let declared = r.count(0, 10_000_000, "npc count")?;
         let mut left = declared as i64;
         let mut npcs = Vec::new();

@@ -1,4 +1,4 @@
-//! The programs of the toolkit. Every tool of a later spec adds one entry here.
+//! The programs of the toolkit. Every new tool adds one entry here.
 
 #[allow(dead_code)]
 pub struct Tool {

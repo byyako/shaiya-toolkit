@@ -1,6 +1,5 @@
 //! Shaiya client archives: `data.sah` (index) + `data.saf` (blob).
 //!
-//! Moved from `rust/archive/src/lib.rs` of the Shaiya EP4 Client repo; the private reader is replaced by `shaiya_core::bin::Reader`.
 //! - index: `"SAH"`, i32 version, u32 file count, 40 zero bytes, then a directory tree
 //!   (`str name; u32 nFiles; {str name; i64 offset; u32 length; i32 version}; u32 nDirs; dirs...`),
 //!   then a free list (`u32 count; entries shaped like files`) and 4 trailing bytes;
@@ -35,7 +34,7 @@ use std::sync::Mutex;
 
 pub use shaiya_core::{Error, Result};
 
-/// Hash the client uses to look names up (`FUN_0040a490`): djb2 over the name with ASCII A-Z lower-cased, characters taken as signed
+/// Hash the client uses to look names up: djb2 over the name with ASCII A-Z lower-cased, characters taken as signed
 /// bytes.
 pub fn name_hash(name: &[u8]) -> u32 {
     let mut h: u32 = 0x1505;
@@ -65,7 +64,7 @@ pub fn decode_name(raw: &[u8]) -> String {
     encoding_rs::EUC_KR.decode_without_bom_handling(raw).0.into_owned()
 }
 
-/// cp949 encoding that fails instead of falling back to UTF-8 (pack, add and patch build use it; [`encode_name`] keeps its T0 behaviour).
+/// cp949 encoding that fails instead of falling back to UTF-8 (pack, add and patch build use it; [`encode_name`] keeps its lenient behaviour).
 pub fn encode_name_strict(name: &str) -> Result<Vec<u8>> {
     let (bytes, _, unmappable) = encoding_rs::EUC_KR.encode(name);
     if unmappable {

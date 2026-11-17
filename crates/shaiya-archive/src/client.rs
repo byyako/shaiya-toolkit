@@ -86,7 +86,7 @@ pub fn ensure_not_in_use(files: &ClientFiles) -> Result<InUse> {
 }
 
 /// Run before every write and when Workbench opens a client: `compact::finish_compact`, `swap::finish_swap`, then the pending marker
-/// (spec section 5.3). Returns human notes ("finished an interrupted compaction", ...).
+/// (see docs/guides/undo-and-recovery.md). Returns human notes ("finished an interrupted compaction", ...).
 pub fn recover(dir: &Path) -> Result<Vec<String>> {
     let mut notes = Vec::new();
     let had_compact = ["data.sah.compact", "data.saf.compact", "data.compact-commit"].iter().any(|n| dir.join(n).exists());

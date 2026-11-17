@@ -1,8 +1,7 @@
 //! `psNNNN.patch`: a ZIP (deflate) holding `update.sah` + `update.saf` (an archive of files to merge into `data.sah/saf`), optionally
 //! `remove.txt` (archive paths to drop, one per line), and loose files that are copied into the client folder (e.g. `game.exe`).
 //!
-//! Moved from `rust/archive/src/patch.rs` of the Shaiya EP4 Client repo (compaction is in `shaiya_archive::compact`) and extended in T1:
-//! streaming reproducible builds, a dry-run [`plan`], [`apply_with`] over `shaiya_archive::edit::apply_in_place` (journal, rollback,
+//! Compaction is in `shaiya_archive::compact`. Also here: streaming reproducible builds, a dry-run [`plan`], [`apply_with`] over `shaiya_archive::edit::apply_in_place` (journal, rollback,
 //! in-use check), [`verify`] and signature file helpers ([`sign`]).
 
 pub mod sign;
@@ -160,9 +159,9 @@ pub fn contents(patch: &Path) -> Result<Contents> {
     Ok(Contents { sah_version: idx.version, files, loose, removals: read_removals(&mut z)?, zip_size, unpacked_size, signature_file: signature_path(patch).is_file() })
 }
 
-// ------------------------------------------------------------------------------------------------ names (spec D10)
+// ------------------------------------------------------------------------------------------------ loose file names
 
-/// Loose names of a ZIP: unsafe paths are `Error::Format` (as before T1); toolkit and archive names and case twins are `Error::Refused`.
+/// Loose names of a ZIP: unsafe paths are `Error::Format` (as always); toolkit and archive names and case twins are `Error::Refused`.
 fn checked_loose(patch: &Path, z: &mut ZipArchive<File>) -> Result<Vec<(usize, String, PathBuf)>> {
     let mut out = Vec::new();
     let mut problems = Vec::new();
@@ -376,7 +375,7 @@ pub fn apply_with(patch: &Path, client: &Path, opts: &ApplyOptions, job: &Job) -
     result
 }
 
-/// Merge a patch into `client/data.sah` + `client/data.saf`, then write its loose files: the T0 call, kept for the updater. Writes
+/// Merge a patch into `client/data.sah` + `client/data.saf`, then write its loose files: the original call, kept for the updater. Writes
 /// `data.sah.bak`, makes no journal, checks no signature and does not look for a running game.
 ///
 /// `protect`: loose file names (case-insensitive) that must not be overwritten, e.g. the running updater; they are written as
@@ -468,7 +467,7 @@ impl BuildInput {
     }
 }
 
-/// Everything wrong with a build input, all at once (D10 and the archive rules).
+/// Everything wrong with a build input, all at once (the loose-name rules and the archive rules).
 pub fn input_problems(input: &BuildInput) -> Vec<String> {
     let mut problems = Vec::new();
     let mut seen: HashMap<String, String> = HashMap::new();
@@ -596,7 +595,7 @@ pub fn build_with(input: &BuildInput, out: &Path, opts: &BuildOptions, job: &Job
     Ok(report)
 }
 
-/// The T0 call: `from_folders(.., None)` + `build_with(Existing::Overwrite, no signing)`.
+/// The original call: `from_folders(.., None)` + `build_with(Existing::Overwrite, no signing)`.
 pub fn build(files: Option<&Path>, loose: Option<&Path>, remove: Option<&Path>, out: &Path) -> Result<Report> {
     let input = BuildInput::from_folders(files, loose, remove, None)?;
     build_with(&input, out, &BuildOptions { existing: Existing::Overwrite, sign: None }, &Job::silent())
@@ -657,7 +656,7 @@ fn drain(r: &mut dyn Read, job: &Job) -> io::Result<u64> {
 }
 
 /// Structure: the ZIP opens; `update.sah` parses; `update.saf` covers every entry; every ZIP entry is read to its end (CRC checked by the
-/// zip reader); `remove.txt` paths are valid; loose names pass D10; no case-insensitive duplicates. Signature with `key`. `client`: every
+/// zip reader); `remove.txt` paths are valid; loose names pass the loose-name rules; no case-insensitive duplicates. Signature with `key`. `client`: every
 /// patch file present and byte-equal in the client (visible entry), every removal absent, every loose file equal by SHA-256 (protected
 /// ones compared at `<name>.new`); mismatches listed in `not_applied`.
 pub fn verify(patch: &Path, key: Option<&VerifyKey>, client: Option<&Path>, job: &Job) -> Result<VerifyReport> {
@@ -715,7 +714,7 @@ pub fn verify(patch: &Path, key: Option<&VerifyKey>, client: Option<&Path>, job:
             }
         }
     }
-    // loose names (D10) and duplicates
+    // loose names and duplicates
     let mut seen: HashMap<String, String> = HashMap::new();
     for i in 0..z.len() {
         let Ok(f) = z.by_index_raw(i) else { continue };

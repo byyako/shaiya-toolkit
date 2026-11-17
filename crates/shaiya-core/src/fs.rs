@@ -178,7 +178,7 @@ pub struct OutputPlan {
     pub backup: Option<PathBuf>,
 }
 
-/// The one place that applies the write rules (spec section 8): `out` given -> NewFile (Overwrite with `force`); `out` None and
+/// The one place that applies the write rules (the write rules): `out` given -> NewFile (Overwrite with `force`); `out` None and
 /// `in_place` -> InPlaceWithBackup; neither -> `Error::Refused`. `out` equal to `input` without `in_place` -> Refused. `out` naming a
 /// different file together with `in_place` is ambiguous and refused.
 pub fn plan_output(input: &Path, out: Option<&Path>, in_place: bool, force: bool) -> Result<OutputPlan> {

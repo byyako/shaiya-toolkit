@@ -14,7 +14,7 @@ pub struct Layout {
     pub gap_count: usize,
     /// `(offset, bytes)`, at most 20, largest first.
     pub largest_gaps: Vec<(u64, u64)>,
-    /// Entries starting before the end of an earlier one (`archive_access_audit.py`'s count).
+    /// Entries starting before the end of an earlier one (the number of overlapping pairs).
     pub overlaps: usize,
     /// Of those, entries with exactly the same `(offset, length)` as another.
     pub shared_ranges: usize,

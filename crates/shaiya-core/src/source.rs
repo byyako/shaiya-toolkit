@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 pub trait ByteSource {
-    /// `folder D:\mods`, `archive Z:\Games\Shaiya\data.sah`.
+    /// `folder D:\mods`, `archive C:\Games\Shaiya\data.sah`.
     fn label(&self) -> String;
     /// `/`-separated names in a stable order.
     fn names(&self) -> Vec<String>;

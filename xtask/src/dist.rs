@@ -1,5 +1,5 @@
 //! `cargo xtask dist --platform <windows-x86_64|linux-x86_64|macos-universal> [--target T]... [--out dist]`: builds the release programs and
-//! packs the release assets of spec section 5.3: one zip per tool and one everything zip, each holding a folder named like the zip with
+//! packs the release assets: one zip per tool and one everything zip, each holding a folder named like the zip with
 //! the program(s), `README.txt`, `LICENSE.txt` and `THIRD-PARTY-NOTICES.txt`; plus `SHA256SUMS-<platform>.txt`. Zips are deterministic
 //! (sorted entries, fixed timestamps from the commit time). On macOS each GUI is an app bundle (ad-hoc signed), the CLI a universal binary.
 
@@ -56,7 +56,7 @@ pub fn readme(title: &str, tools: &[&Tool], platform: &str, version: &str) -> St
     for t in tools {
         s.push_str(&format!("  {:<34} {}\n", program_name(t, platform), if t.gui { "window program: double-click it, or drop files on it" } else { "command line: open a terminal here and run it with --help" }));
     }
-    s.push_str("\nThese tools work on your own copy of the game. The repository and the releases contain no game files, and the tools never download any. A tool never changes a file in place without making a backup first or writing to a path you name.\n\n");
+    s.push_str("\nThese tools work on your own copy of the game. The repository and the releases contain no game files, and the tools never download any. Changes to a client folder are recorded in a journal so they can be rolled back; with --no-journal only the previous index is kept (data.sah.bak) and overwritten loose files get no backup. Everything else is written only to a path you name.\n\n");
     s.push_str(platform_notes(platform));
     s.push_str("\n\nCheck the download against SHA256SUMS.txt from the release page.\n\nDocumentation: https://github.com/byyako/shaiya-toolkit/tree/main/docs\nLicence: MIT (LICENSE.txt). Third-party components: THIRD-PARTY-NOTICES.txt\nMade by byyako.\n");
     s

@@ -614,7 +614,7 @@ fn keygen(ctx: &Ctx, a: &KeygenArgs) -> Result<i32> {
     }
     println!("public key: {public}");
     println!("secret key written to {}; public key written to {}", a.secret.display(), a.public.display());
-    note(ctx, "Build the updater with SHAIYA_PATCH_PUBKEY=<the public key above>; keep the secret key off the patch server and backed up.");
+    note(ctx, "Give the public key above (or public key file) to whoever checks your patches; keep the secret key off the patch server and backed up.");
     if cfg!(windows) {
         note(ctx, "Windows does not restrict who can read this file here: store it in a folder only you can open.");
     }

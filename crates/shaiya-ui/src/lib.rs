@@ -32,7 +32,7 @@ pub use tasks::{TaskHandle, TaskOutcome, TaskSpec, Tasks};
 pub const THIRD_PARTY_NOTICES: &str = include_str!("../../../THIRD-PARTY-NOTICES.txt");
 
 /// The statement every tool shows to first-time users.
-pub const YOUR_OWN_COPY: &str = "These tools work on your own copy of the game. The repository and the releases contain no game files, and the tools never download any. A tool never changes a file in place without making a backup first or writing to a path you name.";
+pub const YOUR_OWN_COPY: &str = "These tools work on your own copy of the game. The repository and the releases contain no game files, and the tools never download any. Changes to a client folder are recorded in a journal so they can be rolled back; with --no-journal only the previous index is kept (data.sah.bak) and overwritten loose files get no backup. Everything else is written only to a path you name.";
 
 pub const RELEASES_URL: &str = "https://github.com/byyako/shaiya-toolkit/releases";
 

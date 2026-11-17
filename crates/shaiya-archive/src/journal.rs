@@ -1,4 +1,4 @@
-//! Journals (the backup of one change to a client folder), the pending marker, rollback and recovery. Text formats: spec section 5.6.
+//! Journals (the backup of one change to a client folder), the pending marker, rollback and recovery. Both are small text files.
 //!
 //! A journal is a folder `shaiya-toolkit-backups/<UTC stamp>-<label>/` holding `journal.txt`, a copy of the old `data.sah` and backups of
 //! the loose files the change overwrote. `data.toolkit-pending` in the client folder exists only while a change (or a rollback) is
@@ -410,7 +410,7 @@ pub(crate) fn commit_staged(dir: &Path, staged: &[(String, String)]) -> Result<V
     Ok(done)
 }
 
-/// Section 5.3: the marker part of `client::recover`.
+/// The pending-marker part of `client::recover`.
 pub(crate) fn recover_marker(dir: &Path) -> Result<Option<String>> {
     let mp = Marker::path(dir);
     let text = match std::fs::read_to_string(&mp) {
@@ -563,7 +563,7 @@ pub fn list(client: &Path, root: &Path) -> Result<Vec<(Journal, Rollback)>> {
     Ok(all.iter().map(|j| (j.clone(), status(&files, j, &all, false))).collect())
 }
 
-/// Section 5.4. `force` restores loose files even when they changed since (each changed file is first saved with `make_backup`).
+/// Undo one journal. `force` restores loose files even when they changed since (each changed file is first saved with `make_backup`).
 pub fn rollback(client: &Path, journal_dir: &Path, force: bool, job: &Job) -> Result<RollbackReport> {
     client::recover(client)?;
     let files = ClientFiles::locate(client)?;

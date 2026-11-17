@@ -1,5 +1,4 @@
-//! SEED encryption of `.SData` files (KISA SEED in ECB mode with a fixed key), moved from the client repo's `clientdata::seed`
-//! (decrypt) and ported from `tools/sdata_crypt.py` (encrypt).
+//! SEED encryption of `.SData` files (KISA SEED in ECB mode with a fixed key): decrypt and encrypt.
 //!
 //! Wrapper: 40-byte signature, u32 CRC-32 of the plaintext, u32 plaintext length, 16 bytes padding, then the plaintext zero-padded to
 //! 16 bytes and encrypted block by block. [`Wrapper`] remembers the parts of a file that are not the plaintext (header padding and the

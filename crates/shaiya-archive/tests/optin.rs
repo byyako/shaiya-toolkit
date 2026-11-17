@@ -17,7 +17,7 @@ fn current_and_stock_pairs_of_the_client() {
     eprintln!("current pair: open {opened:?}, check {:?}: {} files ({} visible), {} dirs, dead {:?}, gaps {}, overlaps {}, problems {}, warnings {}", t.elapsed(), r.files, r.visible, r.dirs, r.layout.dead_bytes, r.layout.gap_count, r.layout.overlaps, r.problems(), r.warnings());
     eprintln!("gaps: {:?}", r.layout.largest_gaps);
     assert_eq!(r.problems(), 0);
-    // the spec expected 0 gaps here; archive_access_audit.py agrees with this code (2 gaps, 194,934 unreferenced bytes on the pair seen)
+    // the dead bytes are exactly the gaps (a stock pair may have a few; a freshly rewritten one has none)
     assert_eq!(r.layout.dead_bytes, Some(r.layout.largest_gaps.iter().map(|g| g.1).sum::<u64>()));
     assert_eq!(r.files, r.visible);
 

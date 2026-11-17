@@ -2,8 +2,8 @@
 
 use crate::meta::{load, Graph};
 
-/// Licences dependencies may use. `Ubuntu-font-1.0` is the SPDX id cargo reports for the Ubuntu font licence that the spec lists as
-/// `LicenseRef-UFL-1.0`.
+/// Licences dependencies may use. `Ubuntu-font-1.0` is the SPDX id cargo reports for the Ubuntu font licence (also known as
+/// `LicenseRef-UFL-1.0`).
 pub const ALLOWED: &[&str] = &[
     "MIT",
     "Apache-2.0",

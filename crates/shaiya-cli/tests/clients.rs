@@ -97,5 +97,5 @@ fn every_group_and_command_has_help() {
         assert_eq!(code(&sh(&w.data, &["help", g])), 0, "{g}");
     }
     let o = sh(&w.data, &["--help"]);
-    assert!(out(&o).trim_end().ends_with("these tools never download game files and never change a file without a backup or an explicit output."), "{}", out(&o));
+    assert!(out(&o).trim_end().ends_with("other output goes only where you say."), "{}", out(&o));
 }

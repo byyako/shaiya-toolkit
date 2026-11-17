@@ -58,7 +58,7 @@ pub fn data_root_with(i: &DataDirInputs, platform: Platform, portable: bool) -> 
     }
 }
 
-/// T0 7.3's rule: `toolkit_home`; else `exe_dir/portable.txt` present -> `exe_dir/shaiya-toolkit-data`; else the per-OS folder.
+/// The rule: `toolkit_home`; else `exe_dir/portable.txt` present -> `exe_dir/shaiya-toolkit-data`; else the per-OS folder.
 pub fn data_root(i: &DataDirInputs) -> Option<PathBuf> {
     let portable = i.exe_dir.as_ref().is_some_and(|d| d.join("portable.txt").is_file());
     data_root_with(i, Platform::CURRENT, portable)

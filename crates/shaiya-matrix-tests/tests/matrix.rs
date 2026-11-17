@@ -131,7 +131,7 @@ fn print_the_observed_table() {
     let _ = CAPS;
 }
 
-/// Throughput of SEED and SHA-256 on the US client (spec section 12): printed, not asserted.
+/// Throughput of SEED and SHA-256 on the US client: printed, not asserted.
 #[test]
 fn performance_on_the_us_client() {
     let Some(us) = env_client() else { return };

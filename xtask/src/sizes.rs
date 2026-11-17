@@ -1,4 +1,4 @@
-//! `cargo xtask sizes [--platform P] [--target T]`: release binary sizes against the budgets of the spec (section 12); a non-zero exit
+//! `cargo xtask sizes [--platform P] [--target T]`: release binary sizes against the budgets in docs/dev/releasing.md; a non-zero exit
 //! when one is over.
 
 use crate::meta::root;

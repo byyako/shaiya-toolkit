@@ -1,4 +1,4 @@
-//! The T1 capabilities of the matrix (spec section 9): archive reading, in-place edits and rollback on a stub SAF, patch apply and
+//! The archive, patch and SData batch capabilities of the matrix (archive reading, in-place edits and rollback on a stub SAF, patch apply and
 //! rollback on a stub SAF, and SData batch work. Everything that writes does so in a temporary copy: the client's `data.sah` is copied
 //! next to an empty `data.saf`, so no client file is ever changed and no SAF content is needed.
 

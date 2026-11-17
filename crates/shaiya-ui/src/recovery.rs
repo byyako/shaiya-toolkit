@@ -177,7 +177,7 @@ mod tests {
     #[test]
     fn entries_round_trip_and_are_removed() {
         let r = Recovery::new(tmp("roundtrip"));
-        r.write("abc", b"unsaved bytes", &meta(Some("Z:\\x\\Item.SData"), 1_000)).unwrap();
+        r.write("abc", b"unsaved bytes", &meta(Some("C:\\x\\Item.SData"), 1_000)).unwrap();
         assert!(r.dir().join("abc.bin").is_file() && r.dir().join("abc.json").is_file());
         let found = r.scan(10_000_000, 70_000);
         assert_eq!(found.len(), 1);
@@ -241,7 +241,7 @@ mod tests {
 
     #[test]
     fn keys_follow_the_path_and_the_window_follows_the_interval() {
-        assert_eq!(entry_key(Some(Path::new("Z:\\Maps\\1.x")), 7), entry_key(Some(Path::new("z:\\maps\\1.X")), 8));
+        assert_eq!(entry_key(Some(Path::new("C:\\Maps\\1.x")), 7), entry_key(Some(Path::new("c:\\maps\\1.X")), 8));
         assert_eq!(entry_key(Some(Path::new("a")), 1).len(), 16);
         assert!(entry_key(None, 5).starts_with("new-"));
         assert_eq!(live_window_ms(60), 130_000);

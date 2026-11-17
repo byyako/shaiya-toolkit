@@ -1,4 +1,4 @@
-//! The Inspect tab: T0's file inspector, unchanged in behaviour. Open or drop files; Workbench identifies them (SAH index, SAF data, SData,
+//! The Inspect tab: the file inspector. Open or drop files; Workbench identifies them (SAH index, SAF data, SData,
 //! patches, game.exe) and hashes them as cancellable tasks.
 
 use egui::RichText;

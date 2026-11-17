@@ -149,7 +149,7 @@ pub fn client_dir(ctx: &Ctx, arg: &str) -> Result<PathBuf> {
     Err(Error::io(p, std::io::Error::new(std::io::ErrorKind::NotFound, "no such client folder")))
 }
 
-/// The first steps of every write (spec 5.1): locate, recover (printing the notes), the in-use check.
+/// The first steps of every write (locate, recover (printing the notes), the in-use check).
 pub fn prepare_write(ctx: &Ctx, dir: &Path, check_in_use: bool) -> Result<ClientFiles> {
     let files = ClientFiles::locate(dir)?;
     for n in client::recover(dir)? {
@@ -184,7 +184,7 @@ pub fn out_sah(out: &Path) -> Result<PathBuf> {
     }
 }
 
-/// The `--in-place`/`-o` rule (spec D6): neither is a refusal.
+/// The `--in-place`/`-o` rule: neither is a refusal.
 pub fn need_target(in_place: bool, out: &Option<PathBuf>) -> Result<()> {
     if !in_place && out.is_none() {
         return Err(Error::Refused(

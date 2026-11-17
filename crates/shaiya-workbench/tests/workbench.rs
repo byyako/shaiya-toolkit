@@ -339,7 +339,7 @@ fn dropping_files_queues_changes_and_apply_writes_them_with_a_journal() {
     w.h.key(Key::Y, Modifiers::COMMAND);
     w.h.frames(2);
     assert_eq!(w.h.app.app.archive.pending.len(), 2);
-    // quitting now asks about the queue (T0's unsaved prompt)
+    // quitting now asks about the queue (the shell's unsaved prompt)
     w.h.key(Key::Q, Modifiers::COMMAND);
     w.h.frames(3);
     assert!(w.h.text().contains("Unsaved changes") && w.h.text().contains("2 pending archive changes"), "{}", w.h.text());

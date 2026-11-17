@@ -1,5 +1,5 @@
 //! `.dg` dungeon geometry (`world/dungeon/<name>.dg`): an octree of textured, lightmapped meshes plus a collision mesh per
-//! node. Layout: `docs/formats.md` ".DG" (`SDungeonScene::Load`, `FUN_0058fba0`), ported from `tools/formats.py parse_dg`.
+//! node. Layout as observed in client files.
 
 use crate::error::{Cur, Result};
 
@@ -171,9 +171,9 @@ impl Dg {
     }
 }
 
-/// Map side the server uses for a dungeon: the larger of the `.dg` bound x and z (bounds start at 0), rounded up to a
+/// Suggested map side for a dungeon: the larger of the `.dg` bound x and z (bounds start at 0), rounded up to a
 /// multiple of 8. Holds for 6 of the 7 dungeons checked; map 3 uses 1024 for bounds 474 x 465, so treat it as a
-/// suggestion (`docs/svmap-editor.md` section 3).
+/// suggestion.
 pub fn dungeon_map_size(bounds: &Aabb3) -> u32 {
     let m = bounds.max[0].max(bounds.max[2]).max(0.0).ceil() as u32;
     m.div_ceil(8) * 8

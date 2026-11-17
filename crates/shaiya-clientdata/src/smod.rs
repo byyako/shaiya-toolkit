@@ -1,5 +1,5 @@
 //! `.smod` static meshes (`Entity/Building`, `Entity/Shape`, `Entity/Tree`): the buildings, shapes and trees a `.wld` places.
-//! Layout: `docs/formats.md` ".SMOD" (`SModel::Load`, `FUN_00598dc0`), ported from `tools/formats.py parse_smod`.
+//! Layout as observed in client files.
 //!
 //! ```text
 //! f32 centre[3]; i32 unk; f32 min[3], max[3]

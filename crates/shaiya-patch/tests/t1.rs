@@ -1,4 +1,4 @@
-//! T1 patch tests: contents, plans, apply with journals, name rules, deterministic streaming builds, verify, signatures, keys.
+//! Patch tests: contents, plans, apply with journals, name rules, deterministic streaming builds, verify, signatures, keys.
 
 use shaiya_archive::edit::Source;
 use shaiya_archive::journal::{self, JournalMode, Rollback};
