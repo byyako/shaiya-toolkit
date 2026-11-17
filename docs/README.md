@@ -21,6 +21,6 @@
 | [dev/releasing.md](dev/releasing.md) | Versions, the changelog, tags, the release workflow |
 | [dev/adding-a-tool.md](dev/adding-a-tool.md) | Checklist for a new tool |
 
-These tools work on your own copy of the game. The repository and the releases contain no game files, and the tools never download any. Changes to a client folder are recorded in a journal so they can be rolled back; with `--no-journal` only the previous index is kept (`data.sah.bak`) and overwritten loose files get no backup. Everything else is written only to a path you name.
+These tools work on your own copy of the game. The repository and the releases contain no game files, and the tools never download any. Changes to a client folder are recorded in a journal so they can usually be rolled back, but not changes made with `--no-journal` or `archive compact --in-place`, which keep at most the previous index (`data.sah.bak`). Everything else is written only to a path you name.
 
 Support the project: https://buymeacoffee.com/tylernol

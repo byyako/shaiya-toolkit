@@ -1,8 +1,8 @@
 # Shaiya Toolkit
 
-Command-line and desktop tools for Shaiya game data, built on one tested Rust core: browse, extract and edit a client's `data.sah`/`data.saf`, build, sign, apply and roll back `psNNNN.patch` files, convert SData files, and identify any client file. Every change to a client folder can be undone. The SData table editor and the other tools below are planned.
+Command-line and desktop tools for Shaiya game data, built on one tested Rust core: browse, extract and edit a client's `data.sah`/`data.saf`, build, sign, apply and roll back `psNNNN.patch` files, convert SData files, and identify any client file. Changes to a client folder are journaled so they can usually be rolled back (the note below says what cannot). The SData table editor and the other tools below are planned.
 
-> **These tools work on your own copy of the game. The repository and the releases contain no game files, and the tools never download any. Changes to a client folder are recorded in a journal so they can be rolled back; with --no-journal only the previous index is kept (data.sah.bak) and overwritten loose files get no backup. Everything else is written only to a path you name.**
+> **These tools work on your own copy of the game. The repository and the releases contain no game files, and the tools never download any. Changes to a client folder are recorded in a journal so they can usually be rolled back, but not changes made with --no-journal or archive compact --in-place, which keep at most the previous index (data.sah.bak). Everything else is written only to a path you name.**
 
 ## Tools
 
