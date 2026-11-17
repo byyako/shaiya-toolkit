@@ -308,8 +308,10 @@ impl ApplyTab {
         let sigs = if req.key.is_some() && self.patches.iter().all(|r| matches!(&r.verify, Verify::Done(v) if v.signature == SigStatus::Valid)) { "valid" } else { "NOT CHECKED" };
         let last = if cfg!(windows) { "The game must be closed." } else { "Make sure the game is not running from this folder; this cannot be checked on this system." };
         format!(
-            "Apply {list} to {}? It adds {a}, replaces {r} and removes {d} archive files and writes {l} loose files; {} will be appended to data.saf. Signatures: {sigs}. Backups go to shaiya-toolkit-backups\\...; you can roll back each patch. {last}",
+            "Apply {list} to {}? It adds {a}, replaces {r} and removes {} and writes {}; {} will be appended to data.saf. Signatures: {sigs}. Backups go to shaiya-toolkit-backups\\...; you can roll back each patch. {last}",
             req.name,
+            shaiya_inspect::counted(d as u64, "archive file", "archive files"),
+            shaiya_inspect::counted(l as u64, "loose file", "loose files"),
             human_size(bytes)
         )
     }
@@ -421,7 +423,7 @@ impl ApplyTab {
                         Some(e) => {
                             self.finish_apply(&req);
                             if matches!(e, Error::Cancelled) {
-                                cx.shell.status(format!("Cancelled after {} of {} patches; the earlier ones stay applied", req.done.len(), req.patches.len()));
+                                cx.shell.status(format!("Cancelled after {} of {}; the earlier ones stay applied", req.done.len(), shaiya_inspect::counted(req.patches.len() as u64, "patch", "patches")));
                             } else {
                                 cx.shell.error(format!("Stopped at patch {} of {}", req.done.len() + 1, req.patches.len()), &e);
                             }
@@ -513,7 +515,7 @@ impl ApplyTab {
                     None => self.flow = Flow::PruneConfirm(dir, keep),
                     Some(0) => {
                         match journal::prune(&dir, &dir.join(journal::DEFAULT_DIR), keep) {
-                            Ok(gone) => cx.shell.status(format!("Pruned {} entries", gone.len())),
+                            Ok(gone) => cx.shell.status(format!("Pruned {}", shaiya_inspect::counted(gone.len() as u64, "entry", "entries"))),
                             Err(e) => cx.shell.error("Cannot prune the history", &e),
                         }
                         self.changed_counter += 1;
@@ -699,12 +701,12 @@ impl ApplyTab {
                     for p in plans {
                         let name = p.patch.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
                         ui.label(RichText::new(format!(
-                            "{name}: add {}, replace {}, remove {} ({} not present), {} loose files; appends {}, needs about {} free while applying",
+                            "{name}: add {}, replace {}, remove {} ({} not present), {}; appends {}, needs about {} free while applying",
                             p.added.len(),
                             p.replaced.len(),
                             p.removed.len(),
                             p.missing.len(),
-                            p.loose.len(),
+                            shaiya_inspect::counted(p.loose.len() as u64, "loose file", "loose files"),
                             human_size(p.bytes),
                             human_size(p.bytes + p.temp_bytes)
                         )).strong());

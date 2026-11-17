@@ -842,10 +842,11 @@ impl ArchiveView {
                 (
                     "Apply changes".into(),
                     format!(
-                        "Apply {n} changes to {name} ({dir})? {} will be appended to data.saf. A backup of the index (and of files it overwrites) goes to shaiya-toolkit-backups\\...; Apply & history can roll it back. {last}",
+                        "Apply {} to {name} ({dir})? {} will be appended to data.saf. A backup of the index (and of files it overwrites) goes to shaiya-toolkit-backups\\...; Apply & history can roll it back. {last}",
+                        shaiya_inspect::counted(*n as u64, "change", "changes"),
                         human_size(bytes)
                     ),
-                    format!("Apply {}", shaiya_inspect::counted((*n) as u64, "change", "changes")),
+                    format!("Apply {}", shaiya_inspect::counted(*n as u64, "change", "changes")),
                 )
             }
             Excl::Compact => {

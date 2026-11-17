@@ -255,7 +255,7 @@ impl SDataTab {
                     let count = |s: &[Status]| rows.iter().filter(|r| s.contains(&r.item.status)).count();
                     let failed = count(&[Status::Failed]);
                     let line = match action {
-                        Action::Check => format!("{}: {} checksums OK, {} bad, {} failed", shaiya_inspect::counted((rows.len()) as u64, "file", "files"), count(&[Status::CrcOk]), count(&[Status::CrcBad]), failed),
+                        Action::Check => format!("{}: {} OK, {} bad, {} failed", shaiya_inspect::counted(rows.len() as u64, "file", "files"), shaiya_inspect::counted(count(&[Status::CrcOk]) as u64, "checksum", "checksums"), count(&[Status::CrcBad]), failed),
                         Action::Decrypt => format!("{}: {} decrypted, {} copied unchanged, {} skipped, {} failed", shaiya_inspect::counted((rows.len()) as u64, "file", "files"), count(&[Status::Decrypted, Status::DecryptedCrcBad]), count(&[Status::PassedThrough]), count(&[Status::SkippedExisting, Status::SkippedUnchanged]), failed),
                         Action::Encrypt => format!("{}: {} encrypted, {} copied unchanged, {} skipped, {} failed", shaiya_inspect::counted((rows.len()) as u64, "file", "files"), count(&[Status::EncryptedNew]), count(&[Status::PassedThrough]), count(&[Status::SkippedExisting, Status::SkippedUnchanged]), failed),
                     };

@@ -256,7 +256,7 @@ impl SignTab {
                     match shaiya_patch::verify(f, Some(&key), Some(dir), job) {
                         Ok(r) => {
                             if let Some(na) = r.not_applied.filter(|n| !n.is_empty()) {
-                                outcome = Outcome::Invalid(format!("valid signature, but not applied to this client ({} differences, first: {})", na.len(), na[0]));
+                                outcome = Outcome::Invalid(format!("valid signature, but not applied to this client ({}, first: {})", shaiya_inspect::counted(na.len() as u64, "difference", "differences"), na[0]));
                             }
                         }
                         Err(Error::Cancelled) => return Err(Error::Cancelled),

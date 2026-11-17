@@ -298,7 +298,7 @@ fn build(ctx: &Ctx, a: &BuildArgs, job: &Job) -> Result<i32> {
     }
     let problems = shaiya_patch::input_problems(&input);
     if !problems.is_empty() {
-        return Err(Error::Refused(format!("{} problems:\n  {}", problems.len(), problems.join("\n  "))));
+        return Err(Error::Refused(format!("{}:\n  {}", count(problems.len(), "problem"), problems.join("\n  "))));
     }
     if a.dry_run {
         let total: u64 = input.files.iter().map(|f| f.1.len().unwrap_or(0)).sum();
@@ -533,7 +533,7 @@ fn rollback(ctx: &Ctx, a: &RollbackArgs, job: &Job) -> Result<i32> {
                 "would roll back {} (applied {}): restore the index, cut data.saf back to {}, restore {} and delete {}",
                 j.label,
                 j.created_utc,
-                num(j.saf_len_before),
+                count(j.saf_len_before as usize, "byte"),
                 j.loose.iter().filter(|l| l.existed).count(),
                 count(j.loose.iter().filter(|l| !l.existed).count(), "loose file")
             );
@@ -548,7 +548,7 @@ fn rollback(ctx: &Ctx, a: &RollbackArgs, job: &Job) -> Result<i32> {
             "rolled back {} (applied {}): index restored, data.saf truncated to {}, {} restored, {} deleted",
             j.label,
             j.created_utc,
-            num(r.truncated_to),
+            count(r.truncated_to as usize, "byte"),
             count(r.restored_loose.len(), "loose file"),
             r.deleted_loose.len()
         );

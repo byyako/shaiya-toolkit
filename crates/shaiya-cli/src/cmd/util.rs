@@ -188,7 +188,7 @@ pub fn shell_arg(arg: &str) -> String {
     }
 }
 
-/// The CLIENT argument and `--journal-dir` as the commands that read journals need them .
+/// The CLIENT argument and `--journal-dir` as the commands that read journals need them.
 pub fn client_args(client_arg: &str, journal_dir: Option<&Path>) -> String {
     match journal_dir {
         Some(d) => format!("{} --journal-dir {}", shell_arg(client_arg), shell_arg(&d.display().to_string())),
