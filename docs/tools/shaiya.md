@@ -130,6 +130,8 @@ $ shaiya archive check "@us"
 data.sah  version 0, 19,939 files, 0 shadowed, 166 folders, no free list
 data.saf  1,991,954,802 bytes, all referenced, 0 gaps, 0 overlaps
 info      zero_length: 0 files
+info      dead_space: 0 B unused (0.0 %) in 0 gaps
+info      trailer: 00000000
 OK: 0 problems, 0 warnings
 
 $ shaiya archive add "@us" mods/ --in-place --replace
