@@ -260,7 +260,8 @@ pub(crate) fn create_dir(root: &Path, label: &str) -> Result<PathBuf> {
     unreachable!()
 }
 
-pub(crate) fn new_journal(dir: &Path, kind: &str, label: &str, files: &ClientFiles, sah_before: &str, sah_after: &str, saf_before: u64, saf_after: u64) -> Journal {
+pub(crate) fn new_journal(dir: &Path, kind: &str, label: &str, files: &ClientFiles, sah_sha256: (&str, &str), saf_len: (u64, u64)) -> Journal {
+    let ((sah_before, sah_after), (saf_before, saf_after)) = (sah_sha256, saf_len);
     Journal {
         dir: dir.to_path_buf(),
         id: dir.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(),

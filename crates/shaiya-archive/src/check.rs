@@ -93,7 +93,7 @@ fn hash_collisions(d: &Dir, prefix: &str, out: &mut Vec<(String, String)>) {
         let g = &by[k];
         if g.len() > 1 && g.iter().any(|e| !e.name.eq_ignore_ascii_case(&g[0].name)) {
             let names: Vec<String> = g.iter().map(|e| decode_name(&e.name)).collect();
-            out.push((format!("{here}{}", names[names.len() - 1]), format!("{} share one name hash ({})", names.join(", "), format!("{k:#010x}"))));
+            out.push((format!("{here}{}", names[names.len() - 1]), format!("{} share one name hash ({k:#010x})", names.join(", "))));
         }
     }
     for c in &d.dirs {

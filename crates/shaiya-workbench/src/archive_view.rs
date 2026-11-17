@@ -1991,7 +1991,7 @@ impl ArchiveView {
                             _ => "FAILED",
                         }
                     ));
-                    ui.label(format!("plaintext {}", shaiya_inspect::counted((summary.plain_size) as u64, "byte", "bytes")));
+                    ui.label(format!("plaintext {}", shaiya_inspect::counted(summary.plain_size, "byte", "bytes")));
                     ui.label(format!(
                         "header padding {}, tail {}",
                         if summary.padding_zero == Some(true) { "zero" } else { "not zero" },

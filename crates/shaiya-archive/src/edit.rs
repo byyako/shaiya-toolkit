@@ -324,7 +324,7 @@ pub fn apply_in_place(client: &Path, plan: &EditPlan, opts: &InPlaceOptions, job
         let dir = journal::create_dir(root, &label)?;
         let made = (|| -> Result<Journal> {
             let kind = if label.to_ascii_lowercase().ends_with(".patch") { "patch" } else { "archive-edit" };
-            let mut j = journal::new_journal(&dir, kind, &label, &files, &sah_before, &sah_after, saf_len, report.saf_len_after);
+            let mut j = journal::new_journal(&dir, kind, &label, &files, (&sah_before, &sah_after), (saf_len, report.saf_len_after));
             std::fs::write(j.sah_copy(), &sah_bytes).map_err(|e| Error::io(j.sah_copy(), e))?;
             for l in &plan.loose {
                 let target = join_rel(client, &l.rel);
@@ -485,6 +485,9 @@ pub(crate) fn check_outputs(inputs: &[&Path], outs: &[&Path], existing: Existing
     Ok(())
 }
 
+/// One entry copied into the new archive: offset, length, SHA-256, path.
+type Written = (u64, u32, [u8; 32], String);
+
 /// Writes a complete new pair (`out_sah` + sibling `.saf` with the same stem) holding the edited archive: shadowed entries and the free
 /// list dropped, contents back to back in the original index order, trailer and SAH version kept; then re-reads every written entry
 /// range and compares it with its source hash. The input pair is only read. Temp names, renamed at the end.
@@ -506,12 +509,12 @@ pub fn write_new(archive: &Archive, plan: &EditPlan, out_sah: &Path, existing: E
         total += sizes.iter().sum::<u64>();
     }
     let (tmp_sah, tmp_saf) = (temp_next_to(&out_sah), temp_next_to(&out_saf));
-    let result = (|| -> Result<(u64, Vec<(u64, u32, [u8; 32], String)>)> {
+    let result = (|| -> Result<(u64, Vec<Written>)> {
         job.stage("copying");
         job.total(Some(total), Unit::Bytes);
         let mut w = BufWriter::with_capacity(1 << 20, File::create(&tmp_saf).map_err(|e| Error::io(&tmp_saf, e))?);
         let mut pos = 0u64;
-        let mut written: Vec<(u64, u32, [u8; 32], String)> = Vec::new();
+        let mut written: Vec<Written> = Vec::new();
         walk_mut(&mut idx.root, &mut |e, path| {
             job.check()?;
             let src_off = e.offset;

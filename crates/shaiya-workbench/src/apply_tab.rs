@@ -373,7 +373,7 @@ impl ApplyTab {
                 "Roll back {} (applied {})? The index is restored, data.saf is cut back to {}, {} restored and {deleted} deleted.",
                 j.label,
                 local_time(&j.created_utc),
-                shaiya_inspect::counted((j.saf_len_before) as u64, "byte", "bytes"),
+                shaiya_inspect::counted(j.saf_len_before, "byte", "bytes"),
                 shaiya_inspect::counted((restored) as u64, "loose file", "loose files")
             )
         };
@@ -497,7 +497,7 @@ impl ApplyTab {
             Flow::RollRunning(dir, mut h) => match h.poll() {
                 None => self.flow = Flow::RollRunning(dir, h),
                 Some(TaskOutcome::Done(r)) => {
-                    cx.shell.status(format!("Rolled back: index restored, data.saf cut to {}", shaiya_inspect::counted((r.truncated_to) as u64, "byte", "bytes")));
+                    cx.shell.status(format!("Rolled back: index restored, data.saf cut to {}", shaiya_inspect::counted(r.truncated_to, "byte", "bytes")));
                     self.result = vec![format!("Rolled back: {} restored, {} deleted", shaiya_inspect::counted((r.restored_loose.len()) as u64, "loose file", "loose files"), r.deleted_loose.len())];
                     self.changed_counter += 1;
                     archive.changed_counter += 1;
