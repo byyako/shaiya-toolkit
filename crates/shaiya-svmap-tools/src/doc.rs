@@ -91,6 +91,8 @@ pub struct Doc {
     pub base_gen: u64,
     /// When the last edit happened.
     pub edit_at: Instant,
+    /// How long after a step an edit of the same key still merges into it (milliseconds). Tests raise it so a slow machine cannot split a merge.
+    pub merge_window_ms: u128,
     /// A tab to look and copy from: every edit is refused (`refused` counts the attempts, for the app's toast).
     pub read_only: bool,
     pub refused: u32,
@@ -136,6 +138,7 @@ impl Doc {
             edit_gen: 0,
             base_gen: 0,
             edit_at: Instant::now(),
+            merge_window_ms: MERGE_WINDOW_MS,
             read_only: false,
             refused: 0,
             seen: stamp,
@@ -328,7 +331,7 @@ impl Doc {
         }
         self.client_edit_check()?;
         if let Some(last) = self.undo.last() {
-            if last.ops.is_empty() && last.key.as_deref() == Some(key) && last.at.elapsed().as_millis() < MERGE_WINDOW_MS && pair::mergeable(&last.cops, &cops) {
+            if last.ops.is_empty() && last.key.as_deref() == Some(key) && last.at.elapsed().as_millis() < self.merge_window_ms && pair::mergeable(&last.cops, &cops) {
                 self.apply_cops(&cops);
                 let last = self.undo.last_mut().expect("checked");
                 let back = pair::merge_into(&mut last.cops, &cops);
@@ -392,7 +395,7 @@ impl Doc {
         let cops = self.derive_cops(&ops, true, Vec::new());
         if let Some(last) = self.undo.last() {
             let same = last.ops.len() == ops.len() && last.ops.iter().zip(&ops).all(|(a, b)| a.index == b.index && matches!((&a.kind, &b.kind), (OpKind::Replace { .. }, OpKind::Replace { .. })));
-            if same && last.key.as_deref() == Some(key) && last.at.elapsed().as_millis() < MERGE_WINDOW_MS && pair::mergeable(&last.cops, &cops) {
+            if same && last.key.as_deref() == Some(key) && last.at.elapsed().as_millis() < self.merge_window_ms && pair::mergeable(&last.cops, &cops) {
                 self.apply_cops(&cops);
                 let last = self.undo.last_mut().expect("checked");
                 let mut back_to_start = true;
@@ -851,6 +854,7 @@ mod tests {
     #[test]
     fn coalesce_and_back_to_start() {
         let mut d = doc();
+        d.merge_window_ms = u128::MAX; // no real clock in the test
         for v in [11.0, 12.0, 13.0] {
             let before = edit::get(&d.map, SectionId::MobAreas, 0).unwrap();
             let mut after = before.clone();

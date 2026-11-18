@@ -1599,6 +1599,7 @@ mod tests {
     #[test]
     fn typed_edits_merge_with_the_client_side() {
         let mut d = paired_doc();
+        d.merge_window_ms = u128::MAX; // no real clock in the test
         let l0 = lists(&d);
         for v in [20.0f32, 21.0, 22.0] {
             let Some(Rec::Portal(mut p)) = crate::edit::get(&d.map, SectionId::Portals, 1) else { panic!() };
