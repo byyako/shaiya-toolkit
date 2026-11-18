@@ -76,8 +76,6 @@ The editor needs two folders, and only the first is required.
 
 Use the same client data your players have: the checks compare the server files with that client's maps. Without a client folder the editor still opens and saves every map, but shows a plain grid with numbers instead of names and skips the client checks.
 
-![The setup, step 1: the server map folder](../assets/screenshots/svmap-editor/r1-setup-1.png)
-
 ![The setup, step 2: the client folder](../assets/screenshots/svmap-editor/r1-setup-2.png)
 
 You can run the setup again with **Help > Setup...**, or change the folders in **Edit > Preferences...**.
@@ -984,7 +982,7 @@ Neither export writes into the client folder you opened. A folder inside it is r
 2. Tick that the game is closed and the folder is a test copy.
 3. Press **Install**.
 
-Before the first install the editor copies `data.sah` to `data.sah.svmap-editor`. It never replaces that file while the install lasts. Every install also makes `data.sah.svmap-editor-<UTC time>`. The game's patch tool overwrites its own `data.sah.bak` on every run, so that one is no backup.
+Before the first install the editor copies `data.sah` to `data.sah.svmap-editor`. It never replaces that file while the install lasts. Every install also makes `data.sah.svmap-editor-<UTC time>`. The patch step (`shaiya_patch::apply`) writes `data.sah.bak` on every install and overwrites it, so that one is no backup.
 
 The editor refuses when `data.sah` cannot be read, when `data.saf` cannot be opened for writing, when the game is running, and when the staging folder lies in the target. On Windows a `data.sah` or `data.saf` open in another program stops Install and Uninstall. So does a running `game.exe` of that folder. The message gives the reason. On other systems the editor cannot see whether the game runs. It only checks that the archive files are writable. It adds this line to the result: "Cannot check whether the game is running on this system; make sure it is closed."
 

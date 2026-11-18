@@ -31,7 +31,7 @@ Releases built on a public repository also carry a build provenance attestation 
 
 ## Portable mode and where settings live
 
-By default settings, logs, recovery files and the saved client folders live in the user's configuration folder (`%APPDATA%\shaiya-toolkit` on Windows, `~/Library/Application Support/shaiya-toolkit` on macOS, `~/.config/shaiya-toolkit` or `$XDG_CONFIG_HOME/shaiya-toolkit` on Linux). Put an empty file named `portable.txt` next to the program to keep them in a `shaiya-toolkit-data` folder beside it instead. `SHAIYA_TOOLKIT_HOME` names any folder, and the flag `--data-dir DIR` does the same for one run, on the `shaiya` command line (`shaiya --data-dir DIR clients list`) and on Shaiya Toolkit alike.
+By default settings, logs, recovery files and the saved client folders live in the user's configuration folder (`%APPDATA%\shaiya-toolkit` on Windows, `~/Library/Application Support/shaiya-toolkit` on macOS, `~/.config/shaiya-toolkit` or `$XDG_CONFIG_HOME/shaiya-toolkit` on Linux). Put an empty file named `portable.txt` next to the program to keep them in a `shaiya-toolkit-data` folder beside it instead. `SHAIYA_TOOLKIT_HOME` names any folder, and the flag `--data-dir DIR` does the same for one run, on the `shaiya` command line (`shaiya --data-dir DIR clients list`), on Shaiya Toolkit and on Shaiya SVMap Editor alike.
 
 Shaiya SVMap Editor keeps its settings, log, recovery files and backups of saved maps in a `shaiya-svmap-editor` folder inside that data root. It does not read Shaiya Toolkit's saved client folders.
 
