@@ -65,3 +65,7 @@ A patch can be accompanied by `psNNNN.patch.sig`, an Ed25519 signature (lower-ca
 - Keys are 32 bytes, signatures 64 bytes, both stored as lower-case hex text.
 
 The message format does not change without a new message version: deployed updaters verify it. Rule for publishers: never sign a different file under a version number that was already published; ship fixes as the next version.
+
+## Made by Shaiya SVMap Editor
+
+Shaiya SVMap Editor builds `psNNNN.patch` files of exactly the client files it staged (`data/world/<id>.wld` and the like), through this crate. **Export patch** writes the patch into a folder you pick and never replaces an existing file. The patch is unsigned; see [signatures](#signatures) for how to sign it. **Install** applies such a patch to a test client with `shaiya_patch::apply` and no journal. The editor keeps its own copy of the first index (`data.sah.svmap-editor`) and a record so that Uninstall can restore it. During an install the patch's `update.saf` is unpacked as a temporary `.update.saf.<number>.shaiya-tmp` file in the client folder, so the folder needs free space of about the staged bytes. Details: [the editor's own files](svmap-editor-files.md) and the [editor guide](../tools/svmap-editor.md#sharing-your-client-changes).
