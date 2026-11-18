@@ -39,7 +39,7 @@ The file is only read.
 
 ## Verified on
 
-US EP4.5: the 44 `.dg` files of the cleaned-up archive parse to the last byte (the uncleaned original archive has 51, and all parse).
+US EP4.5: the 44 `.dg` files of the tested client's archive parse to the last byte. A second, older copy of the archive holds 51 files, and all of them parse.
 
 ## Other episodes
 

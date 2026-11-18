@@ -48,7 +48,7 @@ A writer must recompute both from the lists. A wrong value makes the client read
 
 ## Terrain
 
-The height of a corner is `i16 * 0.02 - 200` world units. Corners are 2 units apart. The game treats a height below -0.4 as water. A map of size 70 is forced to 1600 in memory by the US EP4.5 client.
+The height of a corner is `i16 * 0.02 - 200` world units. Corners are 2 units apart. The game treats a height below -0.4 as water. The US EP4.5 client forces the size 1600 on map id 70 in memory.
 
 ## Area names
 

@@ -11,7 +11,7 @@ f32 centre[3]
 i32 unknown                      0 in the files checked
 f32 min[3], max[3]               bounding box
 i32 nModules
-  Module:  string texture,       a .tga name; the cleaned archive stores .dds
+  Module:  string texture,       a .tga name; the tested client's archive stores .dds
            i32 nVert, Vert[nVert],   Vert = f32 pos[3], f32 normal[3], u32 colour, f32 u, v   (36 bytes)
            i32 nFace, Face[nFace]    Face = u16 x 3                                            (6 bytes)
 f32 box2 min[3], max[3]          inside min and max, not always equal

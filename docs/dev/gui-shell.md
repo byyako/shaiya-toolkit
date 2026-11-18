@@ -1,6 +1,8 @@
 # The GUI shell (`shaiya-ui`)
 
-Shaiya Toolkit is a `ToolApp` run by `shaiya_ui::run`. Shaiya SVMap Editor is a standalone program with its own shell: it borrows only `Paths` and `Env` (its data folder and log location) and the theme base from `shaiya-ui`, keeps its own log writer and UTC stamps so the files already written by the editor stay readable, and does not call `shaiya_ui::run`. Adopting `ToolApp` needs a render-state hook for its GPU views and is a milestone of its own. The shell gives it the window, the menus, settings, the Activity panel, background tasks, dialogs, undo and the test harness, so a tool is only its central panel and its logic.
+Every toolkit GUI that uses this shell is a `ToolApp` run by `shaiya_ui::run`; Shaiya Toolkit is one. The shell gives a tool the window, the menus, settings, the Activity panel, background tasks, dialogs, undo and the test harness, so a tool is only its central panel and its logic.
+
+Shaiya SVMap Editor is the exception: a standalone program with its own shell. It borrows only `Paths` and `Env` (its data folder and log location) and the theme base from `shaiya-ui`, keeps its own log writer and UTC stamps so the files it already wrote stay readable, and does not call `shaiya_ui::run`. Adopting `ToolApp` needs a render-state hook for its GPU views and is a milestone of its own.
 
 ## Writing a tool
 

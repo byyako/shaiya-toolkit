@@ -61,7 +61,7 @@ The file is only read.
 
 ## Verified on
 
-US EP4.5. The version matrix shows `NpcQuest::parse` reading it on ru-ep3, ru-ep45, fr-ep54, phoenix-ep63 and cn-ep4, with the gatekeeper counts (61, 61, 72, 72, 106 and 61).
+US EP4.5. The version matrix shows `NpcQuest::parse` reading it on ru-ep3, ru-ep45, fr-ep54, phoenix-ep63 and cn-ep4, with these gatekeeper counts: us-108 61, ru-ep3 61, ru-ep45 72, fr-ep54 72, phoenix-ep63 106 and cn-ep4 61.
 
 ## Other episodes
 
