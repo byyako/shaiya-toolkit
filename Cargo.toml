@@ -41,6 +41,9 @@ base64 = "0.22"
 eframe = { version = "=0.37.0", default-features = false, features = ["wgpu", "default_fonts", "clipboard", "links"] }
 egui = "=0.37.0"
 rfd = { version = "=0.18.0", default-features = false }
+egui-wgpu = { version = "=0.37.0", default-features = false }
+wgpu = { version = "=30.0.2", default-features = false, features = ["std", "wgsl"] }
+bytemuck = { version = "=1.25.2", features = ["derive"] }
 
 [profile.release]
 opt-level = "z"
@@ -76,4 +79,6 @@ opt-level = 3
 [profile.release.package.shaiya-svmap]       # bit grid and map I/O
 opt-level = 3
 [profile.release.package.shaiya-svmap-tools]  # scans, pairing, checks
+opt-level = 3
+[profile.release.package.shaiya-svmap-editor]  # 3D painter, view code
 opt-level = 3

@@ -698,13 +698,13 @@ pub fn copy_loose(out: &Path, target: &Path, g: &Guard) -> Result<Vec<(Staged, L
 }
 
 /// Helpers the window tests share with this module's tests.
-#[cfg(test)]
-pub(crate) mod tests_support {
+#[cfg(any(test, feature = "testing"))]
+pub mod tests_support {
     use super::*;
     use shaiya_archive::{encode_name, Entry};
 
     /// A tiny client: `data.sah` / `data.saf` holding `world/1.wld`, `world/2.wld` and `item/a.bin`.
-    pub(crate) fn tiny_client(dir: &Path) {
+    pub fn tiny_client(dir: &Path) {
         fs::create_dir_all(dir).unwrap();
         let mut idx = Index::new();
         let mut saf: Vec<u8> = Vec::new();

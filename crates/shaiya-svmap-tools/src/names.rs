@@ -39,7 +39,7 @@ pub struct Lookups<'a> {
 }
 
 impl<'a> Lookups<'a> {
-    #[cfg(test)]
+    #[cfg(any(test, feature = "testing"))]
     pub fn none() -> Lookups<'static> {
         Lookups { rules: None, assets: None, map_id: None, names: None }
     }

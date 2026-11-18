@@ -99,7 +99,7 @@ impl HeatGrid {
         self.values.get(iz.min(self.n - 1) * self.n + ix.min(self.n - 1)).copied()
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "testing"))]
     pub fn sum(&self) -> f32 {
         self.values.iter().sum()
     }
@@ -204,7 +204,7 @@ fn spread(a: &MobArea, size: f32, tile: f32, n: usize, f: &mut dyn FnMut(usize, 
 
 /// The heatmap of `map`. `level(mob)` is the monster's level (None = unknown); `include(i)` says whether monster area `i`
 /// counts (hidden layer, level filter). `Mode::Off` gives an empty grid.
-#[cfg(test)]
+#[cfg(any(test, feature = "testing"))]
 pub fn grid(map: &Svmap, level: &dyn Fn(u32) -> Option<f32>, tile: f32, mode: Mode, include: &dyn Fn(usize) -> bool) -> HeatGrid {
     grid_with(map, &[], level, tile, mode, include)
 }

@@ -2726,6 +2726,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "shaiya-svmap-editor"
+version = "0.1.0"
+dependencies = [
+ "bytemuck",
+ "eframe",
+ "egui",
+ "egui-wgpu",
+ "miniz_oxide 0.9.1",
+ "rfd",
+ "serde",
+ "serde_json",
+ "shaiya-archive",
+ "shaiya-build",
+ "shaiya-clientdata",
+ "shaiya-core",
+ "shaiya-patch",
+ "shaiya-svmap",
+ "shaiya-svmap-tools",
+ "shaiya-ui",
+ "wgpu",
+]
+
+[[package]]
 name = "shaiya-svmap-tools"
 version = "0.1.0"
 dependencies = [

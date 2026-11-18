@@ -422,7 +422,7 @@ impl ClientPart {
     }
 
     /// Whether a stroke in progress has drawn corners that are no step yet.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "testing"))]
     pub fn has_live(&self) -> bool {
         !self.live.is_empty()
     }

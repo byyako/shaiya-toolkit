@@ -134,7 +134,7 @@ pub fn upright(index: i32, pos: V3, yaw: f32) -> Placement {
     Placement { index, pos, dir: [a.sin(), 0.0, a.cos()], up: [0.0, 1.0, 0.0] }
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "testing"))]
 /// Whether `dir` and `up` are unit length and perpendicular (the rule every placement of the originals follows).
 pub fn is_orthonormal(p: &Placement) -> bool {
     (dot(p.dir, p.dir) - 1.0).abs() < 1e-4 && (dot(p.up, p.up) - 1.0).abs() < 1e-4 && dot(p.dir, p.up).abs() < 1e-4

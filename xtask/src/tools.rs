@@ -20,4 +20,12 @@ pub const TOOLS: &[Tool] = &[
         gui: true,
         bundle_id: Some("io.github.byyako.shaiya-toolkit"),
     },
+    Tool {
+        package: "shaiya-svmap-editor",
+        bin: "shaiya-svmap-editor",
+        asset: "shaiya-svmap-editor",
+        title: "Shaiya SVMap Editor",
+        gui: true,
+        bundle_id: Some("io.github.byyako.shaiya-svmap-editor"),
+    },
 ];

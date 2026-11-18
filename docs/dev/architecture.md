@@ -20,6 +20,8 @@ crates/
   shaiya-ui/          the GUI shell (egui / eframe)
   shaiya-cli/         the `shaiya` program (info, archive, patch, sdata, clients, version)
   shaiya-toolkit/   the `shaiya-toolkit` program (Archive, Patch builder, Apply & history, Sign & verify, SData, Inspect)
+  shaiya-svmap-editor/ the `shaiya-svmap-editor` program (Shaiya SVMap Editor: 2D and 3D map views, checks, paired client edits, Map.ini,
+                      new maps, patch export, install into a test client); borrows Paths and the theme base from shaiya-ui
   shaiya-testkit/     dev-only test helpers (no game data)
   shaiya-build/       build-script helper: Windows resources, git hash, target
   shaiya-matrix-tests/  opt-in version-matrix tests over the test clients
@@ -56,6 +58,7 @@ core + archive + patch + clientdata + svmap  <-  shaiya-svmap-tools
 core + seed + archive + patch  <-  shaiya-inspect
 libraries (now including svmap and svmap-tools)  <-  shaiya-cli
 shaiya-core + eframe / egui / rfd / serde  <-  shaiya-ui  <-  the GUI programs
+shaiya-ui (Paths/Env, theme) + svmap-tools + eframe / egui / egui-wgpu / wgpu / bytemuck / rfd  <-  shaiya-svmap-editor
 shaiya-testkit: dev-dependency only (std only, depends on no toolkit crate)
 shaiya-build: build-dependency only
 ```

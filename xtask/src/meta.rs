@@ -131,10 +131,11 @@ mod tests {
     #[test]
     fn graphs_follow_normal_dependencies_only() {
         let meta = serde_json::json!({
-            "workspace_members": ["cli 0.1.0", "toolkit 0.1.0"],
+            "workspace_members": ["cli 0.1.0", "toolkit 0.1.0", "svmap-editor 0.1.0"],
             "packages": [
                 {"id": "cli 0.1.0", "name": "shaiya-cli", "version": "0.1.0", "license": "MIT", "manifest_path": "/w/cli/Cargo.toml"},
                 {"id": "toolkit 0.1.0", "name": "shaiya-toolkit", "version": "0.1.0", "license": "MIT", "manifest_path": "/w/toolkit/Cargo.toml"},
+                {"id": "svmap-editor 0.1.0", "name": "shaiya-svmap-editor", "version": "0.1.0", "license": "MIT", "manifest_path": "/w/svmap-editor/Cargo.toml"},
                 {"id": "a 1.0.0", "name": "a", "version": "1.0.0", "license": "MIT", "manifest_path": "/r/a/Cargo.toml"},
                 {"id": "dev 1.0.0", "name": "dev", "version": "1.0.0", "license": "MIT", "manifest_path": "/r/dev/Cargo.toml"},
                 {"id": "build 1.0.0", "name": "build", "version": "1.0.0", "license": "MIT", "manifest_path": "/r/build/Cargo.toml"}
@@ -145,11 +146,12 @@ mod tests {
                     {"pkg": "dev 1.0.0", "dep_kinds": [{"kind": "dev"}]},
                     {"pkg": "build 1.0.0", "dep_kinds": [{"kind": "build"}]}]},
                 {"id": "toolkit 0.1.0", "deps": []},
+                {"id": "svmap-editor 0.1.0", "deps": []},
                 {"id": "a 1.0.0", "deps": []}, {"id": "dev 1.0.0", "deps": []}, {"id": "build 1.0.0", "deps": []}
             ]}
         });
         let g = graph_from(&meta).unwrap();
         let names: Vec<&str> = g.shipped.iter().map(|id| g.packages[id].name.as_str()).collect();
-        assert_eq!(names, vec!["a", "shaiya-cli", "shaiya-toolkit"]);
+        assert_eq!(names, vec!["a", "shaiya-cli", "shaiya-svmap-editor", "shaiya-toolkit"]);
     }
 }

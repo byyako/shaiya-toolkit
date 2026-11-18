@@ -1,0 +1,45 @@
+[package]
+name = "shaiya-svmap-editor"
+description = "Shaiya SVMap Editor: edit server map files (.svmap) over the client's terrain; paired client .wld edits, Map.ini, new maps, patch export"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish.workspace = true
+build = "build.rs"
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "shaiya-svmap-editor"
+path = "src/main.rs"
+
+[dependencies]
+shaiya-core = { workspace = true }
+shaiya-archive = { workspace = true }
+shaiya-patch = { workspace = true }
+shaiya-clientdata = { workspace = true }
+shaiya-svmap = { workspace = true }
+shaiya-svmap-tools = { workspace = true }
+shaiya-ui = { workspace = true }
+eframe = { workspace = true }
+egui = { workspace = true }
+egui-wgpu = { workspace = true }
+wgpu = { workspace = true }
+bytemuck = { workspace = true }
+rfd = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+miniz_oxide = { workspace = true }
+
+[build-dependencies]
+shaiya-build = { workspace = true }
+
+[dev-dependencies]
+shaiya-svmap-tools = { workspace = true, features = ["testing"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+eframe = { workspace = true, features = ["x11", "wayland"] }
+rfd = { workspace = true, features = ["xdg-portal"] }
