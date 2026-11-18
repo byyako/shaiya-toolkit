@@ -1,16 +1,67 @@
 # Shaiya SVMap Editor user guide
 
-The Shaiya SVMap Editor is a desktop program for the map files of your Shaiya EP4.5 server (`PS_Game\Data\Map\<number>.svmap`). It shows each map over the client's real terrain. You edit everything in the file: monster areas, NPCs, portals, bind areas, regions and blocked cells. The editor checks the result against the client. This guide is also the editor's Help window (**Help > User guide**, or F1): the same text, with the menu paths below turned into links that run the command.
+Shaiya SVMap Editor is a desktop program for server map files (`<id>.svmap`, for example `PS_Game\Data\Map\35.svmap`). It shows each map over the client's real terrain. You edit everything in the file: monster areas, NPCs, portals, bind areas, regions and blocked cells. The editor checks the result against the client. It can also edit the client's copy of the map, the server's `Map.ini`, and make a whole new map. This guide is also the editor's Help window (**Help > User guide**, or F1): the same text, with the menu paths below turned into links that run the command.
 
-> What it never does: it does not write client files, `Map.ini`, `NpcQuest.SData`, `Monster.SData` or any database. It edits `.svmap` files only. Telling your server about the change (restart, or your server's map import) is a step you do yourself; see Checking and saving.
+> **What it writes.** Every write goes through a `.tmp` file that is read back. In the server map folder it writes `<id>.svmap` and, the first time you save a file, `<id>.svmap.bak` beside it. In the server data folder it writes `Map.ini` or `MapWar.ini` when you save them in the Map.ini editor or with Add a map, with the same `.bak`. In the staging folder you pick it writes edited client files: `data/world/<id>.wld`, `data/world/<id>.txt`, `data/interface/MiniMap/<id>.tga` and `data/world/Field/<id>/*.dds`. A note file `svmap-editor-new-map-<id>.txt` goes there too, outside `data`. Export patch and Export folder write `psNNNN.patch` or a copy of the staged files into a folder you pick, and never replace a file. In a test client folder you pick, Install changes `data.sah` and `data.saf` and writes `data.sah.svmap-editor`, `data.sah.svmap-editor-<UTC time>`, `svmap-editor-install.json` and `data.sah.bak`. It also writes a temporary `.update.saf.<number>.shaiya-tmp` file. Uninstall puts the index back and removes the record. Copy loose adds new files under `data/` there. Install keeps no journal. The editor's own data folder holds `settings.json`, `log.txt`, `recovery` and `backups`. **What it never does.** It never writes the client folder it reads from. It never writes any SData file, `sysmsg-uni.txt`, `.dg` or `.smod` file, a texture inside the client, `game.exe` or a DLL. It uses no database, downloads nothing and sends nothing. Telling your server about a change (restart, or your server's map import) is a step you do yourself; see Checking and saving.
 
 ## Install and start
 
-There is no installer and nothing to install first. The editor is one file, `shaiya-svmap-editor.exe`, in the Shaiya Toolkit download. Copy that file anywhere and run it. It needs Windows 10 or 11 on x86_64 and a graphics card with Vulkan or DirectX 12; the editor picks the API itself.
+There is no installer and nothing to install first. The editor is part of the Shaiya Toolkit download. The all-in-one zip holds it as `shaiya-svmap-editor` (`shaiya-svmap-editor.exe` on Windows) beside `shaiya-toolkit` and `shaiya`. Unzip it anywhere and run it. The zips and how to check them are on the Install page of the toolkit documentation.
 
-The first start opens the setup, which asks for your folders (see the next page). After that the editor opens where you left it: the same folders, the same maps in tabs, the same cameras.
+It runs on Windows, Linux and macOS. The author tested it on Windows. The macOS and Linux builds are untested until a tester confirms them. The programs are not code signed. On Windows, SmartScreen may warn the first time: choose More info, then Run anyway. On macOS the app is not notarised: right-click it and choose Open. On Linux you need a desktop with X11 or Wayland. The editor needs a graphics driver for Vulkan, DirectX 12 or OpenGL. It picks the API itself.
+
+The first start opens the setup, which asks for your folders (see the next page). After that the editor opens where you left it: the same folders, the same maps in tabs, the same cameras. Its settings, log, recovery files and backups live in one data folder: see Files the editor uses.
 
 You can also start it from a command prompt with a file, a folder or a client: `shaiya-svmap-editor 35.svmap`, `shaiya-svmap-editor --folder D:\server\PS_Game\Data\Map --client D:\Shaiya --map 1`. See Command line. Dropping a `.svmap` file, a map folder, a client folder or `data.sah` on the window works too.
+
+## Verified on and other episodes
+
+The editor was written and checked on one client and two sets of server files: the US EP4.5 client (patch 108), the original EP4.5 server files, and the Afterglow server. Everything else is detected and handled by refusing, warning or a setting. Nothing is assumed silently. The table says what was checked and what the editor does on anything else. The version matrix of the toolkit documentation has the numbers per client.
+
+| What | Checked on | On anything else |
+|---|---|---|
+| `.svmap` layout | the 77 original server map files, and Afterglow's maps | The reader must end at the last byte. A file that does not parse is refused: an error in the editor, exit code 3 in `shaiya svmap`. Maps of EP3 and EP5.4 servers are reported to share the layout. That is unverified. |
+| Client `world/<id>.wld` | US EP4.5: all 83 files write back byte for byte | Each file is checked on its own. A file that does not write back stays read-only on the client side. `shaiya svmap wld-check` names it. |
+| `world/<id>.txt` (area names) | US EP4.5 | The editor keeps every line it does not understand. |
+| Name code page | cp949, the EP4 client | A setting in **Edit > Preferences...**: cp949, Shift-JIS, GBK or Windows-1252. |
+| `Monster.SData` and `NpcQuest.SData`, with the gatekeeper gates | US EP4.5. Both also read on ru-ep3, ru-ep45, fr-ep54 and phoenix-ep63, and NpcQuest on cn-ep4. | When a table does not read (kr-ep8 and fawkes-v68 in the version matrix), the rules that need it turn off with one note. |
+| Map names (a table of the EP4.5 client, mirrored in the editor) | US EP4.5 patch 108 | Used for display and for the info rule `map-no-name`. Never used to decide a write. On another client the names and that rule may be wrong, and a note says so. Without a client the map number is shown. |
+| Map id limits | the original server (`MapCount`), Afterglow (0 to 255 except 200) | The Target server setting. Other server builds are unverified. |
+| Map 70 is forced to size 1600, and ids 100 to 200 limit some item uses | US EP4.5 | The wizard warnings say "on the EP4.5 client". |
+| Field chunk textures made by Add a map | US EP4.5 (map 110 loads) | The wizard note says the files follow the EP4.5 layout and other episodes are unverified. |
+| Loose files lose to the archive | US EP4.5 | Copy loose refuses every path the archive holds, which is safe for either order. |
+| `data.sah` with a header | all nine clients of the version matrix | A `data.sah` without a header is refused by Install. Use an extracted folder to read such a client. |
+| Minimap `interface/MiniMap/<id>.tga`, 512 x 512 | US EP4.5 | Written only when you tick it. |
+
+### Client notes
+
+When a client opens, the editor tells you what does not read as it does on EP4.5. The client chip in the toolbar turns to the warning colour and its tooltip lists the notes. `shaiya svmap check`, `spawns` and `bulk` print the same notes with `--client`. A note is one of three sentences:
+
+- `Monster.SData` did not read with the EP4.5 layout: monster names and levels and the monster rules are off.
+- `NpcQuest.SData` did not read with the EP4.5 layout: NPC names and the NPC and gatekeeper rules are off.
+- The map names and the `map-no-name` rule come from the EP4.5 client's table, and this client's `sysmsg-uni.txt` lacks some of its ids. Some names and `map-no-name` findings may be wrong.
+
+A note changes nothing in your files. It tells you which names and rules to doubt.
+
+### What was checked in the game
+
+These results are from a US EP4.5 test client. Anything not listed here has not been checked in the game.
+
+- Portal box edits load in the game. Building, placement and NPC edits work in the game.
+- Terrain height edits work: players walk on a raised hill. Lowering the ground below -0.4 gives shallow water without swimming.
+- Install and Uninstall into a copy of a test client work.
+- A new map with id 110, made by Add a map, loads on the client and imports on the Afterglow server.
+
+Not checked in the game:
+
+- A blank field of 2048 units (2 x 2 chunks).
+- The area banner picture (`<id>_NN.tga`) and the order of the lines in `<id>.txt`.
+- The orientation of a made minimap.
+- A `<id>.txt` that holds only a byte order mark.
+- Any client other than US EP4.5.
+- Any server other than the original EP4.5 files and Afterglow.
+
+Test every edited map on a copy of your client first.
 
 ## Getting started
 
@@ -300,7 +351,7 @@ NPCs have a type (1 merchant ... 13 combat commander, 0 is a placeholder), an id
 
 Add one with the NPC tool (key 3): set the type and id in the toolbar and click. The inspector has the points table, **Add path point**, and a picker for the NPC by name.
 
-The client's minimap and quest marks use the client's map file. Moving an NPC here does not move it there.
+The client's minimap and quest marks use the client's map file. With the client open, moving an NPC also moves its record in the client copy of the map. That copy lives in the staging folder (see Editing the client map with the server map). The client folder itself is never changed.
 
 ### Portals
 
@@ -366,7 +417,7 @@ Goal: a portal in another place, or leading somewhere else.
 2. Drag it, staying inside the grey ghost box: the client's portal at the same index must be within 40 units, or the server refuses the step (`portal-far`).
 3. For the destination, use the map list in the inspector, then **Pick on map...** and click the spot.
 
-Check: Problems shows no `portal-far`. Watch out: adding, removing or reordering portals changes the index the client sends, so the editor asks first; the client side (`world/<id>.wld`) is not changed by this editor.
+Check: Problems shows no `portal-far`. Watch out: adding, removing or reordering portals changes the index the client sends, so the editor asks first. With the client open the editor moves the portal box of the client copy too. That copy waits in the staging folder until you share it (see Sharing your client changes).
 
 ### 3. Make a new map
 
@@ -397,7 +448,7 @@ Goal: a file the server loads correctly.
 2. **File > Save** (Ctrl+S) saves safely: it writes a temporary file, reads it back, keeps the `.bak` and replaces the file. If there are errors it asks first.
 3. On the server: restart the game server so it reads the files again, or run your server's map import (Afterglow: `tools/world/import.py`).
 
-Check: the tab's dot is gone. Watch out: the client is not changed by any of this.
+Check: the tab's dot is gone. Watch out: the client folder you read from is never changed by this. Client files you edited wait in the staging folder.
 
 ### 6. Copy monster areas from one map to another
 
@@ -600,7 +651,7 @@ About every minute the editor writes the unsaved changes of each modified map in
 
 ### After saving
 
-The editor changes `.svmap` files only. The server reads them again when it is restarted, or when your server's map import runs (the Afterglow server: `tools/world/import.py`). The client's copy of each map (`world/<number>.wld`) is a different file; portals, NPCs and regions that must agree with it are flagged in Problems. With the client open, Ctrl+S also writes that copy to the staging folder. See Editing the client map with the server map.
+Saving writes the `.svmap` file. The server reads it again when it is restarted, or when your server's map import runs (the Afterglow server: `tools/world/import.py`). The client's copy of each map (`world/<number>.wld`) is a different file. Portals, NPCs and regions that must agree with it are flagged in Problems. With the client open, Ctrl+S also writes that copy to the staging folder. See Editing the client map with the server map.
 
 ## Server and client checks
 
@@ -625,7 +676,7 @@ These checks compare your map folder with the client and with the server's own d
 - `svmap-not-loaded`: a map file whose id neither ini file loads. Raise `MapCount`, or ignore the file.
 - `mapini-rebirth-outside`: a rebirth position of a zone is outside the map it names, or on a blocked cell. The server ignores a position with map -1 or with x, y and z all 0. So does the check.
 - `map-no-client`: the server loads the map and the client has no `world/<id>.wld` for it. Players see nothing or crash.
-- `map-no-name`: the map id has no name in sysmsg. The client shows the number. Many dungeons and war maps are like this.
+- `map-no-name`: the map id has no name in sysmsg. The client shows the number. Many dungeons and war maps are like this. The names come from the EP4.5 client's table, so on another client this rule may be wrong (see Verified on and other episodes).
 
 ### NPCs and monsters
 
@@ -650,7 +701,7 @@ Check: with the right folders the group lists only what is really wrong. On the 
 
 ## Client map files and the staging folder
 
-The editor can write a copy of a client map file. It never writes into the client folder, `data.sah` or `data.saf`. This page says where the copy goes and how to learn whether your client can be edited.
+The editor can write a copy of a client map file. It never writes into the client folder it reads from, and so never into its `data.sah` or `data.saf`. This page says where the copy goes and how to learn whether your client can be edited. Getting the copy into a test client is the job of Install (see Sharing your client changes).
 
 ### Can my client be edited?
 
@@ -775,7 +826,7 @@ Added and moved placements are drawn as dots at once, also when the **buildings 
 
 ### Limits of placements
 
-Grass, vani, mani, effects and sounds are shown and counted. The editor leaves them alone. The model window shows a still picture from one angle. It cannot be turned. Dungeon pieces have no dot in 2D and no model in 3D. Click where one stands, and its box shows once it is selected. Whether the game loads an edited map is still to be tried on a test client. Test every edited map on a copy of your client first.
+Grass, vani, mani, effects and sounds are shown and counted. The editor leaves them alone. The model window shows a still picture from one angle. It cannot be turned. Dungeon pieces have no dot in 2D and no model in 3D. Click where one stands, and its box shows once it is selected. Building and placement edits were checked in the game on a US EP4.5 test client, and the edited maps load. Test every edited map on a copy of your client first.
 
 ## Terrain
 
@@ -807,7 +858,7 @@ The tool works in 3D too. A drag that starts on the ground paints. A drag that s
 
 ### Water
 
-The game treats a height below -0.4 as water. A stroke that lowers corners below that level says so when it ends. The editor changes nothing else for water.
+The game treats a height below -0.4 as water. A stroke that lowers corners below that level says so when it ends. The editor changes nothing else for water. On the test client, ground lowered below that level gave shallow water without swimming.
 
 ### Saving terrain edits
 
@@ -815,7 +866,7 @@ Ctrl+S writes the client map to the staging folder like the other client edits. 
 
 ### Limits of terrain
 
-Texture painting is not part of the tool. The 3D view redraws only the parts of the map a stroke touched. Whether the game shows and walks the edited ground is still to be tried on a test client. Test every edited map on a copy of your client first.
+Texture painting is not part of the tool. The 3D view redraws only the parts of the map a stroke touched. The game was checked on a US EP4.5 test client: players walk on a raised hill, and ground lowered below -0.4 gives shallow water without swimming. Test every edited map on a copy of your client first.
 
 ## Map.ini
 
@@ -861,7 +912,7 @@ The editor never writes into the client folder.
 
 ### Limits of the Map.ini editor
 
-The editor cannot delete a zone and does not change the `[BASE]` start positions. Unsaved edits are not kept after a crash. The editor does not know the unit of `ExpireTime` or the letters of `CreateType`, so it only checks that they are plain text. Whether a server reads an edited file as meant is not tried yet.
+The editor cannot delete a zone and does not change the `[BASE]` start positions. Unsaved edits are not kept after a crash. The editor does not know the unit of `ExpireTime` or the letters of `CreateType`, so it only checks that they are plain text. An edited `Map.ini` has not been checked live on a server.
 
 ## Adding a map
 
@@ -907,7 +958,7 @@ Every write is checked by reading it back. A file that is already there is never
 
 ### Pack and try it
 
-The staged files are plain files under `data`. **Tools > Client > Share client changes...** turns them into a patch or installs them into a copy of your client (page Sharing your client changes). Test on a copy first. Whether the game and a server load the new map is not tried yet.
+The staged files are plain files under `data`. **Tools > Client > Share client changes...** turns them into a patch or installs them into a copy of your client (page Sharing your client changes). Test on a copy first. A new map with id 110, made this way, loaded on the US EP4.5 client and imported on the Afterglow server. Four things have not been checked in the game. They are a blank field of 2048 units, the area banner picture, the order of the lines in `<id>.txt`, and the orientation of the made minimap.
 
 ## Sharing your client changes
 
@@ -927,7 +978,7 @@ Neither export writes into the client folder you opened. A folder inside it is r
 
 ### Install into a test client
 
-**Install** changes `data.sah` and `data.saf` of a folder you pick. Use a **copy** of your client, and close the game first. Install is not proven in the game yet.
+**Install** changes `data.sah` and `data.saf` of a folder you pick. Use a **copy** of your client, and close the game first.
 
 1. Choose the test client folder. The editor refuses the client folder it reads from and any folder inside it or around it. It also refuses the client folder kept in the settings and the folder in `SHAIYA_CLIENT`. Without `SHAIYA_CLIENT` the editor cannot tell which other folder is your main client. Pick the folder with care.
 2. Tick that the game is closed and the folder is a test copy.
@@ -939,13 +990,13 @@ The editor refuses when `data.sah` cannot be read, when `data.saf` cannot be ope
 
 If an earlier change by the toolkit was interrupted in that folder, the editor finishes or undoes it first. The editor first checks that the folder is a client and that `data.sah` can be read, and then runs this recovery. Every later step (the install record, the index, the sizes and fingerprints) is read after it. The result says what recovery did. A folder where an interrupted swap left no `data.sah` is refused by the first check and is not recovered by the editor. If recovery is not possible, nothing else is changed.
 
-Install applies the patch with `shaiya-patch`. While it runs, the patch's `update.saf` is unpacked as a temporary file `.update.saf.<number>.shaiya-tmp` in the test client folder, so the folder needs free space of about the staged bytes again. The file is removed afterwards, also when the install fails. The editor keeps no journal (the toolkit's journal is not used here): the first backup of the index and Uninstall are what undo an install. `data.sah.bak` is overwritten by `shaiya-patch` on every install and is not a backup of this editor.
+Install applies the patch with `shaiya-patch`. While it runs, the patch's `update.saf` is unpacked as a temporary file `.update.saf.<number>.shaiya-tmp` in the test client folder, so the folder needs free space of about the staged bytes again. The file is removed afterwards, also when the install fails. The editor also builds the patch in a temporary folder under the system temp folder. That folder holds a copy of the staged files and the file `install.patch`, so it needs free space of about twice the staged bytes. Export patch uses the same temporary folder for the copy. With a large staged set, check the free space on both drives first. The editor keeps no journal (the toolkit's journal is not used here): the first backup of the index and Uninstall are what undo an install. `data.sah.bak` is overwritten by `shaiya-patch` on every install and is not a backup of this editor.
 
 After the patch is applied the editor checks the result. Every staged file must read back byte for byte from `data.saf`. No other entry may move. The old part of `data.saf` must be the same. If a check fails, the old index is put back and `data.saf` is cut back to its old length.
 
 The folder gets a record, `svmap-editor-install.json`, with the sizes and hashes of the files before and after.
 
-Status: Install and Uninstall were run on a copy of a US EP4.5 test client. The staged file read back from `data.saf`. `data.saf` grew by exactly the staged bytes. Uninstall gave back `data.sah` and `data.saf` byte for byte. Loading the result in the game is the part not proven.
+Status: Install and Uninstall were run on a copy of a US EP4.5 test client. The staged file read back from `data.saf`. `data.saf` grew by exactly the staged bytes. Uninstall gave back `data.sah` and `data.saf` byte for byte.
 
 ### Uninstall
 
@@ -1100,9 +1151,9 @@ Keys do nothing while a text field has the keyboard focus, except Ctrl+O, Ctrl+S
 
 **I cannot select anything.** A section is locked or hidden (the lock and the eye in the Layers popover or the Outliner). Or the level filter is on: the **lv** chip in the toolbar shows a range, and areas outside it cannot be picked.
 
-**My portal change does nothing in the game.** Either Problems shows `portal-far` (the server refuses a portal more than 40 units from the client's portal), or the server was not restarted or did not run its map import. The editor does not change the client's map.
+**My portal change does nothing in the game.** Either Problems shows `portal-far` (the server refuses a portal more than 40 units from the client's portal), or the server was not restarted or did not run its map import. The server file and the client file are two files. The client copy changes in the game only after you install or patch it (see Sharing your client changes).
 
-**I moved an NPC but the minimap shows the old place.** The minimap and the quest marks come from the client's own copy of the map. The editor does not change client files.
+**I moved an NPC but the minimap shows the old place.** The minimap and the quest marks come from the client's own copy of the map. The editor moves the NPC in its staged copy of that file. The game shows the new place after you install or patch that copy (see Sharing your client changes). The client folder you read from is never changed.
 
 **The file on disk changed.** Another program saved the file after you opened it: a yellow bar offers **Reload** (drops your unsaved changes) or **Keep mine**; saving still asks before it overwrites the newer file.
 
@@ -1124,11 +1175,11 @@ Keys do nothing while a text field has the keyboard focus, except Ctrl+O, Ctrl+S
 
 **The heatmap is empty.** The map has no monster areas in view, or the Monster areas layer is off, or the level filter dims them all. Level mode also needs the client data. Press **H** again for density.
 
-**Can the game run while I edit?** Yes. The editor only reads `data.sah` and `data.saf`. After the patcher updates the client, use **File > Reload client data**.
+**Can the game run while I edit?** Yes. The editor only reads `data.sah` and `data.saf` of the client you opened. Close the game before you Install into a test client. After the patcher updates the client, use **File > Reload client data**.
 
 ## Files the editor uses
 
-The editor keeps its own files in one data folder: `shaiya-svmap-editor` inside the toolkit data folder (`%APPDATA%\shaiya-toolkit\shaiya-svmap-editor` on Windows). **Help > Open data folder** opens it.
+The editor keeps its own files in one data folder: `shaiya-svmap-editor` inside the toolkit data folder. That is `%APPDATA%\shaiya-toolkit\shaiya-svmap-editor` on Windows, `~/Library/Application Support/shaiya-toolkit/shaiya-svmap-editor` on macOS and `~/.config/shaiya-toolkit/shaiya-svmap-editor` on Linux. An empty file `portable.txt` next to the program, or the variable `SHAIYA_TOOLKIT_HOME`, moves the toolkit data folder, as for the other toolkit programs. The option `--data-dir <dir>` names the toolkit data folder for one run. **Help > Open data folder** opens the folder in use. The editor keeps no list of saved client folders shared with Shaiya Toolkit. It starts with its own settings and does not import the settings of the program it grew out of.
 
 - `settings.json`: your folders, recent files, layers, panel sizes, the session of the last run, the preferences, and your bookmarks, templates and level filter. Safe to delete; the editor starts as new then.
 - `log.txt` (and `log.1.txt` when it grows past 1 MB): what was opened and saved, errors, client files that did not load, and crashes.
@@ -1136,13 +1187,13 @@ The editor keeps its own files in one data folder: `shaiya-svmap-editor` inside 
 - `backups\<folder key>\`: the copies of every save (`<number>-<UTC time>.svmap`), the newest ones per map. **File > Restore from backup...** shows them and has a button for the folder.
 - `backups\client\<key>\`: the copies of staged client files that a save replaced (`world-<number>-<UTC time>.wld` and `.txt`).
 - `backups\server\<key>\`: the copies of `Map.ini` or `MapWar.ini` that a save replaced (`Map-<UTC time>.ini`, `MapWar-<UTC time>.ini`).
-- In a test client you installed into: `data.sah.svmap-editor` (the index from before the first install), `data.sah.svmap-editor-<UTC time>` (one per install) and `svmap-editor-install.json`. Uninstall removes the record and the first backup (page Sharing your client changes).
+- In a test client you installed into: `data.sah.svmap-editor` (the index from before the first install), `data.sah.svmap-editor-<UTC time>` (one per install) and `svmap-editor-install.json` (the record). `data.sah.bak` is there too. The patch step overwrites it on every install. A temporary `.update.saf.<number>.shaiya-tmp` exists while an install runs. Uninstall removes the record and the first backup (page Sharing your client changes). The file formats of these files are on the page [the editor's own files](../formats/svmap-editor-files.md).
 
-Next to a server map file the editor writes `<number>.svmap.tmp` while saving (removed again) and `<number>.svmap.bak` the first time you save that file. Staged client files go to the staging folder you picked, as `data/world/<number>.wld`, with the same `.tmp` and `.bak` files. The Map.ini editor and Add a map also write `Map.ini` in the server data folder, with the same `.tmp` and `.bak` files and a copy under `backups\server\<key>\`. Add a map writes the notes file `svmap-editor-new-map-<number>.txt` in the staging folder. Nothing else is written, and nothing in the client folder. The other server data files (`MapWar.ini` unless you save it, `NpcQuest.SData`, `Obelisk.ini`) are only read.
+Next to a server map file the editor writes `<number>.svmap.tmp` while saving (removed again) and `<number>.svmap.bak` the first time you save that file. Staged client files go to the staging folder you picked, as `data/world/<number>.wld`, `data/world/<number>.txt`, `data/interface/MiniMap/<number>.tga` and `data/world/Field/<number>/*.dds`, with the same `.tmp` and `.bak` files. The Map.ini editor and Add a map write `Map.ini` or `MapWar.ini` in the server data folder, with the same `.tmp` and `.bak` files and a copy under `backups\server\<key>\`. Add a map writes the notes file `svmap-editor-new-map-<number>.txt` in the staging folder, outside `data`. Export patch and Export folder write only into the folder you pick. Install, Uninstall and Copy loose write only into the test client you pick. The editor never writes the client folder it reads from. The other server data files (`NpcQuest.SData` and `Obelisk.ini`, and the ini file you do not save) are only read.
 
 ## Command line
 
-The command line tools belong to the separate program `shaiya` of the Shaiya Toolkit. They need no window and no editor. The editor itself has no subcommands.
+The command line tools belong to the separate program `shaiya` of the Shaiya Toolkit. They need no window and no editor. The editor itself has no subcommands. Every command, its exit codes and its JSON output are on the page [shaiya svmap](shaiya.md#shaiya-svmap) of the toolkit documentation. The list below is a short guide.
 
 - `shaiya svmap check <file|folder> [--client <dir>] [--server-data <dir>] [--afterglow-defs <path>] [--target original|afterglow] [--json]`: checks one map or a whole folder and prints what Problems would list; exit code 1 when there are errors. `--server-data` adds the Server and client rules for a folder. The command line does not look for the server folder by itself. With `--json` and `--server-data` the output is an object with the lists `maps` and `server_and_client`.
 - `shaiya svmap dump <file> [--json]`: a summary of a map, or all of it as JSON.
@@ -1151,7 +1202,7 @@ The command line tools belong to the separate program `shaiya` of the Shaiya Too
 - `shaiya svmap roundtrip <folder>`: reads and writes every map and reports any byte that differs.
 - `shaiya svmap diff <a.svmap> <b.svmap>`: the records added, removed and changed between two files.
 - `shaiya svmap diff <folderA> <folderB>`: one row per map number: same, differs with counts, only in A, only in B or unreadable. Exit code 1 when anything differs.
-- `shaiya svmap spawns <folder> [--client <dir>] [--json]`: per map the areas, monsters, kinds, level range and spawn findings, then the folder totals. With `--client` it also counts the monsters no area spawns. The exit code is always 0.
+- `shaiya svmap spawns <folder> [--client <dir>] [--json]`: per map the areas, monsters, kinds, level range and spawn findings, then the folder totals. With `--client` it also counts the monsters no area spawns. It reports and does not judge: the exit code is 0 when the report was made, and 3 when a file could not be read.
 - `shaiya svmap bulk <folder> --rule "<where> => <action>" [--client <dir>] [--allow-above-8]`: what a bulk edit rule would do, map by map. It is a dry run and writes nothing.
 
 The editor program `shaiya-svmap-editor` always opens its window. Options for it:
@@ -1159,10 +1210,20 @@ The editor program `shaiya-svmap-editor` always opens its window. Options for it
 - `shaiya-svmap-editor [file.svmap ...]`: open these files.
 - `--folder <Map dir>`: open this server map folder; `--client <dir>`: open this client folder; `--map <id>`: open that map of the folder (repeat for several).
 - `--data-dir <dir>`: keep the settings and the log in the `shaiya-svmap-editor` folder inside `<dir>` instead of in the toolkit data folder; `--no-settings`: use no data folder at all.
-- `shaiya-svmap-editor --help` prints every option. A release build has no console window: redirect the output (`shaiya-svmap-editor --help > help.txt`) or pipe it to read it.
-
-The file formats the editor reads and writes are described in the Formats section of the toolkit documentation.
+- `--smoke [out.png]`: draw a test triangle in a window, write the picture and exit. It checks that the graphics stack works and reads and writes no settings.
+- `shaiya-svmap-editor --help` prints every option. On Windows the release program has no console window, so it shows `--help` and `--version` output only when you redirect it (`shaiya-svmap-editor --help > help.txt`) or pipe it.
 
 ## About
 
-Shaiya SVMap Editor, part of the Shaiya Toolkit (MIT licence, by byyako). It was written for a Shaiya EP4.5 client and server and is verified on that; for other episodes see the version matrix of the toolkit documentation.
+Shaiya SVMap Editor is part of the Shaiya Toolkit. MIT licence, made by byyako. It was written for a Shaiya EP4.5 client and server and is verified on that. For other clients see Verified on and other episodes, and the version matrix of the toolkit documentation.
+
+The file formats the editor reads and writes are described in the Formats section of the toolkit documentation:
+
+- [The svmap server map](../formats/svmap.md) and its [JSON form](../formats/svmap.md#json).
+- The client's [world file](../formats/wld.md) and its [area names](../formats/area-txt.md).
+- The server's [Map.ini and MapWar.ini](../formats/map-ini.md) and [Obelisk.ini](../formats/obelisk-ini.md).
+- The tables [NpcQuest.SData](../formats/npcquest.md) and [Monster.SData](../formats/monster.md).
+- The client's [dungeon floors](../formats/dg.md), [models](../formats/smod.md) and [textures](../formats/textures.md).
+- The client's [sysmsg and map names](../formats/sysmsg.md) and [TacticsZone.zon](../formats/tacticszone-zon.md).
+- Afterglow's [mobs.psv](../formats/mobs-psv.md).
+- The files the editor defines itself: [CSV export, install record, backups and note file](../formats/svmap-editor-files.md).
