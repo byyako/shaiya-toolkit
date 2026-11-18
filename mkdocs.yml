@@ -67,6 +67,7 @@ nav:
   - Tools:
       - shaiya CLI: tools/shaiya.md
       - Shaiya Toolkit (desktop app): tools/toolkit.md
+      - Shaiya SVMap Editor: tools/svmap-editor.md
   - Guides:
       - Mod game files: guides/mod-files.md
       - Make a patch: guides/make-a-patch.md

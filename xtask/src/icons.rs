@@ -18,11 +18,14 @@ pub enum Mark {
     Chevron,
     /// An open box: a square with a lid line.
     Box,
+    /// A folded map: an outline with two inner fold lines.
+    Map,
 }
 
 pub const ICONS: &[Icon] = &[
     Icon { id: "shaiya", bg: [0x16, 0x69, 0x7a], mark: Mark::Chevron },
     Icon { id: "shaiya-toolkit", bg: [0xb5, 0x54, 0x1c], mark: Mark::Box },
+    Icon { id: "shaiya-svmap-editor", bg: [0x2f, 0x6b, 0x3a], mark: Mark::Map },
 ];
 
 const BIG: usize = 512;
@@ -58,6 +61,20 @@ fn segments(mark: Mark) -> (Vec<Segment>, f32) {
         Mark::Box => {
             let (l, r, t, b) = (150.0, 362.0, 160.0, 372.0);
             (vec![((l, t), (r, t)), ((r, t), (r, b)), ((r, b), (l, b)), ((l, b), (l, t)), ((l, 236.0), (r, 236.0))], 34.0)
+        }
+        Mark::Map => {
+            // a zigzag top and bottom edge (the folds) with a line down each fold
+            let (l, r, up, dn) = (140.0, 372.0, 165.0, 190.0);
+            let (f1, f2) = (l + (r - l) / 3.0, l + 2.0 * (r - l) / 3.0);
+            let top = [(l, dn), (f1, up), (f2, dn), (r, up)];
+            let bot = [(l, dn + 157.0), (f1, up + 157.0), (f2, dn + 157.0), (r, up + 157.0)];
+            let mut s = Vec::new();
+            for i in 0..3 {
+                s.push((top[i], top[i + 1]));
+                s.push((bot[i], bot[i + 1]));
+            }
+            s.extend([(top[0], bot[0]), (top[1], bot[1]), (top[2], bot[2]), (top[3], bot[3])]);
+            (s, 28.0)
         }
     }
 }
