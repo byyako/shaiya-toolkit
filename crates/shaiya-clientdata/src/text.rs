@@ -1,5 +1,5 @@
 //! Text files of the client: `sysmsg-uni.txt` (system messages) and `world/<id>.txt` (area names), both UTF-16LE with a
-//! BOM; and the map names the client shows (`CPlayerData::GetMapName`, `0x4c9100`).
+//! BOM; and the map names the client shows.
 
 use std::collections::HashMap;
 

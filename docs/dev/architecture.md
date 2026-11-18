@@ -56,7 +56,7 @@ shaiya-build: build-dependency only
 
 1. **Core libraries never depend on `egui`, `eframe`, `rfd` or `clap`, never print, never read environment variables (tests excepted), never start a process.** No crate opens a network connection.
 2. **All long work takes a `&Job`** (`shaiya_core::Job`) so the CLI shows progress and the GUI can cancel.
-3. **One error type**: `shaiya_core::Error` (`Io`, `Format { file, offset, what }`, `Unsupported`, `Refused`, `Cancelled`) with `ErrorKind`. `shaiya-clientdata` keeps its own `Error` (its public API is frozen) with a conversion from the core error.
+3. **One error type**: `shaiya_core::Error` (`Io`, `Format { file, offset, what }`, `Unsupported`, `Refused`, `Cancelled`) with `ErrorKind`. `shaiya-clientdata` keeps its own `Error` (its public API is kept stable; 0.2.0 adds `wld_raw`, `area_txt` and `Npc.gates`) with a conversion from the core error.
 4. Library crates use caret version requirements; the GUI stack is pinned exactly (egui minor versions break APIs); `Cargo.lock` is committed and CI builds with `--locked`.
 5. `unsafe_code` is denied in the workspace; the only `unsafe` is the Windows console check in `shaiya-cli` (one function, with a comment).
 

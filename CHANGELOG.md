@@ -4,6 +4,14 @@ All notable changes are listed here, newest first. The format follows [Keep a Ch
 
 ## [Unreleased]
 
+### Libraries
+
+- `shaiya-clientdata`: `wld_raw` (lossless `.wld` model and writer), `area_txt` (line-preserving `world/<id>.txt`), `sdata::Gate` and `Npc.gates` (gatekeeper destinations).
+
+### Breaking
+
+- `shaiya_clientdata::sdata::Npc` has a new field `gates`; code building `Npc` with a struct literal must set it.
+
 ## [0.1.0] - 2026-11-17
 
 First release: the foundation of the toolkit and the archive and patch tools.

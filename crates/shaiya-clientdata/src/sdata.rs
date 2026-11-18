@@ -1,5 +1,5 @@
-//! EP4 `Monster.SData` and `NpcQuest.SData` readers (layouts of Parsec rev e5cbc6d, as in `sdata-viewer/Core.cs`). Only the
-//! parts the editor needs are kept; both parsers read every field of the part they cover.
+//! `Monster.SData` and `NpcQuest.SData` readers (EP4 layouts). Only the parts the editor needs are kept; both parsers read
+//! every field of the part they cover.
 
 use crate::error::{Cur, Result};
 
@@ -56,6 +56,17 @@ pub struct Npc {
     pub faction: i32,
     pub name: String,
     pub welcome: String,
+    /// The three destinations of a gatekeeper (type 2); empty for every other type.
+    pub gates: Vec<Gate>,
+}
+
+/// One gatekeeper destination: map id, position, the name shown and the gold cost.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Gate {
+    pub map: u16,
+    pub pos: [f32; 3],
+    pub name: String,
+    pub cost: u32,
 }
 
 pub const NPC_SECTIONS: [&str; 13] = [
@@ -111,16 +122,19 @@ impl NpcQuest {
                     let m = r.count(2, 65_535, "stock count")?;
                     r.skip(m * 2, "stock")?;
                 }
+                let mut gates = Vec::new();
                 if kind == 2 {
                     for _ in 0..3 {
-                        r.skip(2 + 12, "gate")?;
-                        r.str_i32("gate target")?;
-                        r.skip(4, "gate cost")?;
+                        let map = r.u16("gate map")?;
+                        let pos = r.f3("gate position")?;
+                        let name = r.str_i32("gate target")?;
+                        let cost = r.u32("gate cost")?;
+                        gates.push(Gate { map, pos, name, cost });
                     }
                 }
                 id_list(&mut r, "in-quest list")?;
                 id_list(&mut r, "out-quest list")?;
-                list.push(Npc { kind, type_id, model, move_distance, move_speed, faction, name, welcome });
+                list.push(Npc { kind, type_id, model, move_distance, move_speed, faction, name, welcome, gates });
             }
             lists.push(list);
         }
