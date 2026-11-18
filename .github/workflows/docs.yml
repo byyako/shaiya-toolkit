@@ -26,7 +26,7 @@ jobs:
           cache-dependency-path: .github/docs-site/requirements.txt
       - name: Install the pinned toolchain
         run: python -m pip install -r .github/docs-site/requirements.txt
-      - name: Build (strict: broken links and anchors fail)
+      - name: "Build (strict: broken links and anchors fail)"
         run: mkdocs build --strict
       - name: Offline link and external-asset check
         run: python -I .github/docs-site/check_site.py site
