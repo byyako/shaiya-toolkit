@@ -21,7 +21,7 @@ On Windows the first run may show SmartScreen ("Windows protected your PC"): cho
 shaiya clients add practice C:\Games\ShaiyaPractice --note "practice copy"
 ```
 
-From now on `"@practice"` means that folder in every command. `shaiya clients list` shows what is saved. (The Workbench uses the same list.)
+From now on `"@practice"` means that folder in every command. `shaiya clients list` shows what is saved. (Shaiya Toolkit uses the same list.)
 
 **Keep the double quotes around `"@practice"`.** In PowerShell a bare `@practice` is not text (the `@` makes PowerShell try to splat a variable), so the command fails with a confusing "required arguments were not provided" error. Double quotes work the same way in PowerShell and in `cmd.exe`, so every command on this page can be pasted into either. (Single quotes, `'@practice'`, work in PowerShell only; `cmd.exe` would pass them on literally.) The same goes for patterns such as `"*.SData"`.
 
@@ -83,9 +83,9 @@ shaiya archive list "@practice" "shaiya-test/*"
 
 `history` lists the change and says `rollback possible`. `rollback` restores the old index, cuts `data.saf` back to its old length and removes anything the patch created. The last `list` finds nothing. Journals live in `C:\Games\ShaiyaPractice\shaiya-toolkit-backups`; [undo and recovery](guides/undo-and-recovery.md) explains what is kept and what can block a rollback.
 
-## The same in the Workbench
+## The same in Shaiya Toolkit
 
-Run `shaiya-workbench`. Pick the client in the toolbar (the list from step 1 is already there). The **Archive** tab lists and previews files; drop a file on it, check the target folder in the dialog that opens, press Queue changes, then **Apply to client...** (nothing is written before that). Open **Apply & history** to see the change and **Roll back...**. See [the Workbench page](tools/workbench.md).
+Run `shaiya-toolkit`. Pick the client in the toolbar (the list from step 1 is already there). The **Archive** tab lists and previews files; drop a file on it, check the target folder in the dialog that opens, press Queue changes, then **Apply to client...** (nothing is written before that). Open **Apply & history** to see the change and **Roll back...**. See [the Shaiya Toolkit page](tools/toolkit.md).
 
 ## Where next
 

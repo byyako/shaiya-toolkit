@@ -1,9 +1,9 @@
-//! Client folders in Workbench: the toolbar picker's data, the Add dialog, the Manage dialog and "Use another archive pair" (swap). The
+//! Client folders in Shaiya Toolkit: the toolbar picker's data, the Add dialog, the Manage dialog and "Use another archive pair" (swap). The
 //! list is the `clients` key of `shared.json`, shared with the command line (`shaiya clients`); every change goes through
 //! `shaiya_core::config::update_clients`, so another program's changes are kept.
 
 use crate::archive_view::ArchiveView;
-use crate::WorkbenchSettings;
+use crate::ToolkitSettings;
 use egui::RichText;
 use shaiya_archive::client::{read_version_ini, ClientFiles};
 use shaiya_archive::swap::{swap, SwapReport};
@@ -14,7 +14,7 @@ use shaiya_ui::{Client, Confirm, Cx, Shell, TaskHandle, TaskOutcome, TaskSpec};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-type WorkbenchCx<'a> = Cx<'a, WorkbenchSettings>;
+type ToolkitCx<'a> = Cx<'a, ToolkitSettings>;
 
 /// The client the tabs work on.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -183,7 +183,7 @@ enum SwapFlow {
     Done { client: String, dir: PathBuf, kept: PathBuf },
 }
 
-/// What a frame of the dialogs asks the Workbench frame to do.
+/// What a frame of the dialogs asks the app frame to do.
 pub enum ClientsAction {
     /// Open this saved client.
     Open(String),
@@ -236,7 +236,7 @@ impl ClientsUi {
     }
 
     /// Draws the Add and Manage dialogs and advances the swap. Returns what the frame must do.
-    pub fn ui(&mut self, ctx: &egui::Context, cx: &mut WorkbenchCx<'_>, archive: &mut ArchiveView) -> Vec<ClientsAction> {
+    pub fn ui(&mut self, ctx: &egui::Context, cx: &mut ToolkitCx<'_>, archive: &mut ArchiveView) -> Vec<ClientsAction> {
         let mut out = Vec::new();
         let pal = cx.shell.pal();
         // Add dialog
@@ -302,7 +302,7 @@ impl ClientsUi {
                 if clients.is_empty() {
                     ui.label("No client folders yet. Use Add client folder... in the toolbar.");
                 }
-                egui::Grid::new("workbench-clients-grid").striped(true).num_columns(4).show(ui, |ui| {
+                egui::Grid::new("toolkit-clients-grid").striped(true).num_columns(4).show(ui, |ui| {
                     ui.label(RichText::new("Name").strong());
                     ui.label(RichText::new("Folder and status").strong());
                     ui.label(RichText::new("Note").strong());
@@ -426,13 +426,13 @@ impl ClientsUi {
         out
     }
 
-    fn poll_swap(&mut self, cx: &mut WorkbenchCx<'_>, archive: &mut ArchiveView, out: &mut Vec<ClientsAction>) {
+    fn poll_swap(&mut self, cx: &mut ToolkitCx<'_>, archive: &mut ArchiveView, out: &mut Vec<ClientsAction>) {
         match std::mem::replace(&mut self.swap, SwapFlow::Idle) {
             SwapFlow::Idle => {}
             SwapFlow::Done { client, dir, kept } => self.swap = SwapFlow::Done { client, dir, kept },
             SwapFlow::Confirm { client, dir, other } => {
                 let c = Confirm { title: "Swap archives".into(), text: Self::swap_text(&client, &other), buttons: vec!["Swap archives".into(), "Cancel".into()], danger: None };
-                match cx.shell.confirm("workbench-swap", &c) {
+                match cx.shell.confirm("toolkit-swap", &c) {
                     None => self.swap = SwapFlow::Confirm { client, dir, other },
                     Some(0) => {
                         let arc = if archive.client_dir() == Some(dir.as_path()) { archive.release_handle() } else { None };

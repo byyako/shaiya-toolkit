@@ -1,6 +1,6 @@
 # Shaiya Toolkit
 
-Command-line and desktop tools for Shaiya game data, built on one tested Rust core: browse, extract and edit a client's `data.sah`/`data.saf`, build, sign, apply and roll back `psNNNN.patch` files, convert SData files, and identify any client file. Changes to a client folder are journaled so they can usually be rolled back (the note below says what cannot). The SData table editor and the other tools below are planned.
+The Shaiya Toolkit repository holds command-line and desktop tools for Shaiya game data, built on one tested Rust core. **Shaiya Toolkit** is the desktop app (`shaiya-toolkit`); **`shaiya`** is the command line. With them you can browse, extract and edit a client's `data.sah`/`data.saf`, build, sign, apply and roll back `psNNNN.patch` files, convert SData files, and identify any client file. Changes to a client folder are journaled so they can usually be rolled back (the note below says what cannot). The SData table editor and the other tools below are planned.
 
 > **These tools work on your own copy of the game. The repository and the releases contain no game files, and the tools never download any. Changes to a client folder are recorded in a journal so they can usually be rolled back, but not changes made with --no-journal or archive compact --in-place, which keep at most the previous index (data.sah.bak). Everything else is written only to a path you name.**
 
@@ -8,9 +8,9 @@ Command-line and desktop tools for Shaiya game data, built on one tested Rust co
 
 | Tool | What it does | CLI command | GUI program | Status |
 |---|---|---|---|---|
-| File inspector | Identify a Shaiya file (SAH index, SAF data, SData, patch, game.exe) and show what it is; SHA-256 | `shaiya info` | Shaiya Workbench (`shaiya-workbench`) | available |
-| Archive & patches | Browse, extract and edit `data.sah`/`data.saf` with a journal you can roll back; build, sign, verify, apply and roll back `psNNNN.patch`; compare, compact, pack and swap archives | `shaiya archive`, `shaiya patch`, `shaiya clients` | Shaiya Workbench | available |
-| SData container | Describe, check, decrypt and encrypt SData files (the SEED wrapper), byte-identical round trips | `shaiya sdata` | Shaiya Workbench (SData tab) | available |
+| File inspector | Identify a Shaiya file (SAH index, SAF data, SData, patch, game.exe) and show what it is; SHA-256 | `shaiya info` | Shaiya Toolkit (`shaiya-toolkit`) | available |
+| Archive & patches | Browse, extract and edit `data.sah`/`data.saf` with a journal you can roll back; build, sign, verify, apply and roll back `psNNNN.patch`; compare, compact, pack and swap archives | `shaiya archive`, `shaiya patch`, `shaiya clients` | Shaiya Toolkit | available |
+| SData container | Describe, check, decrypt and encrypt SData files (the SEED wrapper), byte-identical round trips | `shaiya sdata` | Shaiya Toolkit (SData tab) | available |
 | SData schemas and editor | Read and edit the client's SData tables for each episode | (planned) | Shaiya SData Editor | planned |
 | Packet log decoder | Decode game packet logs | `shaiya log` | Shaiya Log Viewer | planned |
 | Server map editor | Edit server map files | `shaiya svmap` | Shaiya SVMap Editor | planned |
@@ -19,11 +19,10 @@ Command-line and desktop tools for Shaiya game data, built on one tested Rust co
 
 No release has been published yet. Releases will carry these files (see [docs/install.md](docs/install.md) for how to check them):
 
-| Program | Windows | Linux | macOS |
+| Download | Windows | Linux | macOS |
 |---|---|---|---|
-| Everything | `shaiya-toolkit-<version>-windows-x86_64.zip` | `shaiya-toolkit-<version>-linux-x86_64.zip` | `shaiya-toolkit-<version>-macos-universal.zip` |
+| Shaiya Toolkit (desktop app, includes `shaiya`) | `shaiya-toolkit-<version>-windows-x86_64.zip` | `shaiya-toolkit-<version>-linux-x86_64.zip` | `shaiya-toolkit-<version>-macos-universal.zip` |
 | `shaiya` (command line) | `shaiya-<version>-windows-x86_64.zip` | `shaiya-<version>-linux-x86_64.zip` | `shaiya-<version>-macos-universal.zip` |
-| Shaiya Workbench | `shaiya-workbench-<version>-windows-x86_64.zip` | `shaiya-workbench-<version>-linux-x86_64.zip` | `shaiya-workbench-<version>-macos-universal.zip` |
 
 All downloads: the [releases page](https://github.com/byyako/shaiya-toolkit/releases). Every release has a `SHA256SUMS.txt`.
 
@@ -49,7 +48,7 @@ With stock Rust (`rustup`, stable):
 cargo build --release
 ```
 
-The programs are `target/release/shaiya` and `target/release/shaiya-workbench`. On Linux the GUI needs a few development packages, listed in [docs/install.md](docs/install.md#build-from-source). See [CONTRIBUTING.md](CONTRIBUTING.md) for tests and the development workflow, and [docs/](docs/README.md) for formats and architecture.
+The programs are `target/release/shaiya` and `target/release/shaiya-toolkit`. On Linux the GUI needs a few development packages, listed in [docs/install.md](docs/install.md#build-from-source). See [CONTRIBUTING.md](CONTRIBUTING.md) for tests and the development workflow, and [docs/](docs/README.md) for formats and architecture.
 
 ## Licence
 

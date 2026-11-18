@@ -1,9 +1,9 @@
 //! The signature settings of one client, shared by Apply & history and Sign & verify: the public key (a file or pasted hex), the
-//! CheckVersion and, only when the person ticked "Remember where my secret key is", the path of the secret key file. Workbench never
+//! CheckVersion and, only when the person ticked "Remember where my secret key is", the path of the secret key file. Shaiya Toolkit never
 //! stores key contents.
 
 use crate::clients::ClientInfo;
-use crate::{KeySettings, WorkbenchSettings};
+use crate::{KeySettings, ToolkitSettings};
 use shaiya_patch::VerifyKey;
 use std::path::Path;
 
@@ -20,7 +20,7 @@ pub struct KeyForm {
 
 impl KeyForm {
     /// Loads the settings of `client` when it is not the one loaded already (CheckVersion pre-filled from `Version.ini`).
-    pub fn load(&mut self, client: Option<&ClientInfo>, settings: &WorkbenchSettings) {
+    pub fn load(&mut self, client: Option<&ClientInfo>, settings: &ToolkitSettings) {
         let name = client.map(|c| c.name.clone());
         if self.loaded && self.for_client == name {
             return;
@@ -40,7 +40,7 @@ impl KeyForm {
         self.loaded && self.for_client == client.map(|c| c.name.clone())
     }
 
-    pub fn store(&self, settings: &mut WorkbenchSettings) {
+    pub fn store(&self, settings: &mut ToolkitSettings) {
         let Some(name) = &self.for_client else { return };
         settings.keys.insert(
             name.clone(),

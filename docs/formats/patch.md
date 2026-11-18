@@ -26,7 +26,7 @@ Building lists every offending name at once. A patch that contains such a name i
 
 ## Removals
 
-`remove.txt` is understood by this toolkit (`shaiya patch apply`, the Workbench) and by replacement updaters that implement it. **The original `Updater.exe` ignores it**, so a patch that depends on removals does nothing for players of the original updater; `shaiya patch build` warns about that. Removing a path the archive does not have is reported, not an error.
+`remove.txt` is understood by this toolkit (`shaiya patch apply`, Shaiya Toolkit) and by replacement updaters that implement it. **The original `Updater.exe` ignores it**, so a patch that depends on removals does nothing for players of the original updater; `shaiya patch build` warns about that. Removing a path the archive does not have is reported, not an error.
 
 ## Deterministic build
 
@@ -43,7 +43,7 @@ The same inputs always produce the same patch bytes: entries are sorted by name,
 5. The previous index is copied to `data.sah.bak` (a plain copy that the next change overwrites), and the new index is written atomically (temporary file, then rename).
 6. Loose files are written atomically. A name listed in `protect` (for example a running updater) is written as `<name>.new` instead.
 
-`shaiya patch apply` and the Workbench do the same through the journaled in-place procedure ([archive.md](archive.md#changing-an-archive-in-place)): before the first byte is appended they record a **journal** (a copy of the old index, a list of loose files and copies of those they overwrite) so that `shaiya patch rollback` can undo the patch. Journals live in the client folder under `shaiya-toolkit-backups/`; they are local backups made by the toolkit and are **not part of the patch format**. The older `shaiya_patch::apply` call (kept for updaters) makes no journal. Loose files written without a journal (`--no-journal`) leave no copy of what they overwrote. See [undo and recovery](../guides/undo-and-recovery.md).
+`shaiya patch apply` and Shaiya Toolkit do the same through the journaled in-place procedure ([archive.md](archive.md#changing-an-archive-in-place)): before the first byte is appended they record a **journal** (a copy of the old index, a list of loose files and copies of those they overwrite) so that `shaiya patch rollback` can undo the patch. Journals live in the client folder under `shaiya-toolkit-backups/`; they are local backups made by the toolkit and are **not part of the patch format**. The older `shaiya_patch::apply` call (kept for updaters) makes no journal. Loose files written without a journal (`--no-journal`) leave no copy of what they overwrote. See [undo and recovery](../guides/undo-and-recovery.md).
 
 If the process stops early, the old index still describes valid data; only unreferenced bytes are left at the end of `data.saf`. Replaced and removed files leave dead space, which `shaiya_archive::compact` reclaims.
 

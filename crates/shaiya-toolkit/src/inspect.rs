@@ -1,11 +1,11 @@
-//! The Inspect tab: the file inspector. Open or drop files; Workbench identifies them (SAH index, SAF data, SData,
+//! The Inspect tab: the file inspector. Open or drop files; Shaiya Toolkit identifies them (SAH index, SAF data, SData,
 //! patches, game.exe) and hashes them as cancellable tasks.
 
 use egui::RichText;
 
 use shaiya_core::hash::{sha256_file, to_hex};
 use shaiya_inspect::{describe, Info, Options};
-use crate::WorkbenchSettings;
+use crate::ToolkitSettings;
 use shaiya_ui::{Cx, TaskHandle, TaskOutcome, TaskSpec};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -47,7 +47,7 @@ pub struct InspectTab {
 
 impl InspectTab {
     /// Adds files (a file opened twice is inspected again).
-    fn add_files(&mut self, paths: Vec<PathBuf>, cx: &mut Cx<'_, WorkbenchSettings>) {
+    fn add_files(&mut self, paths: Vec<PathBuf>, cx: &mut Cx<'_, ToolkitSettings>) {
         for path in paths {
             if shaiya_ui::fonts::needs_cjk(&path.display().to_string()) {
                 cx.shell.need_cjk_font();
@@ -67,7 +67,7 @@ impl InspectTab {
     }
 
     /// Starts the SHA-256 task of one row (a running one is left alone).
-    fn start_hash(&mut self, id: u64, cx: &mut Cx<'_, WorkbenchSettings>) {
+    fn start_hash(&mut self, id: u64, cx: &mut Cx<'_, ToolkitSettings>) {
         let Some(row) = self.rows.iter_mut().find(|r| r.id == id) else { return };
         if matches!(row.hash, HashState::Running(_)) {
             return;
@@ -83,7 +83,7 @@ impl InspectTab {
     }
 
     /// Hashes the selected rows (all rows when nothing is selected).
-    pub fn hash_selected(&mut self, cx: &mut Cx<'_, WorkbenchSettings>) {
+    pub fn hash_selected(&mut self, cx: &mut Cx<'_, ToolkitSettings>) {
         let ids: Vec<u64> = if self.selected.is_empty() { self.rows.iter().map(|r| r.id).collect() } else { self.rows.iter().filter(|r| self.selected.contains(&r.id)).map(|r| r.id).collect() };
         for id in ids {
             self.start_hash(id, cx);
@@ -91,7 +91,7 @@ impl InspectTab {
     }
 
     /// Collects the results of finished tasks.
-    fn poll(&mut self, cx: &mut Cx<'_, WorkbenchSettings>) {
+    fn poll(&mut self, cx: &mut Cx<'_, ToolkitSettings>) {
         for row in &mut self.rows {
             if let RowState::Loading(h) = &mut row.state {
                 match h.poll() {
@@ -194,7 +194,7 @@ impl InspectTab {
     }
 
     /// Starts the hash of the row with this file name (what the row's SHA-256 button does).
-    pub fn hash_row(&mut self, name: &str, cx: &mut Cx<'_, WorkbenchSettings>) {
+    pub fn hash_row(&mut self, name: &str, cx: &mut Cx<'_, ToolkitSettings>) {
         if let Some(id) = self.rows.iter().find(|r| r.name() == name).map(|r| r.id) {
             self.start_hash(id, cx);
         }
@@ -205,7 +205,7 @@ impl InspectTab {
     }
 }
 
-pub fn columns(s: &WorkbenchSettings) -> [f32; 4] {
+pub fn columns(s: &ToolkitSettings) -> [f32; 4] {
     let mut c = DEFAULT_COLUMNS;
     for (i, w) in s.columns.iter().take(4).enumerate() {
         if w.is_finite() {
@@ -229,7 +229,7 @@ impl InspectTab {
 
 
 
-    pub fn ui(&mut self, ui: &mut egui::Ui, cx: &mut Cx<'_, WorkbenchSettings>) {
+    pub fn ui(&mut self, ui: &mut egui::Ui, cx: &mut Cx<'_, ToolkitSettings>) {
         self.poll(cx);
         let pal = cx.shell.pal();
         if self.rows.is_empty() {
@@ -335,7 +335,7 @@ impl InspectTab {
         }
     }
 
-    pub fn open(&mut self, paths: Vec<PathBuf>, cx: &mut Cx<'_, WorkbenchSettings>) {
+    pub fn open(&mut self, paths: Vec<PathBuf>, cx: &mut Cx<'_, ToolkitSettings>) {
         self.add_files(paths, cx);
     }
 

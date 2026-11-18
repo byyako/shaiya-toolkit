@@ -22,7 +22,7 @@ fn add_list_show_remove() {
     assert_eq!(v["clients"][0]["name"], "US 108");
     assert_eq!(v["clients"][0]["exists"], true);
     assert!(v["clients"][0]["added_utc"].as_str().unwrap().ends_with('Z'));
-    // the shared file is the one Workbench reads: shared.json under the data folder, other keys untouched
+    // the shared file is the one Shaiya Toolkit reads: shared.json under the data folder, other keys untouched
     let shared: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(w.data.join("shared.json")).unwrap()).unwrap();
     assert_eq!(shared["clients"][0]["name"], "US 108");
     // show

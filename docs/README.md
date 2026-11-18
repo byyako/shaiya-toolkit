@@ -1,20 +1,19 @@
 # Shaiya Toolkit
 
-Command-line and desktop tools for Shaiya game data, built on one tested Rust core: the `shaiya` command line and Shaiya Workbench. Browse, extract and edit a client's `data.sah`/`data.saf`, build, sign, apply and roll back `psNNNN.patch` files, convert SData files, and identify any client file. Changes to a client folder are journaled so they can usually be rolled back.
+Command-line and desktop tools for Shaiya game data, built on one tested Rust core. **Shaiya Toolkit** is the desktop app (`shaiya-toolkit`); **`shaiya`** is the command line. Browse, extract and edit a client's `data.sah`/`data.saf`, build, sign, apply and roll back `psNNNN.patch` files, convert SData files, and identify any client file. Changes to a client folder are journaled so they can usually be rolled back.
 
 > **These tools work on your own copy of the game. The repository and the releases contain no game files, and the tools never download any. Changes to a client folder are recorded in a journal so they can usually be rolled back, but not changes made with --no-journal or archive compact --in-place, which keep at most the previous index (data.sah.bak). Everything else is written only to a path you name.**
 
-![Shaiya Workbench with a client's archive open: folder tree, file list and preview](assets/screenshots/workbench-overview.png)
+![Shaiya Toolkit with a client's archive open: folder tree, file list and preview](assets/screenshots/toolkit-overview.png)
 
 ## Download
 
 No release has been published yet. Releases will carry these files:
 
-| Program | Windows | Linux | macOS |
+| Download | Windows | Linux | macOS |
 |---|---|---|---|
-| Everything | `shaiya-toolkit-<version>-windows-x86_64.zip` | `shaiya-toolkit-<version>-linux-x86_64.zip` | `shaiya-toolkit-<version>-macos-universal.zip` |
+| Shaiya Toolkit (desktop app, includes `shaiya`) | `shaiya-toolkit-<version>-windows-x86_64.zip` | `shaiya-toolkit-<version>-linux-x86_64.zip` | `shaiya-toolkit-<version>-macos-universal.zip` |
 | `shaiya` (command line) | `shaiya-<version>-windows-x86_64.zip` | `shaiya-<version>-linux-x86_64.zip` | `shaiya-<version>-macos-universal.zip` |
-| Shaiya Workbench | `shaiya-workbench-<version>-windows-x86_64.zip` | `shaiya-workbench-<version>-linux-x86_64.zip` | `shaiya-workbench-<version>-macos-universal.zip` |
 
 All downloads are on the [releases page](https://github.com/byyako/shaiya-toolkit/releases). Every release has a `SHA256SUMS.txt`; [install.md](install.md#check-the-download) shows how to check a download against it.
 
@@ -44,7 +43,7 @@ US, RU, FR, CN, Phoenix, KR episode 8 and Fawkes v68. What works on which client
 | [formats/patch.md](formats/patch.md) | `psNNNN.patch`: ZIP layout, `remove.txt`, loose files and their name rules, deterministic builds, journaled apply, signatures |
 | [formats/sdata-wrapper.md](formats/sdata-wrapper.md) | The SEED wrapper of SData files, CRC, plain files |
 | [tools/shaiya.md](tools/shaiya.md) | The `shaiya` command line: every command (`info`, `archive`, `patch`, `sdata`, `clients`, `version`), flags, exit codes, JSON |
-| [tools/workbench.md](tools/workbench.md) | Shaiya Workbench: the six tabs, client folders, pending changes, prompts, keyboard |
+| [tools/toolkit.md](tools/toolkit.md) | Shaiya Toolkit: the six tabs, client folders, pending changes, prompts, keyboard |
 | [dev/architecture.md](dev/architecture.md) | Crates, dependency rules, data flow, what later tools may assume |
 | [dev/gui-shell.md](dev/gui-shell.md) | The `shaiya-ui` shell: writing a tool on it |
 | [dev/testing.md](dev/testing.md) | Test levels, the testkit, opt-in tests on your own client, the matrix |

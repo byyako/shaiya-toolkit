@@ -2,7 +2,7 @@
 
 For people who run a server and publish updates to their players: turn a folder of changed files, or the difference between two archives, into a `psNNNN.patch`, sign it, test it on a copy, and publish it as the next number.
 
-A patch can add and replace files in `data.sah`/`data.saf`, remove archive files, and drop loose files into the client folder (for example a new `game.exe`). The format is in [formats/patch.md](../formats/patch.md). Everything below uses the [`shaiya patch`](../tools/shaiya.md#shaiya-patch) command; the Workbench's Patch builder tab does the same.
+A patch can add and replace files in `data.sah`/`data.saf`, remove archive files, and drop loose files into the client folder (for example a new `game.exe`). The format is in [formats/patch.md](../formats/patch.md). Everything below uses the [`shaiya patch`](../tools/shaiya.md#shaiya-patch) command; Shaiya Toolkit's Patch builder tab does the same.
 
 ## 1. Get the inputs ready
 
@@ -24,7 +24,7 @@ shaiya patch build -o ps0110.patch --diff C:\stock\data.sah C:\Games\Shaiya-new
 
 builds the patch that turns the first into the second: files that are new or whose contents differ go in, files that disappeared become removals. Both sides must be full archives (with their `data.saf`), and the contents are compared, so this reads both archives completely. `--diff` may be combined with `--loose`. Look at the difference first with `shaiya archive diff OLD NEW --summary`.
 
-**From the Workbench's pending changes.** Queue your edits in the Archive tab and press "Make patch...".
+**From Shaiya Toolkit's pending changes.** Queue your edits in the Archive tab and press "Make patch...".
 
 Add `--dry-run` to any `build` to see the contents table and sizes without writing a file.
 

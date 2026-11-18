@@ -2,7 +2,7 @@
 
 SData files (`Item/Item.SData`, `Monster/Monster.SData`, ...) hold the game's tables. In most clients they are wrapped in a SEED encryption with a checksum; some clients (the Chinese client in the test set) store them plain. The toolkit can describe, check, decrypt and encrypt them. It does not edit the tables: use an editor of your choice on the decrypted file. (An SData editor is planned.) The wrapper format is in [formats/sdata-wrapper.md](../formats/sdata-wrapper.md).
 
-All commands are in [`shaiya sdata`](../tools/shaiya.md#shaiya-sdata); the Workbench SData tab does the same into a folder you choose.
+All commands are in [`shaiya sdata`](../tools/shaiya.md#shaiya-sdata); Shaiya Toolkit's SData tab does the same into a folder you choose.
 
 ## Look at them
 

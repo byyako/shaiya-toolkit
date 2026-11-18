@@ -167,7 +167,7 @@ pub fn counted(n: u64, one: &str, many: &str) -> String {
     format!("{} {}", group(n), if n == 1 { one } else { many })
 }
 
-/// One line saying what the file is, the way `shaiya info` and Workbench show it
+/// One line saying what the file is, the way `shaiya info` and Shaiya Toolkit show it
 /// (`SData, SEED-encrypted, plaintext 4,512,768 bytes, checksum OK`).
 pub fn describe(i: &Info) -> String {
     let size = group(i.size);

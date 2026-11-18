@@ -17,7 +17,7 @@ use std::path::PathBuf;
 pub enum Cmd {
     /// List the saved client folders
     ///
-    /// Any ARCHIVE or CLIENT argument may be @name for one of these. Workbench shows the same list.
+    /// Any ARCHIVE or CLIENT argument may be @name for one of these. Shaiya Toolkit shows the same list.
     ///
     /// Example: shaiya clients list
     List,

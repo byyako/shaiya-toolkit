@@ -21,9 +21,8 @@ pub enum Mark {
 }
 
 pub const ICONS: &[Icon] = &[
-    Icon { id: "shaiya-toolkit", bg: [0x3b, 0x3f, 0x9e], mark: Mark::Chevron },
     Icon { id: "shaiya", bg: [0x16, 0x69, 0x7a], mark: Mark::Chevron },
-    Icon { id: "shaiya-workbench", bg: [0xb5, 0x54, 0x1c], mark: Mark::Box },
+    Icon { id: "shaiya-toolkit", bg: [0xb5, 0x54, 0x1c], mark: Mark::Box },
 ];
 
 const BIG: usize = 512;
@@ -241,13 +240,13 @@ mod tests {
 
     #[test]
     fn corners_are_transparent_and_the_centre_is_drawn() {
-        let big = draw(&ICONS[2]);
+        let big = draw(&ICONS[1]);
         assert_eq!(big[3], 0, "the corner is outside the rounded square");
         let centre = (256 * BIG + 256) * 4;
         assert_eq!(big[centre + 3], 255);
         // a background pixel keeps the colour of the tool
         let bg = (120 * BIG + 60) * 4;
-        assert_eq!(&big[bg..bg + 3], &ICONS[2].bg);
+        assert_eq!(&big[bg..bg + 3], &ICONS[1].bg);
     }
 
     #[test]

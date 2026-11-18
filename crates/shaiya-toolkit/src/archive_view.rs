@@ -2,7 +2,7 @@
 //! that are applied to the client folder only after a confirmation, through the same crash-safe procedure as the command line.
 
 use crate::preview::{self, PreviewData};
-use crate::WorkbenchSettings;
+use crate::ToolkitSettings;
 use egui::{Color32, RichText};
 use shaiya_archive::check::{check_archive, CheckOptions, CheckReport, Severity};
 use shaiya_archive::client::{self, ClientFiles};
@@ -22,7 +22,7 @@ use std::collections::{BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-type WorkbenchCx<'a> = Cx<'a, WorkbenchSettings>;
+type ToolkitCx<'a> = Cx<'a, ToolkitSettings>;
 
 // ------------------------------------------------------------------------------------------------ data
 
@@ -492,7 +492,7 @@ impl ArchiveView {
     }
 
     /// Opens a saved client folder (changes are possible) or any archive file (read only), as a task.
-    pub fn open(&mut self, source: OpenSource, cx: &mut WorkbenchCx<'_>) {
+    pub fn open(&mut self, source: OpenSource, cx: &mut ToolkitCx<'_>) {
         self.close();
         let (path, label, client_dir) = match &source {
             OpenSource::Client { name, dir } => (dir.clone(), name.clone(), Some(dir.clone())),
@@ -509,7 +509,7 @@ impl ArchiveView {
         self.source = Some(source);
     }
 
-    pub fn reopen(&mut self, cx: &mut WorkbenchCx<'_>) {
+    pub fn reopen(&mut self, cx: &mut ToolkitCx<'_>) {
         let src = match &self.source {
             Some(OpenSource::Client { name, dir }) => OpenSource::Client { name: name.clone(), dir: dir.clone() },
             Some(OpenSource::File(p)) => OpenSource::File(p.clone()),
@@ -525,7 +525,7 @@ impl ArchiveView {
     // ---------------------------------------------------------------------------------------- polling
 
     /// Collects finished tasks; call every frame.
-    pub fn poll(&mut self, cx: &mut WorkbenchCx<'_>) {
+    pub fn poll(&mut self, cx: &mut ToolkitCx<'_>) {
         let mut opened: Option<std::result::Result<Opened, String>> = None;
         if let Some((label, h)) = &mut self.opening {
             match h.poll() {
@@ -569,7 +569,7 @@ impl ArchiveView {
         self.poll_apply(cx);
     }
 
-    fn poll_saved_new(&mut self, cx: &mut WorkbenchCx<'_>) {
+    fn poll_saved_new(&mut self, cx: &mut ToolkitCx<'_>) {
         let Some(h) = &mut self.saved_new else { return };
         match h.poll() {
             None => {}
@@ -604,7 +604,7 @@ impl ArchiveView {
         matches!(&self.source, Some(OpenSource::Client { dir: d, .. }) if d == dir)
     }
 
-    /// Workbench's handle on `data.saf` (for tasks that read it; they must not outlive a write).
+    /// The app's handle on `data.saf` (for tasks that read it; they must not outlive a write).
     pub fn archive_handle(&self) -> Option<Arc<Archive>> {
         self.loaded.as_ref().and_then(|l| l.archive.clone())
     }
@@ -623,7 +623,7 @@ impl ArchiveView {
         self.loaded.as_ref().and_then(|l| l.tree.find(&self.folder))
     }
 
-    fn poll_preview(&mut self, cx: &mut WorkbenchCx<'_>) {
+    fn poll_preview(&mut self, cx: &mut ToolkitCx<'_>) {
         let Some(h) = &mut self.preview.handle else { return };
         match h.poll() {
             None => {}
@@ -661,7 +661,7 @@ impl ArchiveView {
         }
     }
 
-    fn poll_extract(&mut self, cx: &mut WorkbenchCx<'_>) {
+    fn poll_extract(&mut self, cx: &mut ToolkitCx<'_>) {
         match self.extract.take() {
             None => {}
             Some(ExtractFlow::Planning(req, mut h)) => match h.poll() {
@@ -711,7 +711,7 @@ impl ArchiveView {
         }
     }
 
-    fn poll_check(&mut self, cx: &mut WorkbenchCx<'_>) {
+    fn poll_check(&mut self, cx: &mut ToolkitCx<'_>) {
         let Some(c) = &mut self.check else { return };
         let Some(h) = &mut c.handle else { return };
         match h.poll() {
@@ -728,7 +728,7 @@ impl ArchiveView {
         }
     }
 
-    fn poll_compare(&mut self, cx: &mut WorkbenchCx<'_>) {
+    fn poll_compare(&mut self, cx: &mut ToolkitCx<'_>) {
         let Some(c) = &mut self.compare else { return };
         let Some(h) = &mut c.handle else { return };
         match h.poll() {
@@ -746,13 +746,13 @@ impl ArchiveView {
         }
     }
 
-    fn poll_apply(&mut self, cx: &mut WorkbenchCx<'_>) {
+    fn poll_apply(&mut self, cx: &mut ToolkitCx<'_>) {
         match std::mem::replace(&mut self.apply, ApplyFlow::Idle) {
             ApplyFlow::Idle => {}
             ApplyFlow::Confirm(ex) => {
                 let (title, text, button) = self.confirm_text(&ex, cx);
                 let c = Confirm { title, text, buttons: vec![button, "Cancel".into()], danger: Some(0) };
-                match cx.shell.confirm("workbench-exclusive", &c) {
+                match cx.shell.confirm("toolkit-exclusive", &c) {
                     None => self.apply = ApplyFlow::Confirm(ex),
                     Some(0) => self.begin_closing(ex),
                     Some(_) => {}
@@ -814,7 +814,7 @@ impl ArchiveView {
                     buttons: vec!["Retry".into(), "Cancel".into()],
                     danger: None,
                 };
-                match cx.shell.confirm("workbench-in-use", &c) {
+                match cx.shell.confirm("toolkit-in-use", &c) {
                     None => self.apply = ApplyFlow::InUse(ex),
                     Some(0) => self.start_exclusive(ex, cx),
                     Some(_) => self.reopen(cx),
@@ -831,7 +831,7 @@ impl ArchiveView {
         }
     }
 
-    fn confirm_text(&self, ex: &Excl, cx: &WorkbenchCx<'_>) -> (String, String, String) {
+    fn confirm_text(&self, ex: &Excl, cx: &ToolkitCx<'_>) -> (String, String, String) {
         let name = self.source_label().unwrap_or_default();
         let dir = self.client_dir().map(|d| d.display().to_string()).unwrap_or_default();
         let last = if cfg!(windows) { "The game must be closed." } else { "Make sure the game is not running from this folder; this cannot be checked on this system." };
@@ -868,7 +868,7 @@ impl ArchiveView {
         }
     }
 
-    /// Cancels every task that reads the archive and hands out Workbench's handle on `data.saf`, so a write (apply, compact, swap, patch
+    /// Cancels every task that reads the archive and hands out the app's handle on `data.saf`, so a write (apply, compact, swap, patch
     /// apply) can take the files exclusively. The caller waits until `Arc::strong_count` is 1 (a cancelled task may still hold a clone for
     /// a moment) and drops it. `reopen` reads the archive again afterwards.
     pub fn release_handle(&mut self) -> Option<Arc<Archive>> {
@@ -902,7 +902,7 @@ impl ArchiveView {
         self.apply = ApplyFlow::Closing(ex, arc);
     }
 
-    fn start_exclusive(&mut self, ex: Excl, cx: &mut WorkbenchCx<'_>) {
+    fn start_exclusive(&mut self, ex: Excl, cx: &mut ToolkitCx<'_>) {
         let Some(dir) = self.client_dir().map(Path::to_path_buf) else { return };
         let key = dir.display().to_string();
         let ex2 = match &ex {
@@ -1033,7 +1033,7 @@ impl ArchiveView {
     }
 
     /// "Apply to client…": the confirmation, then the exclusive apply.
-    pub fn request_apply(&mut self, cx: &mut WorkbenchCx<'_>) {
+    pub fn request_apply(&mut self, cx: &mut ToolkitCx<'_>) {
         if self.pending.is_empty() || self.client_dir().is_none() || !matches!(self.apply, ApplyFlow::Idle) {
             return;
         }
@@ -1055,7 +1055,7 @@ impl ArchiveView {
     }
 
     /// "Save as new archive…": `write_new` of the loaded archive plus the queue.
-    pub fn save_as_new(&mut self, out_sah: PathBuf, cx: &mut WorkbenchCx<'_>) {
+    pub fn save_as_new(&mut self, out_sah: PathBuf, cx: &mut ToolkitCx<'_>) {
         let Some(a) = self.loaded.as_ref().and_then(|l| l.archive.clone()) else { return };
         let plan = self.pending_plan("save as new archive");
         let title = format!("Writing {}", out_sah.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default());
@@ -1184,7 +1184,7 @@ impl ArchiveView {
     // ---------------------------------------------------------------------------------------- selection and preview
 
     /// Selects one file by path (test and keyboard entry point) and starts its preview.
-    pub fn select_path(&mut self, path: &str, cx: &mut WorkbenchCx<'_>) {
+    pub fn select_path(&mut self, path: &str, cx: &mut ToolkitCx<'_>) {
         let Some(i) = self.find_row(path) else { return };
         let folder = self.loaded.as_ref().map(|l| l.rows[i].folder().to_string()).unwrap_or_default();
         if self.search.is_empty() {
@@ -1201,7 +1201,7 @@ impl ArchiveView {
         self.selected_folder = Some(node);
     }
 
-    fn start_preview(&mut self, row: usize, cx: &mut WorkbenchCx<'_>) {
+    fn start_preview(&mut self, row: usize, cx: &mut ToolkitCx<'_>) {
         if let Some(h) = &self.preview.handle {
             h.cancel();
         }
@@ -1265,7 +1265,7 @@ impl ArchiveView {
     }
 
     /// Plans an extraction as a task, then asks about existing files, then extracts.
-    pub fn begin_extract(&mut self, out: PathBuf, all_shown: bool, whole_archive: bool, flat: bool, cx: &mut WorkbenchCx<'_>) {
+    pub fn begin_extract(&mut self, out: PathBuf, all_shown: bool, whole_archive: bool, flat: bool, cx: &mut ToolkitCx<'_>) {
         let Some(a) = self.loaded.as_ref().and_then(|l| l.archive.clone()) else { return };
         let filter = if whole_archive { Filter::default() } else { self.selection_filter(all_shown) };
         if !whole_archive && filter.include.is_empty() {
@@ -1282,7 +1282,7 @@ impl ArchiveView {
         self.extract = Some(ExtractFlow::Planning(req, h));
     }
 
-    fn start_extract(&mut self, req: ExtractReq, existing: Existing, cx: &mut WorkbenchCx<'_>) {
+    fn start_extract(&mut self, req: ExtractReq, existing: Existing, cx: &mut ToolkitCx<'_>) {
         let Some(a) = self.loaded.as_ref().and_then(|l| l.archive.clone()) else { return };
         let title = format!("Extracting to {}", req.out.display());
         let h = cx.shell.tasks().spawn(TaskSpec { title, cancellable: true, exclusive: None }, move |job| {
@@ -1340,7 +1340,7 @@ impl ArchiveView {
 
     // ---------------------------------------------------------------------------------------- check / compare / add
 
-    pub fn run_check(&mut self, deep: bool, cx: &mut WorkbenchCx<'_>) {
+    pub fn run_check(&mut self, deep: bool, cx: &mut ToolkitCx<'_>) {
         let Some(l) = &self.loaded else { return };
         let (archive, label) = (l.archive.clone(), l.label.clone());
         let handle = match archive {
@@ -1355,7 +1355,7 @@ impl ArchiveView {
         self.check = Some(CheckPanel { report: None, handle: Some(handle), deep });
     }
 
-    pub fn run_compare(&mut self, other: PathBuf, cx: &mut WorkbenchCx<'_>) {
+    pub fn run_compare(&mut self, other: PathBuf, cx: &mut ToolkitCx<'_>) {
         let Some(a) = self.loaded.as_ref().and_then(|l| l.archive.clone()) else { return };
         let label = other.display().to_string();
         let o2 = other.clone();
@@ -1528,7 +1528,7 @@ impl ArchiveView {
     }
 
     /// Runs a palette entry of [`ArchiveView::commands`].
-    pub fn run_command(&mut self, id: &str, cx: &mut WorkbenchCx<'_>) -> Vec<TabRequest> {
+    pub fn run_command(&mut self, id: &str, cx: &mut ToolkitCx<'_>) -> Vec<TabRequest> {
         let mut requests = Vec::new();
         let act = match id {
             "archive-search" => {
@@ -1561,8 +1561,8 @@ impl ArchiveView {
         requests
     }
 
-    /// Draws the tab. Returns the actions the Workbench frame handles that need the shell (dialogs and tab switches).
-    pub fn ui(&mut self, ui: &mut egui::Ui, cx: &mut WorkbenchCx<'_>) -> Vec<TabRequest> {
+    /// Draws the tab. Returns the actions the app frame handles that need the shell (dialogs and tab switches).
+    pub fn ui(&mut self, ui: &mut egui::Ui, cx: &mut ToolkitCx<'_>) -> Vec<TabRequest> {
         let mut requests = Vec::new();
         self.poll(cx);
         self.refresh_view();
@@ -1611,7 +1611,7 @@ impl ArchiveView {
         // search line
         ui.horizontal_wrapped(|ui| {
             ui.label("Search");
-            let r = ui.add(egui::TextEdit::singleline(&mut self.search).desired_width(180.0).hint_text("text or *.dds").id(egui::Id::unique("workbench-search")));
+            let r = ui.add(egui::TextEdit::singleline(&mut self.search).desired_width(180.0).hint_text("text or *.dds").id(egui::Id::unique("toolkit-search")));
             if self.want_search_focus {
                 r.request_focus();
                 self.want_search_focus = false;
@@ -1641,7 +1641,7 @@ impl ArchiveView {
         ui.separator();
         // pending strip first (bottom), then the side panels, then the table
         if !self.pending.is_empty() {
-            egui::Panel::bottom("workbench-pending").show(ui, |ui| {
+            egui::Panel::bottom("toolkit-pending").show(ui, |ui| {
                 ui.horizontal_wrapped(|ui| {
                     ui.label(RichText::new(format!("Pending changes ({}):", self.pending.len())).strong());
                     for (i, p) in self.pending.iter().enumerate() {
@@ -1674,14 +1674,14 @@ impl ArchiveView {
         }
         let tree_w = cx.settings.tree_width.clamp(120.0, 600.0);
         let prev_w = cx.settings.preview_width.clamp(200.0, 800.0);
-        egui::Panel::left("workbench-tree").resizable(true).default_size(tree_w).show(ui, |ui| {
+        egui::Panel::left("toolkit-tree").resizable(true).default_size(tree_w).show(ui, |ui| {
             cx.settings.tree_width = ui.available_width();
             egui::ScrollArea::both().auto_shrink([false, false]).show(ui, |ui| {
                 let l = self.loaded.as_ref().expect("checked");
                 draw_tree(ui, l, 0, &self.folder, &mut acts);
             });
         });
-        egui::Panel::right("workbench-preview").resizable(true).default_size(prev_w).show(ui, |ui| {
+        egui::Panel::right("toolkit-preview").resizable(true).default_size(prev_w).show(ui, |ui| {
             cx.settings.preview_width = ui.available_width();
             self.draw_preview(ui, cx, &mut acts);
         });
@@ -1751,7 +1751,7 @@ impl ArchiveView {
         }
     }
 
-    fn draw_table(&mut self, ui: &mut egui::Ui, cx: &mut WorkbenchCx<'_>, acts: &mut Vec<Act>) {
+    fn draw_table(&mut self, ui: &mut egui::Ui, cx: &mut ToolkitCx<'_>, acts: &mut Vec<Act>) {
         let pal = cx.shell.pal();
         let searching = !self.search.trim().is_empty();
         let cols = [260.0, 90.0, 100.0, 70.0];
@@ -1881,7 +1881,7 @@ impl ArchiveView {
         }
     }
 
-    fn draw_preview(&mut self, ui: &mut egui::Ui, cx: &mut WorkbenchCx<'_>, acts: &mut Vec<Act>) {
+    fn draw_preview(&mut self, ui: &mut egui::Ui, cx: &mut ToolkitCx<'_>, acts: &mut Vec<Act>) {
         let pal = cx.shell.pal();
         let Some(row) = self.preview.row else {
             ui.label(RichText::new("Select a file to preview it.").color(pal.weak));
@@ -1950,7 +1950,7 @@ impl ArchiveView {
             Some(PreviewData::Text { bytes, total, truncated, guess }) => {
                 ui.horizontal(|ui| {
                     let mut chosen = self.preview.encoding;
-                    egui::ComboBox::from_id_salt("workbench-enc").selected_text(preview::encoding_name(chosen)).show_ui(ui, |ui| {
+                    egui::ComboBox::from_id_salt("toolkit-enc").selected_text(preview::encoding_name(chosen)).show_ui(ui, |ui| {
                         for e in [Encoding::Cp949, Encoding::Cp1252, Encoding::Cp1251, Encoding::Cp936, Encoding::Utf8, Encoding::Utf16Le] {
                             ui.selectable_value(&mut chosen, e, preview::encoding_name(e));
                         }
@@ -2034,7 +2034,7 @@ impl ArchiveView {
         }
     }
 
-    fn draw_dialogs(&mut self, ui: &mut egui::Ui, cx: &mut WorkbenchCx<'_>, requests: &mut Vec<TabRequest>) {
+    fn draw_dialogs(&mut self, ui: &mut egui::Ui, cx: &mut ToolkitCx<'_>, requests: &mut Vec<TabRequest>) {
         let ctx = ui.ctx().clone();
         // Add to archive
         let mut action: Option<&'static str> = None;
@@ -2186,7 +2186,7 @@ impl ArchiveView {
         // F5 with pending changes
         if self.reload_asked {
             let c = Confirm { title: "Reload the archive".into(), text: format!("Reload the archive and discard {}?", shaiya_inspect::counted((self.pending.len()) as u64, "pending change", "pending changes")), buttons: vec!["Reload".into(), "Keep".into()], danger: Some(0) };
-            match cx.shell.confirm("workbench-reload", &c) {
+            match cx.shell.confirm("toolkit-reload", &c) {
                 None => {}
                 Some(0) => {
                     self.reload_asked = false;
@@ -2200,7 +2200,7 @@ impl ArchiveView {
         // the discard question
         if self.discard_asked {
             let c = Confirm { title: "Discard pending changes".into(), text: format!("Discard {}?", shaiya_inspect::counted((self.pending.len()) as u64, "pending change", "pending changes")), buttons: vec!["Discard".into(), "Keep".into()], danger: Some(0) };
-            match cx.shell.confirm("workbench-discard", &c) {
+            match cx.shell.confirm("toolkit-discard", &c) {
                 None => {}
                 Some(0) => {
                     self.discard_pending();
@@ -2211,7 +2211,7 @@ impl ArchiveView {
         }
     }
 
-    fn run_acts(&mut self, acts: Vec<Act>, cx: &mut WorkbenchCx<'_>, requests: &mut Vec<TabRequest>) {
+    fn run_acts(&mut self, acts: Vec<Act>, cx: &mut ToolkitCx<'_>, requests: &mut Vec<TabRequest>) {
         for a in acts {
             match a {
                 Act::Folder(p) => self.enter_folder(&p),
@@ -2409,7 +2409,7 @@ enum MenuChoice {
     Decrypt,
 }
 
-/// What the Archive tab asks the Workbench frame to do on its behalf.
+/// What the Archive tab asks the app frame to do on its behalf.
 pub enum TabRequest {
     PatchFromPending,
     PatchFromDiff(PathBuf),
@@ -2417,7 +2417,7 @@ pub enum TabRequest {
 
 fn hex_view(ui: &mut egui::Ui, bytes: &[u8], base: u64) {
     let rows = preview::hex_rows(bytes.len());
-    egui::ScrollArea::both().auto_shrink([false, false]).id_salt("workbench-hex").show_rows(ui, 14.0, rows, |ui, range| {
+    egui::ScrollArea::both().auto_shrink([false, false]).id_salt("toolkit-hex").show_rows(ui, 14.0, rows, |ui, range| {
         for r in range {
             ui.add(egui::Label::new(RichText::new(preview::hex_row(bytes, base, r)).monospace().size(11.0)).selectable(true));
         }
@@ -2434,7 +2434,7 @@ fn draw_tree(ui: &mut egui::Ui, l: &Loaded, node: usize, current: &str, acts: &m
         }
         return;
     }
-    let id = ui.make_persistent_id(("workbench-tree", &n.path));
+    let id = ui.make_persistent_id(("toolkit-tree", &n.path));
     egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), id, node == 0)
         .show_header(ui, |ui| {
             if ui.selectable_label(selected, label).clicked() {

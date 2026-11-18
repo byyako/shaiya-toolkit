@@ -1,8 +1,8 @@
-//! Workbench harness tests: headless frames with synthetic input (drop, tasks, cancel). No game data: every file is built here.
+//! Shaiya Toolkit harness tests: headless frames with synthetic input (drop, tasks, cancel). No game data: every file is built here.
 
 use egui::{Key, Modifiers};
 use shaiya_core::hash::{sha256, to_hex};
-use shaiya_workbench::{WorkbenchApp, WorkbenchSettings, Tab};
+use shaiya_toolkit::{ToolkitApp, ToolkitSettings, Tab};
 use shaiya_testkit::{pe_stub, SahBuilder, TempDir};
 use shaiya_ui::testing::Harness;
 use std::path::PathBuf;
@@ -10,7 +10,7 @@ use std::time::Duration;
 
 const WAIT: Duration = Duration::from_secs(20);
 
-fn settled(h: &mut Harness<WorkbenchApp>) -> bool {
+fn settled(h: &mut Harness<ToolkitApp>) -> bool {
     h.wait_until(WAIT, |h| h.app.app.inspect.table().iter().all(|r| r.1 != "..."))
 }
 
@@ -24,8 +24,8 @@ fn samples(dir: &TempDir) -> (PathBuf, PathBuf, PathBuf) {
 }
 
 #[test]
-fn the_empty_state_explains_workbench() {
-    let mut h = Harness::<WorkbenchApp>::bare();
+fn the_empty_state_explains_the_toolkit() {
+    let mut h = Harness::<ToolkitApp>::bare();
     h.frames(3);
     let t = h.text();
     assert!(t.contains("Choose a client folder in the toolbar"), "{t}");
@@ -36,9 +36,9 @@ fn the_empty_state_explains_workbench() {
 
 #[test]
 fn dropping_files_lists_them_with_their_kinds() {
-    let dir = TempDir::new("workbench-drop");
+    let dir = TempDir::new("toolkit-drop");
     let (sah, seed, exe) = samples(&dir);
-    let mut h = Harness::<WorkbenchApp>::bare();
+    let mut h = Harness::<ToolkitApp>::bare();
     h.frames(1);
     go(&mut h, Tab::Inspect);
     h.drop_files(&[seed, exe]);
@@ -63,7 +63,7 @@ fn dropping_files_lists_them_with_their_kinds() {
 
 #[test]
 fn an_unreadable_file_is_an_error_row_not_a_banner() {
-    let mut h = Harness::<WorkbenchApp>::bare();
+    let mut h = Harness::<ToolkitApp>::bare();
     h.frames(1);
     h.drop_files(&[PathBuf::from("Z:/no/such/folder/missing.bin")]);
     assert!(settled(&mut h));
@@ -76,18 +76,18 @@ fn an_unreadable_file_is_an_error_row_not_a_banner() {
 
 #[test]
 fn a_hash_task_shows_progress_and_completes_with_the_right_digest() {
-    let dir = TempDir::new("workbench-hash");
+    let dir = TempDir::new("toolkit-hash");
     let big = dir.path().join("big.bin");
     let data: Vec<u8> = (0..40_000_000u32).map(|i| (i % 251) as u8).collect();
     std::fs::write(&big, &data).unwrap();
-    let mut h = Harness::<WorkbenchApp>::bare();
+    let mut h = Harness::<ToolkitApp>::bare();
     h.frames(1);
     h.drop_files(&[big]);
     assert!(settled(&mut h));
     // press the row's SHA-256 button (what the click does)
     {
-        let WorkbenchHarness { app, shell } = split(&mut h);
-        let mut cx = shaiya_ui::Cx { shell, settings: &mut shaiya_workbench::WorkbenchSettings::default() };
+        let ToolkitHarness { app, shell } = split(&mut h);
+        let mut cx = shaiya_ui::Cx { shell, settings: &mut shaiya_toolkit::ToolkitSettings::default() };
         app.inspect.hash_row("big.bin", &mut cx);
     }
     // it shows up in the Activity list with byte progress, and in the status bar
@@ -109,16 +109,16 @@ fn a_hash_task_shows_progress_and_completes_with_the_right_digest() {
 
 #[test]
 fn cancel_stops_a_hash_and_the_row_says_cancelled() {
-    let dir = TempDir::new("workbench-cancel");
+    let dir = TempDir::new("toolkit-cancel");
     let big = dir.path().join("huge.bin");
     std::fs::File::create(&big).unwrap().set_len(1_500_000_000).unwrap();
-    let mut h = Harness::<WorkbenchApp>::bare();
+    let mut h = Harness::<ToolkitApp>::bare();
     h.frames(1);
     h.drop_files(&[big]);
     assert!(settled(&mut h));
     {
-        let WorkbenchHarness { app, shell } = split(&mut h);
-        let mut cx = shaiya_ui::Cx { shell, settings: &mut shaiya_workbench::WorkbenchSettings::default() };
+        let ToolkitHarness { app, shell } = split(&mut h);
+        let mut cx = shaiya_ui::Cx { shell, settings: &mut shaiya_toolkit::ToolkitSettings::default() };
         app.inspect.hash_row("huge.bin", &mut cx);
     }
     // wait until bytes have been hashed, then cancel through the same call the Activity button makes
@@ -133,8 +133,8 @@ fn cancel_stops_a_hash_and_the_row_says_cancelled() {
 }
 
 #[test]
-fn ctrl_shift_p_lists_the_workbench_command() {
-    let mut h = Harness::<WorkbenchApp>::bare();
+fn ctrl_shift_p_lists_the_toolkit_command() {
+    let mut h = Harness::<ToolkitApp>::bare();
     h.frames(2);
     h.key(Key::P, Modifiers::COMMAND | Modifiers::SHIFT);
     h.frames(2);
@@ -144,32 +144,32 @@ fn ctrl_shift_p_lists_the_workbench_command() {
 }
 
 /// Splits the harness into the tool and the shell, the two halves a `Cx` is made of.
-struct WorkbenchHarness<'a> {
-    app: &'a mut WorkbenchApp,
+struct ToolkitHarness<'a> {
+    app: &'a mut ToolkitApp,
     shell: &'a mut shaiya_ui::Shell,
 }
 
-fn split<'a>(h: &'a mut Harness<WorkbenchApp>) -> WorkbenchHarness<'a> {
+fn split<'a>(h: &'a mut Harness<ToolkitApp>) -> ToolkitHarness<'a> {
     let a = &mut h.app;
-    WorkbenchHarness { app: &mut a.app, shell: &mut a.shell }
+    ToolkitHarness { app: &mut a.app, shell: &mut a.shell }
 }
 
 // ------------------------------------------------------------------------------------------------ T1: helpers
 
-fn with_cx<R>(h: &mut Harness<WorkbenchApp>, f: impl FnOnce(&mut WorkbenchApp, &mut shaiya_ui::Cx<'_, WorkbenchSettings>) -> R) -> R {
+fn with_cx<R>(h: &mut Harness<ToolkitApp>, f: impl FnOnce(&mut ToolkitApp, &mut shaiya_ui::Cx<'_, ToolkitSettings>) -> R) -> R {
     let a = &mut h.app;
     let mut cx = shaiya_ui::Cx { shell: &mut a.shell, settings: &mut a.tool_settings };
     f(&mut a.app, &mut cx)
 }
 
-fn go(h: &mut Harness<WorkbenchApp>, tab: Tab) {
+fn go(h: &mut Harness<ToolkitApp>, tab: Tab) {
     with_cx(h, |app, cx| app.set_tab(tab, cx));
     h.frames(2);
 }
 
 /// A harness with a data folder (so `shared.json` is written) and a synthetic client folder.
 struct World {
-    h: Harness<WorkbenchApp>,
+    h: Harness<ToolkitApp>,
     _data: TempDir,
     client: TempDir,
     data_path: PathBuf,
@@ -199,7 +199,7 @@ fn world(tag: &str) -> World {
     let data = TempDir::new(&format!("{tag}-data"));
     let client = TempDir::new(&format!("{tag}-client"));
     synthetic(client.path());
-    let h = Harness::<WorkbenchApp>::new(shaiya_ui::ShellOptions { data_dir: Some(data.path().to_path_buf()), ..Default::default() });
+    let h = Harness::<ToolkitApp>::new(shaiya_ui::ShellOptions { data_dir: Some(data.path().to_path_buf()), ..Default::default() });
     let data_path = data.path().to_path_buf();
     World { h, _data: data, client, data_path }
 }
@@ -214,7 +214,7 @@ fn open_world(tag: &str) -> World {
     w
 }
 
-fn preview_ready(h: &mut Harness<WorkbenchApp>) -> bool {
+fn preview_ready(h: &mut Harness<ToolkitApp>) -> bool {
     h.wait_until(WAIT, |h| h.app.app.archive.preview_ready())
 }
 
@@ -270,7 +270,7 @@ fn search_narrows_glob_matches_and_folders_navigate() {
         .archive
         .view_rows()
         .iter()
-        .find_map(|r| if let shaiya_workbench::archive_view::ViewRow::Folder(i) = r { Some(*i) } else { None })
+        .find_map(|r| if let shaiya_toolkit::archive_view::ViewRow::Folder(i) = r { Some(*i) } else { None })
         .unwrap();
     w.h.app.app.archive.select_folder_row(first_folder);
     w.h.key(Key::Enter, Modifiers::NONE);
@@ -348,7 +348,7 @@ fn dropping_files_queues_changes_and_apply_writes_them_with_a_journal() {
     with_cx(&mut w.h, |app, cx| app.archive.request_apply(cx));
     w.h.frames(3);
     assert!(w.h.text().contains("Apply 2 changes"), "the confirm names the count: {}", w.h.text());
-    w.h.app.shell.inject_answer("workbench-exclusive", 0);
+    w.h.app.shell.inject_answer("toolkit-exclusive", 0);
     assert!(w.h.wait_until(WAIT, |h| h.app.app.archive.changed_counter == 1 && h.app.app.archive.is_open()), "applied and reloaded");
     w.h.frames(3);
     assert_eq!(w.h.app.app.archive.pending.len(), 0);
@@ -395,7 +395,7 @@ fn cancelling_a_long_extract_ends_cancelled() {
         let saf = shaiya_archive::saf_of(&sah);
         std::fs::OpenOptions::new().write(true).open(saf).unwrap().set_len(offset + big).unwrap();
     }
-    let mut h = Harness::<WorkbenchApp>::new(shaiya_ui::ShellOptions { data_dir: Some(data.path().to_path_buf()), ..Default::default() });
+    let mut h = Harness::<ToolkitApp>::new(shaiya_ui::ShellOptions { data_dir: Some(data.path().to_path_buf()), ..Default::default() });
     h.frames(2);
     let dir = client.path().to_path_buf();
     with_cx(&mut h, |app, cx| app.add_client("big", &dir, true, cx)).unwrap();
@@ -419,10 +419,10 @@ fn a_corrupt_index_shows_the_banner() {
     let client = TempDir::new("t1-corrupt-client");
     std::fs::write(client.path().join("data.sah"), b"this is not a SAH index at all, just text that is long enough").unwrap();
     std::fs::write(client.path().join("data.saf"), b"x").unwrap();
-    let mut h = Harness::<WorkbenchApp>::new(shaiya_ui::ShellOptions { data_dir: Some(data.path().to_path_buf()), ..Default::default() });
+    let mut h = Harness::<ToolkitApp>::new(shaiya_ui::ShellOptions { data_dir: Some(data.path().to_path_buf()), ..Default::default() });
     h.frames(2);
     with_cx(&mut h, |app, cx| {
-        app.archive.open(shaiya_workbench::archive_view::OpenSource::File(client.path().join("data.sah")), cx);
+        app.archive.open(shaiya_toolkit::archive_view::OpenSource::File(client.path().join("data.sah")), cx);
     });
     assert!(h.wait_until(WAIT, |h| !h.app.app.archive.is_opening()));
     h.frames(2);
@@ -444,11 +444,11 @@ fn an_open_handle_on_data_saf_makes_apply_show_retry() {
     let held = std::fs::File::open(w.client.path().join("data.saf")).unwrap();
     with_cx(&mut w.h, |app, cx| app.archive.request_apply(cx));
     w.h.frames(3);
-    w.h.app.shell.inject_answer("workbench-exclusive", 0);
+    w.h.app.shell.inject_answer("toolkit-exclusive", 0);
     let shown = w.h.wait_until(WAIT, |h| h.text().contains("is open in another program") && h.text().contains("Retry"));
     assert!(shown, "the Retry dialog appears: {}", w.h.text());
     drop(held);
-    w.h.app.shell.inject_answer("workbench-in-use", 0);
+    w.h.app.shell.inject_answer("toolkit-in-use", 0);
     assert!(w.h.wait_until(WAIT, |h| h.app.app.archive.changed_counter == 1 && h.app.app.archive.is_open()), "Retry succeeds once the handle is closed");
     assert_eq!(w.h.app.app.archive.pending.len(), 0);
 }
@@ -472,7 +472,7 @@ fn build_patch(dir: &std::path::Path, name: &str) -> PathBuf {
 
 #[test]
 fn tab_keys_switch_tabs_and_remember_the_last_one() {
-    let mut h = Harness::<WorkbenchApp>::bare();
+    let mut h = Harness::<ToolkitApp>::bare();
     h.frames(2);
     for (key, tab) in [(Key::Num2, Tab::Patch), (Key::Num3, Tab::Apply), (Key::Num4, Tab::Sign), (Key::Num5, Tab::SData), (Key::Num6, Tab::Inspect), (Key::Num1, Tab::Archive)] {
         h.key(key, Modifiers::COMMAND);
@@ -502,7 +502,7 @@ fn apply_and_history_plan_apply_list_and_roll_back() {
     with_cx(&mut w.h, |app, _| app.apply.request_apply(app.current.as_ref(), &app.keys));
     w.h.frames(3);
     assert!(w.h.text().contains("Apply ps0001.patch to US test") && w.h.text().contains("Signatures: NOT CHECKED"), "{}", w.h.text());
-    w.h.app.shell.inject_answer("workbench-apply-patches", 0);
+    w.h.app.shell.inject_answer("toolkit-apply-patches", 0);
     assert!(w.h.wait_until(WAIT, |h| h.app.app.apply.history().len() == 1 && h.app.app.archive.is_open() && h.app.app.archive.changed_counter >= 1), "applied; the history lists it");
     w.h.frames(3);
     let (j, rb) = &w.h.app.app.apply.history()[0];
@@ -518,7 +518,7 @@ fn apply_and_history_plan_apply_list_and_roll_back() {
     with_cx(&mut w.h, |app, _| app.apply.request_rollback(app.current.as_ref()));
     w.h.frames(3);
     assert!(w.h.text().contains("Roll back ps0001.patch") && w.h.text().contains("1 deleted"), "{}", w.h.text());
-    w.h.app.shell.inject_answer("workbench-rollback", 0);
+    w.h.app.shell.inject_answer("toolkit-rollback", 0);
     assert!(
         w.h.wait_until(WAIT, |h| matches!(h.app.app.apply.history().first().map(|(j, _)| j.state.clone()), Some(shaiya_archive::journal::State::RolledBack { .. })) && h.app.app.archive.is_open()),
         "rolled back"
@@ -563,7 +563,7 @@ fn patch_builder_from_pending_changes_builds_a_patch_with_those_contents() {
     with_cx(&mut w.h, |app, cx| app.patch.begin_build(&app.keys, cx));
     w.h.frames(3);
     assert!(w.h.text().contains("already exists") && w.h.text().contains("Overwrite"), "{}", w.h.text());
-    w.h.app.shell.inject_answer("workbench-build-exists", 1);
+    w.h.app.shell.inject_answer("toolkit-build-exists", 1);
     w.h.frames(3);
     assert!(out_dir.path().join("ps0001.patch").exists());
 }
@@ -587,7 +587,7 @@ fn patch_builder_folder_sources_show_problems_and_effects() {
     assert_eq!(by("fresh.txt"), "new");
     // a name the archive cannot hold blocks the build
     std::fs::write(files.join("bad\u{1F600}name.txt"), b"z").unwrap();
-    w.h.app.app.patch.set_card(shaiya_workbench::patch_builder::Card::Files, Some(files));
+    w.h.app.app.patch.set_card(shaiya_toolkit::patch_builder::Card::Files, Some(files));
     w.h.frames(3);
     assert!(!w.h.app.app.patch.problems.is_empty(), "an unencodable name is a problem: rows {:?} err {:?} input {:?}", w.h.app.app.patch.rows, w.h.app.app.patch.resolve_error, w.h.app.app.patch.input().files.iter().map(|f| f.0.clone()).collect::<Vec<_>>());
     assert!(w.h.app.app.patch.build_blocked(&w.h.app.app.keys).is_some());
@@ -617,7 +617,7 @@ fn sign_and_verify_with_a_generated_key_pair_and_a_tampered_patch() {
     w.h.app.app.sign.verify_files = vec![patch.clone()];
     with_cx(&mut w.h, |app, cx| app.sign.begin_verify(&app.keys, None, cx));
     assert!(w.h.wait_until(WAIT, |h| !h.app.app.sign.verify_results.is_empty()));
-    assert_eq!(w.h.app.app.sign.verify_results[0].1, shaiya_workbench::sign_tab::Outcome::Valid);
+    assert_eq!(w.h.app.app.sign.verify_results[0].1, shaiya_toolkit::sign_tab::Outcome::Valid);
     // tamper one byte: invalid
     let mut bytes = std::fs::read(&patch).unwrap();
     bytes[3] ^= 1;
@@ -625,13 +625,13 @@ fn sign_and_verify_with_a_generated_key_pair_and_a_tampered_patch() {
     w.h.app.app.sign.verify_results.clear();
     with_cx(&mut w.h, |app, cx| app.sign.begin_verify(&app.keys, None, cx));
     assert!(w.h.wait_until(WAIT, |h| !h.app.app.sign.verify_results.is_empty()));
-    assert!(matches!(w.h.app.app.sign.verify_results[0].1, shaiya_workbench::sign_tab::Outcome::Invalid(_)), "{:?}", w.h.app.app.sign.verify_results);
+    assert!(matches!(w.h.app.app.sign.verify_results[0].1, shaiya_toolkit::sign_tab::Outcome::Invalid(_)), "{:?}", w.h.app.app.sign.verify_results);
     // a missing signature is reported as missing
     std::fs::remove_file(shaiya_patch::signature_path(&patch)).unwrap();
     w.h.app.app.sign.verify_results.clear();
     with_cx(&mut w.h, |app, cx| app.sign.begin_verify(&app.keys, None, cx));
     assert!(w.h.wait_until(WAIT, |h| !h.app.app.sign.verify_results.is_empty()));
-    assert_eq!(w.h.app.app.sign.verify_results[0].1, shaiya_workbench::sign_tab::Outcome::Missing);
+    assert_eq!(w.h.app.app.sign.verify_results[0].1, shaiya_toolkit::sign_tab::Outcome::Missing);
     // signing again over an existing .sig asks first
     w.h.app.app.sign.sign_results.clear();
     with_cx(&mut w.h, |app, cx| app.sign.begin_sign(&app.keys, cx));
@@ -641,7 +641,7 @@ fn sign_and_verify_with_a_generated_key_pair_and_a_tampered_patch() {
     assert!(w.h.text().contains("Replace signature"), "{}", w.h.text());
     // the secret key's path is not stored unless asked
     w.h.app.flush_settings(true);
-    let settings = std::fs::read_to_string(w.data_path.join("shaiya-workbench").join("settings.json")).unwrap();
+    let settings = std::fs::read_to_string(w.data_path.join("shaiya-toolkit").join("settings.json")).unwrap();
     assert!(!settings.contains("secret.key"), "the secret key path is not remembered by default: {settings}");
 }
 
@@ -659,15 +659,15 @@ fn the_sdata_tab_lists_and_decrypts_to_a_folder() {
     assert!(w.h.text().contains("Item.SData") && w.h.text().contains("OK") && w.h.text().contains("plain"), "{}", w.h.text());
     let out = TempDir::new("t1-sdata-out");
     let o = out.path().join("plain");
-    with_cx(&mut w.h, |app, cx| app.sdata.begin(shaiya_workbench::sdata_tab::Action::Decrypt, Some(o.clone()), &app.archive, cx));
+    with_cx(&mut w.h, |app, cx| app.sdata.begin(shaiya_toolkit::sdata_tab::Action::Decrypt, Some(o.clone()), &app.archive, cx));
     assert!(w.h.wait_until(WAIT, |h| o.join("Item.SData").exists() && !h.app.app.sdata.is_busy()), "decrypted into the folder");
     assert_eq!(std::fs::read(o.join("Item.SData")).unwrap(), b"0123456789abcdef");
     assert_eq!(std::fs::read(o.join("Plain.SData")).unwrap(), b"not encrypted", "a plain file is copied unchanged");
     // existing files ask the three-button question
-    with_cx(&mut w.h, |app, cx| app.sdata.begin(shaiya_workbench::sdata_tab::Action::Decrypt, Some(o.clone()), &app.archive, cx));
+    with_cx(&mut w.h, |app, cx| app.sdata.begin(shaiya_toolkit::sdata_tab::Action::Decrypt, Some(o.clone()), &app.archive, cx));
     w.h.frames(3);
     assert!(w.h.text().contains("already exist") && w.h.text().contains("Skip existing"), "{}", w.h.text());
-    w.h.app.shell.inject_answer("workbench-sdata-exists", 0);
+    w.h.app.shell.inject_answer("toolkit-sdata-exists", 0);
     assert!(w.h.wait_until(WAIT, |h| !h.app.app.sdata.is_busy()));
     // the open client's files can be added too
     with_cx(&mut w.h, |app, _| app.sdata.clear());

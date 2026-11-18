@@ -13,10 +13,10 @@ crates/
                       journals and rollback, client folder recovery, compaction, diff, pack, swap
   shaiya-patch/       psNNNN.patch: build (streaming, deterministic), list, verify, plan, apply with journals; Ed25519 signatures
   shaiya-clientdata/  read-only client readers: archive or folder source, .wld, .dg, .smod, textures, sysmsg, Monster / NpcQuest
-  shaiya-inspect/     identify a file and describe it (used by `shaiya info` and the Workbench)
+  shaiya-inspect/     identify a file and describe it (used by `shaiya info` and Shaiya Toolkit)
   shaiya-ui/          the GUI shell (egui / eframe)
   shaiya-cli/         the `shaiya` program (info, archive, patch, sdata, clients, version)
-  shaiya-workbench/   the `shaiya-workbench` program (Archive, Patch builder, Apply & history, Sign & verify, SData, Inspect)
+  shaiya-toolkit/   the `shaiya-toolkit` program (Archive, Patch builder, Apply & history, Sign & verify, SData, Inspect)
   shaiya-testkit/     dev-only test helpers (no game data)
   shaiya-build/       build-script helper: Windows resources, git hash, target
   shaiya-matrix-tests/  opt-in version-matrix tests over the test clients
@@ -39,7 +39,7 @@ Names reserved for later tools: `shaiya-sdata`, `shaiya-sdata-editor`, `shaiya-p
 | `shaiya-archive` | `compact`, `swap`, `pack`, `diff`, `extract` | One module each; compaction and swap have their own crash markers |
 | `shaiya-patch` | `sign` | The signature message and key files; the format does not change |
 | `shaiya-seed` | `batch` | Check, decrypt and encrypt over many files, with `--like` |
-| `shaiya-workbench` | `archive_view`, `patch_builder`, `apply_tab`, `sign_tab`, `sdata_tab`, `inspect`, `clients` | One module per tab and the client-folder dialogs |
+| `shaiya-toolkit` | `archive_view`, `patch_builder`, `apply_tab`, `sign_tab`, `sdata_tab`, `inspect`, `clients` | One module per tab and the client-folder dialogs |
 
 ## Dependency rules
 
@@ -62,7 +62,7 @@ shaiya-build: build-dependency only
 
 ## Changing a client folder safely
 
-Every change to a client folder (archive edits, patch apply, rollback, compaction, swap) follows the same rules, implemented once in `shaiya-archive` and reused by the CLI and the Workbench. The user-facing description is [undo and recovery](../guides/undo-and-recovery.md); in short:
+Every change to a client folder (archive edits, patch apply, rollback, compaction, swap) follows the same rules, implemented once in `shaiya-archive` and reused by the CLI and Shaiya Toolkit. The user-facing description is [undo and recovery](../guides/undo-and-recovery.md); in short:
 
 1. **Recover first.** `client::recover` completes or discards an interrupted compaction, an interrupted swap (`data.swap-journal`) and an unfinished change (`data.toolkit-pending`, the pending marker) before anything else.
 2. **Check that nothing else uses the files.** On Windows, open `data.sah`, `data.saf` (and `game.exe`) for write with sharing denied; a sharing violation is `Refused` with a message that says close the game. Other systems cannot tell.
@@ -85,7 +85,7 @@ Every change to a client folder (archive edits, patch apply, rollback, compactio
 6. **Raw names stay raw.** Archive names are `Vec<u8>`; display decodes them; writes never re-encode a displayed name.
 7. **No network, no telemetry** in any library or program (`cargo xtask deps-check`).
 8. **Signed patches:** the signature message format in `shaiya-patch::sign` does not change without a new message version.
-9. **Keys** are never overwritten, never stored by the Workbench unless asked (the path only), and never printed except the public key.
+9. **Keys** are never overwritten, never stored by Shaiya Toolkit unless asked (the path only), and never printed except the public key.
 
 ## Data flow
 

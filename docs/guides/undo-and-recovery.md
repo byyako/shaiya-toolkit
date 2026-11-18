@@ -4,7 +4,7 @@ What the toolkit keeps when it changes a client folder, how to undo a change, wh
 
 ## What a change does
 
-Archive edits (`archive add|replace|remove --in-place`, Workbench "Apply to client") and `patch apply` all work the same way:
+Archive edits (`archive add|replace|remove --in-place`, Shaiya Toolkit "Apply to client") and `patch apply` all work the same way:
 
 1. Finish or discard anything an earlier run left behind (see "Interrupted changes" below).
 2. Check that the game or another program is not using the files (Windows).
@@ -43,7 +43,7 @@ shaiya patch rollback "@us"
 - cuts `data.saf` back to its length before the change,
 - puts back the loose files the change overwrote and deletes the ones it created.
 
-`--dry-run` says what it would do. In the Workbench use **Apply & history > Roll back...**. Rolling back several changes means rolling back the newest first, then the next.
+`--dry-run` says what it would do. In Shaiya Toolkit use **Apply & history > Roll back...**. Rolling back several changes means rolling back the newest first, then the next.
 
 The journal stays and is marked `rolled back`. `shaiya patch history --prune N` deletes all but the newest N journals; a pruned change can no longer be rolled back.
 
@@ -64,7 +64,7 @@ The journal stays and is marked `rolled back`. `shaiya patch history --prune N` 
 
 ## Interrupted changes
 
-If the power fails or the process is killed during a change, a file named **`data.toolkit-pending`** stays in the client folder. The next toolkit command that writes to this client (and the Workbench when it opens the client) reads it, works out how far the change got, and either undoes the unfinished change or finishes it, then says so on a `note:` line:
+If the power fails or the process is killed during a change, a file named **`data.toolkit-pending`** stays in the client folder. The next toolkit command that writes to this client (and Shaiya Toolkit when it opens the client) reads it, works out how far the change got, and either undoes the unfinished change or finishes it, then says so on a `note:` line:
 
 - `removed the unfinished change ...`: the index had not been replaced yet; `data.saf` was cut back. Nothing changed.
 - `finished the interrupted change ...; shaiya patch history CLIENT shows it and shaiya patch rollback CLIENT can undo it`: the index was already replaced; the loose files were written and the journal marked applied.
@@ -93,7 +93,7 @@ If you are unsure, restore your own backup of the client instead: the toolkit's 
 
 ## Swap back
 
-`shaiya archive swap CLIENT OTHER` (or Workbench "Use another archive pair...") puts another `data.sah`/`data.saf` in place and keeps your pair as `data.<UTC stamp>.sah` / `data.<UTC stamp>.saf` in the same folder. The command prints the command that undoes it:
+`shaiya archive swap CLIENT OTHER` (or Shaiya Toolkit "Use another archive pair...") puts another `data.sah`/`data.saf` in place and keeps your pair as `data.<UTC stamp>.sah` / `data.<UTC stamp>.saf` in the same folder. The command prints the command that undoes it:
 
 ```
 swap back with: shaiya archive swap "@us" C:\Games\Shaiya\data.20261115T120000Z.sah

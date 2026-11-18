@@ -4,7 +4,7 @@
 use crate::archive_view::ArchiveView;
 use crate::clients::ClientInfo;
 use crate::keys::KeyForm;
-use crate::WorkbenchSettings;
+use crate::ToolkitSettings;
 use egui::RichText;
 use shaiya_archive::client::{self, ClientFiles};
 use shaiya_archive::journal::{self, Journal, JournalMode, Rollback, State};
@@ -16,7 +16,7 @@ use shaiya_ui::{Confirm, Cx, TaskHandle, TaskOutcome, TaskSpec};
 use std::path::PathBuf;
 use std::sync::Arc;
 
-type WorkbenchCx<'a> = Cx<'a, WorkbenchSettings>;
+type ToolkitCx<'a> = Cx<'a, ToolkitSettings>;
 
 enum Verify {
     Running(TaskHandle<VerifyReport>),
@@ -157,7 +157,7 @@ impl ApplyTab {
 
     // ---------------------------------------------------------------------------------------- polling
 
-    fn start_verifies(&mut self, keys: &KeyForm, cx: &mut WorkbenchCx<'_>) {
+    fn start_verifies(&mut self, keys: &KeyForm, cx: &mut ToolkitCx<'_>) {
         let key = keys.verify_key();
         let stamp = format!(
             "{}|{}",
@@ -177,7 +177,7 @@ impl ApplyTab {
         }
     }
 
-    fn start_plan(&mut self, client: Option<&ClientInfo>, archive_stamp: u64, cx: &mut WorkbenchCx<'_>) {
+    fn start_plan(&mut self, client: Option<&ClientInfo>, archive_stamp: u64, cx: &mut ToolkitCx<'_>) {
         let Some(c) = client else {
             self.plan = PlanState::None;
             return;
@@ -199,7 +199,7 @@ impl ApplyTab {
         self.plan = PlanState::Running(stamp, h);
     }
 
-    fn poll(&mut self, client: Option<&ClientInfo>, archive: &mut ArchiveView, cx: &mut WorkbenchCx<'_>) {
+    fn poll(&mut self, client: Option<&ClientInfo>, archive: &mut ArchiveView, cx: &mut ToolkitCx<'_>) {
         for r in &mut self.patches {
             if let Verify::Running(h) = &mut r.verify {
                 match h.poll() {
@@ -326,7 +326,7 @@ impl ApplyTab {
         self.flow = Flow::Confirm(req);
     }
 
-    fn start_apply(&mut self, req: ApplyReq, cx: &mut WorkbenchCx<'_>) {
+    fn start_apply(&mut self, req: ApplyReq, cx: &mut ToolkitCx<'_>) {
         let remaining: Vec<PathBuf> = req.patches[req.done.len()..].to_vec();
         let (dir, key) = (req.dir.clone(), req.key.clone());
         let n = remaining.len();
@@ -389,13 +389,13 @@ impl ApplyTab {
         }
     }
 
-    fn poll_flow(&mut self, client: Option<&ClientInfo>, archive: &mut ArchiveView, cx: &mut WorkbenchCx<'_>) {
+    fn poll_flow(&mut self, client: Option<&ClientInfo>, archive: &mut ArchiveView, cx: &mut ToolkitCx<'_>) {
         match std::mem::replace(&mut self.flow, Flow::Idle) {
             Flow::Idle => {}
             Flow::Confirm(req) => {
                 let n = req.patches.len();
                 let c = Confirm { title: "Apply patches".into(), text: self.confirm_text(&req), buttons: vec![format!("Apply {n} patch{}", if n == 1 { "" } else { "es" }), "Cancel".into()], danger: Some(0) };
-                match cx.shell.confirm("workbench-apply-patches", &c) {
+                match cx.shell.confirm("toolkit-apply-patches", &c) {
                     None => self.flow = Flow::Confirm(req),
                     Some(0) => {
                         let arc = if archive.client_dir() == Some(req.dir.as_path()) { archive.release_handle() } else { None };
@@ -461,7 +461,7 @@ impl ApplyTab {
                     buttons: vec!["Retry".into(), "Cancel".into()],
                     danger: None,
                 };
-                match cx.shell.confirm("workbench-in-use", &c) {
+                match cx.shell.confirm("toolkit-in-use", &c) {
                     None => self.flow = Flow::InUse(req),
                     Some(0) => self.start_apply(req, cx),
                     Some(_) => archive.reopen(cx),
@@ -469,7 +469,7 @@ impl ApplyTab {
             }
             Flow::RollConfirm(text, dir, dir_text) => {
                 let c = Confirm { title: "Roll back".into(), text: text.clone(), buttons: vec!["Roll back".into(), "Cancel".into()], danger: Some(0) };
-                match cx.shell.confirm("workbench-rollback", &c) {
+                match cx.shell.confirm("toolkit-rollback", &c) {
                     None => self.flow = Flow::RollConfirm(text, dir, dir_text),
                     Some(0) => {
                         let arc = if archive.client_dir().map(|d| d.display().to_string()) == Some(dir_text.clone()) { archive.release_handle() } else { None };
@@ -511,7 +511,7 @@ impl ApplyTab {
             },
             Flow::PruneConfirm(dir, keep) => {
                 let c = Confirm { title: "Prune history".into(), text: format!("Delete the backups of all but the newest {}? Those changes can then no longer be rolled back.", shaiya_inspect::counted((keep) as u64, "change", "changes")), buttons: vec!["Prune".into(), "Cancel".into()], danger: Some(0) };
-                match cx.shell.confirm("workbench-prune", &c) {
+                match cx.shell.confirm("toolkit-prune", &c) {
                     None => self.flow = Flow::PruneConfirm(dir, keep),
                     Some(0) => {
                         match journal::prune(&dir, &dir.join(journal::DEFAULT_DIR), keep) {
@@ -577,7 +577,7 @@ impl ApplyTab {
     // ---------------------------------------------------------------------------------------- drawing
 
     /// Work that goes on whichever tab is shown: checks, the plan, history and the apply flows.
-    pub fn tick(&mut self, cx: &mut WorkbenchCx<'_>, client: Option<&ClientInfo>, archive: &mut ArchiveView, keys: &mut KeyForm) {
+    pub fn tick(&mut self, cx: &mut ToolkitCx<'_>, client: Option<&ClientInfo>, archive: &mut ArchiveView, keys: &mut KeyForm) {
         keys.load(client, cx.settings);
         self.sync_require(client, keys);
         self.start_verifies(keys, cx);
@@ -585,7 +585,7 @@ impl ApplyTab {
         self.poll(client, archive, cx);
     }
 
-    pub fn ui(&mut self, ui: &mut egui::Ui, cx: &mut WorkbenchCx<'_>, client: Option<&ClientInfo>, archive: &mut ArchiveView, keys: &mut KeyForm) {
+    pub fn ui(&mut self, ui: &mut egui::Ui, cx: &mut ToolkitCx<'_>, client: Option<&ClientInfo>, archive: &mut ArchiveView, keys: &mut KeyForm) {
         self.tick(cx, client, archive, keys);
         let pal = cx.shell.pal();
         let mut remove: Option<usize> = None;
@@ -764,7 +764,7 @@ impl ApplyTab {
             if self.history.is_empty() && self.history_error.is_none() {
                 ui.label(RichText::new("No changes made by the toolkit to this client yet.").color(pal.weak));
             }
-            egui::Grid::new("workbench-history").striped(true).show(ui, |ui| {
+            egui::Grid::new("toolkit-history").striped(true).show(ui, |ui| {
                 if !self.history.is_empty() {
                     for h in ["Time", "Label", "Kind", "State", "Rollback"] {
                         ui.label(RichText::new(h).strong());

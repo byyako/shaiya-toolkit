@@ -1,9 +1,9 @@
 //! The Sign & verify tab: key pairs, signing patches and updater executables, verifying signatures (and, against a client, that a
-//! patch has been applied). Workbench never stores key contents; the secret key's path is remembered only when asked.
+//! patch has been applied). Shaiya Toolkit never stores key contents; the secret key's path is remembered only when asked.
 
 use crate::clients::ClientInfo;
 use crate::keys::KeyForm;
-use crate::WorkbenchSettings;
+use crate::ToolkitSettings;
 use egui::RichText;
 use shaiya_core::fs::Existing;
 use shaiya_core::Error;
@@ -11,7 +11,7 @@ use shaiya_patch::sign;
 use shaiya_ui::{Confirm, Cx, TaskHandle, TaskOutcome, TaskSpec};
 use std::path::{Path, PathBuf};
 
-type WorkbenchCx<'a> = Cx<'a, WorkbenchSettings>;
+type ToolkitCx<'a> = Cx<'a, ToolkitSettings>;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Mode {
@@ -138,7 +138,7 @@ impl SignTab {
     // ---------------------------------------------------------------------------------------- keys
 
     /// Writes a new key pair (never over an existing file) and shows the public key.
-    pub fn generate_keys(&mut self, secret: PathBuf, public: PathBuf, keys: &mut KeyForm, cx: &mut WorkbenchCx<'_>) {
+    pub fn generate_keys(&mut self, secret: PathBuf, public: PathBuf, keys: &mut KeyForm, cx: &mut ToolkitCx<'_>) {
         match sign::write_key_pair(&secret, &public) {
             Ok(hex) => {
                 self.error = None;
@@ -178,7 +178,7 @@ impl SignTab {
         None
     }
 
-    pub fn begin_sign(&mut self, keys: &KeyForm, cx: &mut WorkbenchCx<'_>) {
+    pub fn begin_sign(&mut self, keys: &KeyForm, cx: &mut ToolkitCx<'_>) {
         if self.sign_blocked(keys).is_some() {
             return;
         }
@@ -190,7 +190,7 @@ impl SignTab {
         }
     }
 
-    fn start_sign(&mut self, keys: &KeyForm, existing: Existing, cx: &mut WorkbenchCx<'_>) {
+    fn start_sign(&mut self, keys: &KeyForm, existing: Existing, cx: &mut ToolkitCx<'_>) {
         let secret_path = PathBuf::from(keys.secret_path.trim());
         let version = keys.check_version_number().unwrap_or(0);
         let files = self.sign_files.clone();
@@ -230,7 +230,7 @@ impl SignTab {
     }
 
     /// Verifies the listed files; with `client`, patches are also checked against the client folder ("applied").
-    pub fn begin_verify(&mut self, keys: &KeyForm, client: Option<&Path>, cx: &mut WorkbenchCx<'_>) {
+    pub fn begin_verify(&mut self, keys: &KeyForm, client: Option<&Path>, cx: &mut ToolkitCx<'_>) {
         if self.verify_blocked(keys).is_some() {
             return;
         }
@@ -272,7 +272,7 @@ impl SignTab {
 
     // ---------------------------------------------------------------------------------------- polling
 
-    pub fn tick(&mut self, keys: &KeyForm, cx: &mut WorkbenchCx<'_>) {
+    pub fn tick(&mut self, keys: &KeyForm, cx: &mut ToolkitCx<'_>) {
         match std::mem::replace(&mut self.sign_flow, SignFlow::Idle) {
             SignFlow::Idle => {}
             SignFlow::Confirm(existing) => {
@@ -283,7 +283,7 @@ impl SignTab {
                     buttons: vec!["Replace signature".into(), "Cancel".into()],
                     danger: Some(0),
                 };
-                match cx.shell.confirm("workbench-sign-exists", &c) {
+                match cx.shell.confirm("toolkit-sign-exists", &c) {
                     None => self.sign_flow = SignFlow::Confirm(existing),
                     Some(0) => self.start_sign(keys, Existing::Overwrite, cx),
                     Some(_) => {}
@@ -319,7 +319,7 @@ impl SignTab {
 
     // ---------------------------------------------------------------------------------------- drawing
 
-    pub fn ui(&mut self, ui: &mut egui::Ui, cx: &mut WorkbenchCx<'_>, client: Option<&ClientInfo>, keys: &mut KeyForm) {
+    pub fn ui(&mut self, ui: &mut egui::Ui, cx: &mut ToolkitCx<'_>, client: Option<&ClientInfo>, keys: &mut KeyForm) {
         keys.load(client, cx.settings);
         self.tick(keys, cx);
         let pal = cx.shell.pal();

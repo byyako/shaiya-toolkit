@@ -25,7 +25,7 @@ They may come before or after the command.
 | `-q`, `--quiet` | No progress and no notes; errors still go to stderr. |
 | `-v`, `--verbose` | More detail (elapsed times); repeatable. |
 | `--progress <auto\|always\|never>` | `auto` shows progress only when stderr is a terminal; `always` prints a line per 10% (useful for logs). |
-| `--data-dir DIR` | Keep the saved client folders and settings in `DIR` instead of the default data folder (see [install.md](../install.md#portable-mode-and-where-settings-live)). The Workbench takes the same flag. |
+| `--data-dir DIR` | Keep the saved client folders and settings in `DIR` instead of the default data folder (see [install.md](../install.md#portable-mode-and-where-settings-live)). Shaiya Toolkit takes the same flag. |
 | `-h`, `--help` | Help. Every command has one: `shaiya archive extract --help`. |
 | `-V`, `--version` | The version line. |
 
@@ -40,7 +40,7 @@ They may come before or after the command.
   - `--journal-dir DIR` puts the journals elsewhere.
   - `--no-journal` skips the journal. The previous index is still copied to `data.sah.bak`, but that is a plain copy that **the next change overwrites**, there is no rollback command for it, and loose files overwritten under `--no-journal` have **no backup at all**.
   - `compact --in-place` is not journaled: it replaces `data.saf` with a rewritten one, keeps only an index backup (`data.sah.bak`), and ends rollback for every earlier journal.
-- **In-use check.** Before a write the toolkit tries to open `data.sah`, `data.saf` and `game.exe` for writing. On Windows a running game (or another program holding the files) stops the command: `error: refused: data.saf is open in another program; close the game (and any other program using this client, Workbench included) and try again`, exit 4. On Linux and macOS the toolkit cannot tell and prints `warning: cannot check whether the game is running on this system; make sure it is closed`.
+- **In-use check.** Before a write the toolkit tries to open `data.sah`, `data.saf` and `game.exe` for writing. On Windows a running game (or another program holding the files) stops the command: `error: refused: data.saf is open in another program; close the game (and any other program using this client, Shaiya Toolkit included) and try again`, exit 4. On Linux and macOS the toolkit cannot tell and prints `warning: cannot check whether the game is running on this system; make sure it is closed`.
 - **Recovery.** Before every write the toolkit finishes or discards the leftovers of an interrupted change and prints each as a `note:` line.
 - **Patterns** (`archive list|extract|diff`, `sdata ... --from`): globs, case-insensitive. `*` and `?` stay inside one path segment, `**` as a whole segment crosses segments, `[a-z]` and `[!x]` are character classes, a pattern without `/` matches the file name in any folder, a pattern with `/` is anchored at the archive root, a trailing `/` means everything under that folder, `\` is read as `/`. No regular expressions. `--exclude PAT` (repeatable) removes matches; `--min-size` and `--max-size` take `1500`, `64k` (1000s), `2MiB` (1024s), `1.5MB`, `3G`; `--list FILE` reads paths from a file (one per line; only the first tab-separated column is used, `#` lines and a header line `path` are skipped).
 - **Shadowed entries.** When two entries have the same name (any case) in one folder, the client loads the later one; the earlier is *shadowed*. Commands show only visible files; `--include-shadowed` adds the others (extract names them `name~shadowed-N.ext`). See [the archive format](../formats/archive.md#shadowing).
@@ -238,7 +238,7 @@ Guide: [SData files](../guides/sdata-files.md).
 
 ## `shaiya clients`
 
-The saved client folders live in the toolkit's data folder (`shared.json`), shared by the CLI and the Workbench. The toolkit never scans your disks for clients.
+The saved client folders live in the toolkit's data folder (`shared.json`), shared by the CLI and Shaiya Toolkit. The toolkit never scans your disks for clients.
 
 | Command | What it does | Exit |
 |---|---|---|

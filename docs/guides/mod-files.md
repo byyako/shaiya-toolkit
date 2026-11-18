@@ -19,7 +19,7 @@ shaiya archive list "@mymod" "interface/**" --folders
 shaiya archive check "@mymod"
 ```
 
-Patterns are case-insensitive globs: `*.dds` matches in any folder, `interface/*` is the files directly in `interface`, `interface/**` everything below it, `Item/Item.SData` one exact path. In the Workbench, the Archive tab has the same search, plus previews for DDS, TGA and BMP images, text and hex.
+Patterns are case-insensitive globs: `*.dds` matches in any folder, `interface/*` is the files directly in `interface`, `interface/**` everything below it, `Item/Item.SData` one exact path. In Shaiya Toolkit, the Archive tab has the same search, plus previews for DDS, TGA and BMP images, text and hex.
 
 Two entries with the same name in one folder (any letter case): the client loads the **later** one, so the earlier one is *shadowed* and `list` hides it (`--include-shadowed` shows it). `check` reports each shadowed entry. If you add a file whose name differs from an existing one only by case, you create exactly that situation; use `replace` to change a file instead.
 
@@ -59,7 +59,7 @@ Remove files: `shaiya archive remove "@mymod" test/junk.eft --in-place` (or `--l
 
 Loose files, the ones that live next to `game.exe` rather than inside the archive, are not part of `data.saf`. To change them, put them in a patch (`--loose`) and apply it; the toolkit saves the original in the journal first. See [make a patch](make-a-patch.md).
 
-![Pending changes in the Archive tab, waiting for Apply to client](../assets/screenshots/workbench-pending-changes.png)
+![Pending changes in the Archive tab, waiting for Apply to client](../assets/screenshots/toolkit-pending-changes.png)
 
 ## Or make a patch instead
 
@@ -77,7 +77,7 @@ shaiya patch history "@mymod"
 shaiya patch rollback "@mymod"
 ```
 
-rolls back the newest journaled change: the old index returns, `data.saf` is cut back, loose files come back. You can undo several changes, newest first. What can stop it, and what `--no-journal` and `compact` do to your safety net, is in [undo and recovery](undo-and-recovery.md). In the Workbench: Apply & history > Roll back....
+rolls back the newest journaled change: the old index returns, `data.saf` is cut back, loose files come back. You can undo several changes, newest first. What can stop it, and what `--no-journal` and `compact` do to your safety net, is in [undo and recovery](undo-and-recovery.md). In Shaiya Toolkit: Apply & history > Roll back....
 
 Two habits that save trouble: keep a plain copy of the original client folder for anything you cannot download again, and run `shaiya archive check "@mymod"` after a series of changes.
 

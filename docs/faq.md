@@ -2,7 +2,7 @@
 
 ## It says "data.saf is open in another program" (exit code 4)
 
-The full message is `error: refused: data.saf is open in another program; close the game (and any other program using this client, Workbench included) and try again`. Windows reports that something has `data.sah` or `data.saf` open for writing: the game, the original updater, a second Workbench, an antivirus scan, or a file manager preview. Nothing was changed. Close them and run the command again (in the Workbench, press **Retry** in the dialog). `data.sah is read-only or not writable` means the file's read-only flag or folder permissions; clear them. On Linux and macOS the toolkit cannot tell whether the game is running and prints a warning instead, so make sure it is closed.
+The full message is `error: refused: data.saf is open in another program; close the game (and any other program using this client, Shaiya Toolkit included) and try again`. Windows reports that something has `data.sah` or `data.saf` open for writing: the game, the original updater, a second copy of Shaiya Toolkit, an antivirus scan, or a file manager preview. Nothing was changed. Close them and run the command again (in Shaiya Toolkit, press **Retry** in the dialog). `data.sah is read-only or not writable` means the file's read-only flag or folder permissions; clear them. On Linux and macOS the toolkit cannot tell whether the game is running and prints a warning instead, so make sure it is closed.
 
 ## Windows says "Windows protected your PC" (SmartScreen)
 
@@ -10,7 +10,7 @@ The programs are not code signed. Choose **More info**, then **Run anyway**. Che
 
 ## macOS says the developer is unidentified
 
-Right-click the app and choose Open, or run `xattr -dr com.apple.quarantine "Shaiya Workbench.app"`. The macOS GUI is untested until a tester confirms it.
+Right-click the app and choose Open, or run `xattr -dr com.apple.quarantine "Shaiya Toolkit.app"`. The macOS GUI is untested until a tester confirms it.
 
 ## My client is "unsupported" or a command fails on it
 
@@ -40,7 +40,7 @@ Commands that change an archive need to know where to write: `--in-place` for th
 
 ## How do I undo a change?
 
-`shaiya patch history "@name"`, then `shaiya patch rollback "@name"`. In the Workbench: Apply & history > Roll back.... What blocks it (a newer change, a compaction, a swap, `--no-journal`) and how interrupted changes are recovered: [undo and recovery](guides/undo-and-recovery.md).
+`shaiya patch history "@name"`, then `shaiya patch rollback "@name"`. In Shaiya Toolkit: Apply & history > Roll back.... What blocks it (a newer change, a compaction, a swap, `--no-journal`) and how interrupted changes are recovered: [undo and recovery](guides/undo-and-recovery.md).
 
 ## Where are the backups?
 
@@ -64,7 +64,7 @@ Patches use the same `psNNNN.patch` layout. The original updater ignores `remove
 
 ## Does the toolkit send anything over the network?
 
-No. No program or library contains network code and nothing is downloaded. The Workbench's **Help > Support the project** item opens a web page in your own browser, only when you click it.
+No. No program or library contains network code and nothing is downloaded. Shaiya Toolkit's **Help > Support the project** item opens a web page in your own browser, only when you click it.
 
 ## Can I attach my game files to a bug report?
 

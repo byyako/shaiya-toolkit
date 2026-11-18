@@ -4,15 +4,14 @@ Download from the [releases page](https://github.com/byyako/shaiya-toolkit/relea
 
 ## Which zip
 
-Every release has one zip per tool per platform, plus an everything zip:
+Every release has two zips per platform:
 
 | Zip | Contents |
 |---|---|
-| `shaiya-toolkit-<version>-<platform>.zip` | all programs |
+| `shaiya-toolkit-<version>-<platform>.zip` | the Shaiya Toolkit desktop app and the `shaiya` command line |
 | `shaiya-<version>-<platform>.zip` | the `shaiya` command line only |
-| `shaiya-workbench-<version>-<platform>.zip` | Shaiya Workbench only |
 
-`<platform>` is `windows-x86_64`, `linux-x86_64` or `macos-universal`. Each zip holds a folder named like the zip with the program(s), `README.txt`, `LICENSE.txt` and `THIRD-PARTY-NOTICES.txt`. Unzip it anywhere; there is no installer. There is one GUI program today, Shaiya Workbench. Further GUI programs will start each other from their Tools menu when they sit in the same folder.
+`<platform>` is `windows-x86_64`, `linux-x86_64` or `macos-universal`. Each zip holds a folder named like the zip with the program(s), `README.txt`, `LICENSE.txt` and `THIRD-PARTY-NOTICES.txt`. Unzip it anywhere; there is no installer. There is one GUI program today, Shaiya Toolkit. Further GUI programs will start each other from their Tools menu when they sit in the same folder.
 
 ## Check the download
 
@@ -27,12 +26,12 @@ Releases built on a public repository also carry a build provenance attestation 
 ## Platform notes
 
 - **Windows.** The programs are not code signed. SmartScreen may show "Windows protected your PC" the first time: choose More info, then Run anyway. The `shaiya` program is a console program: open a terminal in its folder and run `shaiya --help`.
-- **macOS.** The GUI programs are app bundles, ad-hoc signed and not notarised. If macOS says the developer is unidentified, right-click the app and choose Open, or run `xattr -dr com.apple.quarantine "Shaiya Workbench.app"`. The macOS GUI is **untested** until a tester confirms it.
-- **Linux.** The GUI programs need a desktop with X11 or Wayland and a Vulkan or OpenGL driver. If a file is not executable: `chmod +x shaiya shaiya-workbench`.
+- **macOS.** The GUI programs are app bundles, ad-hoc signed and not notarised. If macOS says the developer is unidentified, right-click the app and choose Open, or run `xattr -dr com.apple.quarantine "Shaiya Toolkit.app"`. The macOS GUI is **untested** until a tester confirms it.
+- **Linux.** The GUI programs need a desktop with X11 or Wayland and a Vulkan or OpenGL driver. If a file is not executable: `chmod +x shaiya shaiya-toolkit`.
 
 ## Portable mode and where settings live
 
-By default settings, logs, recovery files and the saved client folders live in the user's configuration folder (`%APPDATA%\shaiya-toolkit` on Windows, `~/Library/Application Support/shaiya-toolkit` on macOS, `~/.config/shaiya-toolkit` or `$XDG_CONFIG_HOME/shaiya-toolkit` on Linux). Put an empty file named `portable.txt` next to the program to keep them in a `shaiya-toolkit-data` folder beside it instead. `SHAIYA_TOOLKIT_HOME` names any folder, and the flag `--data-dir DIR` does the same for one run, on the `shaiya` command line (`shaiya --data-dir DIR clients list`) and on the Workbench alike.
+By default settings, logs, recovery files and the saved client folders live in the user's configuration folder (`%APPDATA%\shaiya-toolkit` on Windows, `~/Library/Application Support/shaiya-toolkit` on macOS, `~/.config/shaiya-toolkit` or `$XDG_CONFIG_HOME/shaiya-toolkit` on Linux). Put an empty file named `portable.txt` next to the program to keep them in a `shaiya-toolkit-data` folder beside it instead. `SHAIYA_TOOLKIT_HOME` names any folder, and the flag `--data-dir DIR` does the same for one run, on the `shaiya` command line (`shaiya --data-dir DIR clients list`) and on Shaiya Toolkit alike.
 
 **Backups of your game files are not kept there.** Journals, and with them everything needed to roll back a change, live **inside the client folder** you changed, in `shaiya-toolkit-backups/`, next to `data.sah.bak` (a copy of the previous index). They go with the folder when you copy, move or delete it, and they are not removed when you uninstall or delete the toolkit. See [undo and recovery](guides/undo-and-recovery.md).
 

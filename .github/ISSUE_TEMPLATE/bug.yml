@@ -12,7 +12,7 @@ body:
       label: Tool
       options:
         - shaiya (command line)
-        - Shaiya Workbench
+        - Shaiya Toolkit (desktop app)
         - A library (shaiya-core, shaiya-archive, shaiya-patch, shaiya-seed, ...)
         - Other
     validations:
