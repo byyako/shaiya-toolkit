@@ -145,8 +145,8 @@ impl NpcQuest {
         Ok(NpcQuest { lists, quests_offset: r.p })
     }
 
-    /// The NPC the server means by (type, type id): the `type_id`-th record of the type's list (1-based, as the
-    /// client's `CNpcData::GetNpc` indexes it).
+    /// The NPC the server means by (type, type id): the `type_id`-th record of the type's list (1-based, the
+    /// way the client indexes it).
     pub fn get(&self, kind: u32, type_id: u32) -> Option<&Npc> {
         let list = self.lists.get((kind as usize).checked_sub(1)?)?;
         list.get((type_id as usize).checked_sub(1)?)

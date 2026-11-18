@@ -83,7 +83,13 @@ fn dir_stamp(p: &Path) -> Option<(u64, u64, u32)> {
         use std::os::windows::fs::MetadataExt;
         Some((m.creation_time(), m.last_write_time(), m.file_attributes()))
     }
-    #[cfg(not(windows))]
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        // the real identity of the folder: device and inode (the last field is unused)
+        Some((m.dev(), m.ino(), 0))
+    }
+    #[cfg(not(any(windows, unix)))]
     {
         let t = |r: std::io::Result<SystemTime>| r.ok().and_then(|t| t.duration_since(SystemTime::UNIX_EPOCH).ok()).map_or(0, |d| d.as_nanos() as u64);
         Some((t(m.created()), t(m.modified()), 0))
@@ -298,7 +304,7 @@ impl ClientWld {
     }
 
     /// A model that is already in memory, with no client folder behind it (tests that never save).
-    #[cfg(test)]
+    #[cfg(any(test, feature = "testing"))]
     pub fn from_model(id: u32, model: WldRaw) -> ClientWld {
         ClientWld { id, saved: model.to_bytes(), model, staged: false, client_dir: PathBuf::from("no-client-folder") }
     }
@@ -394,17 +400,22 @@ mod tests {
         let client = t.join("Client");
         std::fs::create_dir_all(client.join("world")).unwrap();
         let s = client.display().to_string();
-        for spelled in [
+        let portable = [format!("{s}/"), format!("{s}/world/../new"), format!("{s}/../Client/new/deeper")];
+        // spellings that only mean the same folder under Windows path rules
+        #[cfg(windows)]
+        let windows_only = [
             s.to_uppercase(),
             format!("{s}\\"),
-            format!("{s}/"),
             format!("{s}\\\\new"),
             format!("{s}."),
             format!("{s} "),
             format!("{s}\\world\\..\\new"),
             format!("{s}\\..\\Client\\new\\deeper"),
             format!(r"\\?\{s}\new"),
-        ] {
+        ];
+        #[cfg(not(windows))]
+        let windows_only: [String; 0] = [];
+        for spelled in portable.into_iter().chain(windows_only) {
             assert!(check_out_dir(Path::new(&spelled), &client).is_err(), "{spelled}");
         }
         // relative paths are resolved against the working folder (only read here: nothing is written)
@@ -472,7 +483,10 @@ mod tests {
         // a stale .tmp hard-linked to a precious file
         let precious = t.join("precious.bin");
         std::fs::write(&precious, b"keep me").unwrap();
-        if std::fs::hard_link(&precious, target.with_extension("wld.tmp")).is_err() {
+        if let Err(e) = std::fs::hard_link(&precious, target.with_extension("wld.tmp")) {
+            // only a file system without hard links may skip the case; any other failure is a real one
+            let no_links = e.kind() == std::io::ErrorKind::Unsupported || matches!(e.raw_os_error(), Some(1 | 38 | 50 | 95 | 124));
+            assert!(no_links, "hard_link failed for a reason other than missing hard-link support: {e}");
             eprintln!("skipped: this file system has no hard links, the linked-tmp case is not run");
             return;
         }

@@ -30,7 +30,7 @@ pub const UNSIGNED_NOTE: &str = "This patch is unsigned. The original updater do
 const EDGE: u64 = 1 << 20;
 
 /// SIGNING HOOK. A signing step would run here on the finished patch and return the path of the signature file
-/// (`psNNNN.patch.sig`). Signing is not built (a signing step is not built), so this returns `None` and the patch stays unsigned.
+/// (`psNNNN.patch.sig`). No signing step is built yet, so this returns `None` and the patch stays unsigned.
 pub fn sign_hook(_patch: &Path) -> Result<Option<PathBuf>, String> {
     Ok(None)
 }
@@ -138,10 +138,20 @@ pub fn patch_name(n: u32) -> Result<String, String> {
 struct Temp(PathBuf);
 impl Temp {
     fn new(tag: &str) -> Result<Temp, String> {
+        static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         let nanos = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).map_or(0, |d| d.as_nanos());
-        let p = std::env::temp_dir().join(format!("svmap-editor-{tag}-{}-{nanos}", std::process::id()));
-        fs::create_dir_all(&p).map_err(|e| format!("cannot make a temporary folder: {e}"))?;
-        Ok(Temp(p))
+        let mut last = String::new();
+        for _ in 0..8 {
+            let n = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            let p = std::env::temp_dir().join(format!("svmap-editor-{tag}-{}-{nanos}-{n}", std::process::id()));
+            // create_dir fails when the folder exists, so two callers never share one
+            match fs::create_dir(&p) {
+                Ok(()) => return Ok(Temp(p)),
+                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => last = e.to_string(),
+                Err(e) => return Err(format!("cannot make a temporary folder: {e}")),
+            }
+        }
+        Err(format!("cannot make a temporary folder: {last}"))
     }
 }
 impl Drop for Temp {

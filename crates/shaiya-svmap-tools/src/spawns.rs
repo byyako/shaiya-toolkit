@@ -173,25 +173,25 @@ pub struct SpawnRow {
     pub name: String,
     pub level: Option<u32>,
     pub areas: usize,
-    pub total: u32,
+    pub total: u64,
     /// Share of the map's monsters, 0 to 1.
     pub share: f32,
 }
 
 /// One row per monster id on the map, biggest first.
 pub fn table(map: &Svmap, env: &Env) -> Vec<SpawnRow> {
-    let mut by: BTreeMap<u32, (usize, u32)> = BTreeMap::new();
+    let mut by: BTreeMap<u32, (usize, u64)> = BTreeMap::new();
     for a in &map.mob_areas {
         let mut seen: BTreeSet<u32> = BTreeSet::new();
         for e in &a.mobs {
             let r = by.entry(e.mob).or_default();
-            r.1 += e.count;
+            r.1 += e.count as u64;
             if seen.insert(e.mob) {
                 r.0 += 1;
             }
         }
     }
-    let all: u32 = by.values().map(|v| v.1).sum();
+    let all: u64 = by.values().map(|v| v.1).sum();
     let mut rows: Vec<SpawnRow> = by
         .into_iter()
         .map(|(mob, (areas, total))| SpawnRow { mob, name: env.mob_name(mob), level: level_of(env, mob), areas, total, share: if all > 0 { total as f32 / all as f32 } else { 0.0 } })
@@ -207,7 +207,7 @@ pub struct MapSummary {
     pub id: Option<u32>,
     pub areas: usize,
     /// Total count of monsters.
-    pub monsters: u32,
+    pub monsters: u64,
     /// Distinct monster ids.
     pub kinds: usize,
     /// The range in use (an override, else the derived one).
@@ -228,7 +228,7 @@ pub struct Report {
 pub struct Totals {
     pub maps: usize,
     pub areas: usize,
-    pub monsters: u32,
+    pub monsters: u64,
     pub kinds: usize,
     pub findings: [usize; 5],
 }
@@ -242,13 +242,13 @@ impl Report {
         self.findings.iter().filter(move |f| f.map == id)
     }
 
-    /// The folder totals; `kinds` counts distinct monster ids over every map.
+    /// The folder totals (summed in 64 bits, saturating); `kinds` counts distinct monster ids over every map.
     pub fn totals(&self, maps: &[MapIn]) -> Totals {
         let mut t = Totals { maps: self.maps.len(), ..Default::default() };
         let mut kinds: BTreeSet<u32> = BTreeSet::new();
         for m in &self.maps {
             t.areas += m.areas;
-            t.monsters += m.monsters;
+            t.monsters = t.monsters.saturating_add(m.monsters);
         }
         for mi in maps {
             for a in &mi.map.mob_areas {
@@ -298,7 +298,7 @@ fn find_duplicates(id: Option<u32>, map: &Svmap, out: &mut Vec<SpawnFinding>) {
 }
 
 /// Every monster's areas and count per map, for the strays.
-type Spread = BTreeMap<u32, BTreeMap<u32, (usize, u32)>>;
+type Spread = BTreeMap<u32, BTreeMap<u32, (usize, u64)>>;
 
 fn spread_of(maps: &[MapIn]) -> Spread {
     let mut s: Spread = BTreeMap::new();
@@ -308,7 +308,7 @@ fn spread_of(maps: &[MapIn]) -> Spread {
             let mut seen: BTreeSet<u32> = BTreeSet::new();
             for e in &a.mobs {
                 let r = s.entry(e.mob).or_default().entry(id).or_default();
-                r.1 += e.count;
+                r.1 += e.count as u64;
                 if seen.insert(e.mob) {
                     r.0 += 1;
                 }
@@ -338,7 +338,7 @@ pub fn analyze(maps: &[MapIn], env: &Env, opts: &Opts) -> Report {
                 if areas_here > STRAY_MAX_AREAS || per.len() < 2 {
                     continue;
                 }
-                let total: u32 = per.values().map(|v| v.1).sum();
+                let total: u64 = per.values().map(|v| v.1).sum();
                 let Some((&main, &(main_areas, main_count))) = per.iter().filter(|(k, _)| **k != id).max_by_key(|(k, v)| (v.1, std::cmp::Reverse(**k))) else { continue };
                 if total == 0 || (main_count as f64) < STRAY_SHARE * total as f64 {
                     continue;
@@ -407,7 +407,7 @@ pub fn analyze(maps: &[MapIn], env: &Env, opts: &Opts) -> Report {
         report.maps.push(MapSummary {
             id,
             areas: m.mob_areas.len(),
-            monsters: m.mob_areas.iter().flat_map(|a| a.mobs.iter().map(|e| e.count)).sum(),
+            monsters: m.mob_areas.iter().flat_map(|a| a.mobs.iter().map(|e| e.count as u64)).sum(),
             kinds: kinds.len(),
             band: used,
             derived,
@@ -545,6 +545,22 @@ mod tests {
             assert_eq!(groups.len(), 2);
             assert!(groups.contains(&Group::Duplicate) && groups.contains(&Group::Stray));
             assert!(r.maps.iter().all(|m| m.band.is_none()));
+        });
+    }
+
+    /// Garbled counts of 0xFFFFFFFF add up in 64 bits (no overflow panic or wrap): the sums are u64.
+    #[test]
+    fn huge_counts_do_not_overflow() {
+        let m = map(vec![area(0.0, 0.0, &[(11, u32::MAX)]), area(20.0, 0.0, &[(11, u32::MAX)])]);
+        let m2 = map(vec![area(0.0, 0.0, &[(11, u32::MAX)])]);
+        let ins = [MapIn { id: Some(1), map: &m, findings: None }, MapIn { id: Some(2), map: &m2, findings: None }];
+        with_env(|env| {
+            let r = analyze(&ins, env, &Opts::plain(true));
+            assert_eq!(r.summary(Some(1)).unwrap().monsters, 2 * u32::MAX as u64);
+            assert_eq!(r.totals(&ins).monsters, 3 * u32::MAX as u64);
+            let rows = table(&m, env);
+            assert_eq!(rows[0].total, 2 * u32::MAX as u64);
+            assert!((rows[0].share - 1.0).abs() < 1e-6);
         });
     }
 

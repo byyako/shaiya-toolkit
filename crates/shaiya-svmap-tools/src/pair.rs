@@ -327,7 +327,7 @@ impl ClientPart {
     }
 
     /// A part over a model that is already in memory (tests).
-    #[cfg(test)]
+    #[cfg(any(test, feature = "testing"))]
     pub fn from_model(wld: ClientWld, txt: Option<Vec<u8>>) -> ClientPart {
         let (txt, existed) = match txt {
             Some(t) => (t, true),

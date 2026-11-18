@@ -804,7 +804,7 @@ fn readable_maps(dir: &Path, job: &Job) -> Result<ReadableMaps> {
 pub struct SpawnMap {
     pub map: Option<u32>,
     pub areas: usize,
-    pub monsters: u32,
+    pub monsters: u64,
     pub kinds: usize,
     pub range: Option<[u32; 2]>,
     /// Findings per group (the group keys of `spawns::Group`).
@@ -815,7 +815,7 @@ pub struct SpawnMap {
 pub struct SpawnTotals {
     pub maps: usize,
     pub areas: usize,
-    pub monsters: u32,
+    pub monsters: u64,
     pub kinds: usize,
     pub findings: BTreeMap<&'static str, usize>,
     pub never_spawned: Option<usize>,

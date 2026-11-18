@@ -88,7 +88,7 @@ pub fn parse_area_names(data: &[u8], file: &str) -> Result<AreaNames> {
     Ok(AreaNames { entries })
 }
 
-/// Sysmsg id of a map's name, decoded from the jump table of `CPlayerData::GetMapName` (`None`: the client shows the
+/// Sysmsg id of a map's name, decoded from the client's map-name jump table (`None`: the client shows the
 /// number).
 pub fn map_name_msg(map: u32) -> Option<u32> {
     Some(match map {
