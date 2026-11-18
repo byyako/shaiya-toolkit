@@ -152,6 +152,10 @@ impl App {
                                     msg.push((false, format!("Installed {} new and {} replaced file(s), {}.", i.added.len(), i.replaced.len(), size_text(i.bytes))));
                                     msg.push((false, format!("Backup of the old index: {} (first install: {}).", i.timestamped.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(), if i.first { share::FIRST_BACKUP } else { "kept" })));
                                     msg.push((false, "Checked: the files read back from data.saf, no other entry moved, the old part of data.saf is the same.".to_string()));
+                                    for n in &i.notes {
+                                        msg.push((false, n.clone()));
+                                        crate::log::info(format!("install into {}: {n}", short(&t)));
+                                    }
                                     crate::log::info(format!("install into {}: {} added, {} replaced", short(&t), i.added.len(), i.replaced.len()));
                                 }
                                 Err(e) => {
@@ -162,6 +166,10 @@ impl App {
                             Act::Uninstall => match share::uninstall(&t, &guard) {
                                 Ok(u) => {
                                     msg.push((false, format!("Uninstalled {} install(s). data.sah is the index from before the first one{}.", u.installs, if u.saf_cut { ", data.saf is cut back to its old length" } else { ". data.saf changed since, so its extra bytes stay (harmless)" })));
+                                    for n in &u.notes {
+                                        msg.push((false, n.clone()));
+                                        crate::log::info(format!("uninstall from {}: {n}", short(&t)));
+                                    }
                                     crate::log::info(format!("uninstall from {}", short(&t)));
                                 }
                                 Err(e) => {
@@ -260,7 +268,7 @@ impl App {
                 ui.colored_label(pal.warning, share::UNSIGNED_NOTE);
                 ui.separator();
                 ui.heading("Install into a test client");
-                ui.label("This changes data.sah and data.saf of the folder you pick. Use a copy of the client, with the game closed. Install is not proven in the game yet.");
+                ui.label("This changes data.sah and data.saf of the folder you pick. Use a copy of the client, with the game closed. Install is not proven in the game yet. While it runs it needs free space in that folder of about the staged bytes (a temporary .update.saf file, removed afterwards).");
                 ui.horizontal(|ui| {
                     if ui.button("Choose test client folder...").on_hover_text(help_text::tip("share-target")).clicked() {
                         if let Some(p) = rfd::FileDialog::new().set_title("Test client folder").pick_folder() {

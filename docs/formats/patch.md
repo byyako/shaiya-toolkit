@@ -45,6 +45,8 @@ The same inputs always produce the same patch bytes: entries are sorted by name,
 
 `shaiya patch apply` and Shaiya Toolkit do the same through the journaled in-place procedure ([archive.md](archive.md#changing-an-archive-in-place)): before the first byte is appended they record a **journal** (a copy of the old index, a list of loose files and copies of those they overwrite) so that `shaiya patch rollback` can undo the patch. Journals live in the client folder under `shaiya-toolkit-backups/`; they are local backups made by the toolkit and are **not part of the patch format**. The older `shaiya_patch::apply` call (kept for updaters) makes no journal. Loose files written without a journal (`--no-journal`) leave no copy of what they overwrote. See [undo and recovery](../guides/undo-and-recovery.md).
 
+The Shaiya SVMap Editor's **Install** calls `shaiya_patch::apply` on a test client folder the user picks, and keeps no journal. Before the call it runs the toolkit's recovery of unfinished changes, takes its own copy of the index (`data.sah.svmap-editor`, plus one per install) and an install record, and after the call it reads every staged file back from `data.saf`; **Uninstall** restores the index from its copy and cuts `data.saf` back. The unpacked `update.saf` is a temporary file in the client folder while the call runs. See the editor's guide, page Sharing your client changes.
+
 If the process stops early, the old index still describes valid data; only unreferenced bytes are left at the end of `data.saf`. Replaced and removed files leave dead space, which `shaiya_archive::compact` reclaims.
 
 Paths are Unicode in lists and patches and code page 949 in the index.

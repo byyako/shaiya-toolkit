@@ -919,11 +919,11 @@ The staged files are plain files under `data`. **Tools > Client > Share client c
 
 **Export patch...** writes `psNNNN.patch` into a folder you pick. Set the number first. The file is the format of the game's updater: the staged files, nothing else. The editor reads the new patch back and checks that it lists exactly the staged files. It never replaces a patch that is already in the folder.
 
-The patch is **unsigned**. The original updater does not check signatures. An updater that requires a signature needs one: sign the file with `shaiya patch sign`. The editor does not sign.
+The patch is **unsigned**. The original updater does not check signatures. An updater that requires signed patches needs a signature file: sign the patch with `shaiya patch sign` or in Shaiya Toolkit (Sign & verify). The editor does not sign.
 
 **Export folder...** copies the staged files to `data/` in an empty folder. Use it to look at them or to pack them with another tool.
 
-Neither export writes into the client folder you opened. A folder inside it is refused.
+Neither export writes into the client folder you opened. A folder inside it is refused. The editor changes data only. A staged program (a name ending in `.exe` or `.dll`, any case) stops Export patch, Export folder, Install and Copy loose, and the message names it. Remove it from the staging folder first.
 
 ### Install into a test client
 
@@ -935,9 +935,17 @@ Neither export writes into the client folder you opened. A folder inside it is r
 
 Before the first install the editor copies `data.sah` to `data.sah.svmap-editor`. It never replaces that file while the install lasts. Every install also makes `data.sah.svmap-editor-<UTC time>`. The game's patch tool overwrites its own `data.sah.bak` on every run, so that one is no backup.
 
-The editor refuses when `data.sah` cannot be read, when `data.saf` cannot be opened for writing (the game is running), and when the staging folder lies in the target. After the patch is applied it checks the result. Every staged file must read back byte for byte from `data.saf`. No other entry may move. The old part of `data.saf` must be the same. If a check fails, the old index is put back and `data.saf` is cut back to its old length.
+The editor refuses when `data.sah` cannot be read, when `data.saf` cannot be opened for writing, when the game is running, and when the staging folder lies in the target. On Windows a `data.sah` or `data.saf` open in another program stops Install and Uninstall. So does a running `game.exe` of that folder. The message gives the reason. On other systems the editor cannot see whether the game runs. It only checks that the archive files are writable. It adds this line to the result: "Cannot check whether the game is running on this system; make sure it is closed."
+
+If an earlier change by the toolkit was interrupted in that folder, the editor finishes or undoes it first. It does this before it reads anything of the folder, and says so in the result. If that is not possible, nothing is changed.
+
+Install applies the patch with `shaiya-patch`. While it runs, the patch's `update.saf` is unpacked as a temporary file `.update.saf.<number>.shaiya-tmp` in the test client folder, so the folder needs free space of about the staged bytes again. The file is removed afterwards, also when the install fails. The editor keeps no journal (the toolkit's journal is not used here): the first backup of the index and Uninstall are what undo an install. `data.sah.bak` is overwritten by `shaiya-patch` on every install and is not a backup of this editor.
+
+After the patch is applied the editor checks the result. Every staged file must read back byte for byte from `data.saf`. No other entry may move. The old part of `data.saf` must be the same. If a check fails, the old index is put back and `data.saf` is cut back to its old length.
 
 The folder gets a record, `svmap-editor-install.json`, with the sizes and hashes of the files before and after.
+
+Status: Install and Uninstall were run on a copy of a US EP4.5 test client. The staged file read back from `data.saf`. `data.saf` grew by exactly the staged bytes. Uninstall gave back `data.sah` and `data.saf` byte for byte. Loading the result in the game is the part not proven.
 
 ### Uninstall
 

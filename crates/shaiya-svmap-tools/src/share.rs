@@ -25,7 +25,7 @@ pub const FIRST_BACKUP: &str = "data.sah.svmap-editor";
 /// The install record, in the folder that was installed into.
 pub const RECORD: &str = "svmap-editor-install.json";
 /// Shown in the export dialog and written to the log.
-pub const UNSIGNED_NOTE: &str = "This patch is unsigned. The original updater does not check signatures. The replacement updater needs one: sign the file with `shaiya patch sign`.";
+pub const UNSIGNED_NOTE: &str = "This patch is unsigned. The original updater does not check signatures. An updater that requires signed patches needs a signature file: sign the patch with `shaiya patch sign` or in Shaiya Toolkit (Sign & verify).";
 
 const EDGE: u64 = 1 << 20;
 
@@ -53,6 +53,22 @@ pub fn staged_files(out: &Path) -> Result<Vec<Staged>, String> {
     }
     found.sort_by_key(|s: &Staged| s.rel.to_lowercase());
     Ok(found)
+}
+
+/// The first staged file that is a program (`.exe` or `.dll`, any case): the editor changes data only and never stages, exports,
+/// installs or copies one.
+pub fn staged_program(staged: &[Staged]) -> Option<&Staged> {
+    staged.iter().find(|s| {
+        let l = s.rel.to_lowercase();
+        l.ends_with(".exe") || l.ends_with(".dll")
+    })
+}
+
+fn refuse_programs(staged: &[Staged]) -> Result<(), String> {
+    match staged_program(staged) {
+        Some(s) => Err(format!("{} is a program file (.exe or .dll). The editor changes data only and never exports, installs or copies one. Remove it from the staging folder.", s.rel)),
+        None => Ok(()),
+    }
 }
 
 fn walk(dir: &Path, rel: &str, out: &mut Vec<Staged>) -> std::io::Result<()> {
@@ -228,6 +244,7 @@ pub fn export_patch(out: &Path, source: &Path, dest: &Path, number: u32) -> Resu
     if staged.is_empty() {
         return Err("Nothing is staged. Save an edited client map to the staging folder first.".to_string());
     }
+    refuse_programs(&staged)?;
     fs::create_dir_all(dest).map_err(|e| format!("cannot create {}: {e}", dest.display()))?;
     let path = dest.join(&name);
     if path.exists() {
@@ -253,6 +270,7 @@ pub fn export_folder(out: &Path, source: &Path, dest: &Path) -> Result<Exported,
     if staged.is_empty() {
         return Err("Nothing is staged. Save an edited client map to the staging folder first.".to_string());
     }
+    refuse_programs(&staged)?;
     let root = dest.join("data");
     if let Some(s) = staged.iter().find(|s| rel_join(&root, &s.rel).exists()) {
         return Err(format!("{} is already in that folder. Pick an empty folder.", s.rel));
@@ -296,8 +314,12 @@ pub fn open_exclusive(path: &Path) -> std::io::Result<File> {
     o.open(path)
 }
 
-/// The checks every action on a target folder shares. `exclusive`: also refuse when `data.saf` is open elsewhere.
-pub fn check_target(target: &Path, g: &Guard, exclusive: bool) -> Result<(), String> {
+/// Said when the OS cannot tell whether the game runs (Linux, macOS).
+pub const UNKNOWN_RUNNING: &str = "Cannot check whether the game is running on this system; make sure it is closed.";
+
+/// The checks every action on a target folder shares. `exclusive`: also refuse when `data.saf` is open elsewhere or the game
+/// runs. `Ok(Some(text))` is a warning the caller adds to its result lines.
+pub fn check_target(target: &Path, g: &Guard, exclusive: bool) -> Result<Option<String>, String> {
     if !target.is_dir() {
         return Err(format!("{} is not a folder.", target.display()));
     }
@@ -317,8 +339,19 @@ pub fn check_target(target: &Path, g: &Guard, exclusive: bool) -> Result<(), Str
     read_index(target)?;
     if exclusive {
         open_exclusive(&target.join("data.saf")).map_err(|e| format!("data.saf cannot be opened for writing ({e}). Close the game and anything else that uses this client."))?;
+        let files = shaiya_archive::client::ClientFiles::locate(target).map_err(|e| e.to_string())?;
+        match shaiya_archive::client::in_use(&files) {
+            shaiya_archive::client::InUse::Busy(why) => return Err(format!("{why}. Close the game and anything else that uses this client.")),
+            shaiya_archive::client::InUse::Unknown => return Ok(Some(UNKNOWN_RUNNING.to_string())),
+            shaiya_archive::client::InUse::Free => {}
+        }
     }
-    Ok(())
+    Ok(None)
+}
+
+/// Finishes or undoes a change that an earlier run of a tool left unfinished in the test client, before anything of it is read.
+fn recover(target: &Path) -> Result<Vec<String>, String> {
+    shaiya_archive::client::recover(target).map_err(|e| format!("The test client has an unfinished change that could not be finished or undone: {e}. Nothing was changed by the editor."))
 }
 
 // -------------------------------------------------------------------------------------------------------------------- record
@@ -419,6 +452,8 @@ pub struct Installed {
     /// The first backup was made by this install.
     pub first: bool,
     pub timestamped: PathBuf,
+    /// What recovery of an unfinished earlier change did, and the warning that the game cannot be checked on this OS.
+    pub notes: Vec<String>,
 }
 
 fn timestamped_copy(target: &Path, now: SystemTime, expect: &[u8]) -> Result<PathBuf, String> {
@@ -441,6 +476,15 @@ fn timestamped_copy(target: &Path, now: SystemTime, expect: &[u8]) -> Result<Pat
 /// Puts the archive back as it was before a failed install: the index from `backup` and `data.saf` cut back to `saf_len`.
 fn roll_back(target: &Path, backup: &Path, sah: SahFp, saf_len: u64) -> (String, bool) {
     let _ = fs::remove_file(target.join("update.saf.tmp"));
+    // the temporary copy of update.saf that `shaiya_patch::apply` unpacks into the target (`.update.saf.<pid>.shaiya-tmp`)
+    if let Ok(rd) = fs::read_dir(target) {
+        for e in rd.flatten() {
+            let n = e.file_name().to_string_lossy().into_owned();
+            if n.starts_with(".update.saf.") && n.ends_with(".shaiya-tmp") {
+                let _ = fs::remove_file(e.path());
+            }
+        }
+    }
     let mut said = Vec::new();
     let sah_now = || fs::read(target.join("data.sah")).map(|b| sah_fp(&b)).ok();
     if sah_now() != Some(sah) {
@@ -466,11 +510,15 @@ fn roll_back(target: &Path, backup: &Path, sah: SahFp, saf_len: u64) -> (String,
 /// back. `data.sah.bak` is overwritten by `patch::apply` on each call, so it is not a backup of this editor.
 pub fn install(out: &Path, target: &Path, g: &Guard, now: SystemTime) -> Result<Installed, String> {
     let guard = Guard { source: g.source, also: g.also, out: Some(out) };
-    check_target(target, &guard, true)?;
+    let mut notes: Vec<String> = Vec::new();
+    notes.extend(check_target(target, &guard, true)?);
     let staged = staged_files(out)?;
     if staged.is_empty() {
         return Err("Nothing is staged. Save an edited client map to the staging folder first.".to_string());
     }
+    refuse_programs(&staged)?;
+    // Recover first: every baseline below (record, index, fingerprints, data.saf length) is taken after it.
+    notes.extend(recover(target)?);
     let record = read_record(target)?;
     let (sah_bytes, old_idx) = read_index(target)?;
     let sah_now = sah_fp(&sah_bytes);
@@ -537,7 +585,7 @@ pub fn install(out: &Path, target: &Path, g: &Guard, now: SystemTime) -> Result<
     if let Err(e) = write_record(target, &rec) {
         return Err(fail(e, target));
     }
-    Ok(Installed { added: report.added, replaced: report.replaced, bytes: report.bytes, first, timestamped })
+    Ok(Installed { added: report.added, replaced: report.replaced, bytes: report.bytes, first, timestamped, notes })
 }
 
 fn verify_install(target: &Path, old: &Index, staged: &[Staged], old_len: u64, old_fp: SafFp) -> Result<(), String> {
@@ -586,6 +634,8 @@ pub struct Uninstalled {
     pub installs: usize,
     /// `data.saf` was cut back to its old length (false: its length had changed since, so the dead bytes stay).
     pub saf_cut: bool,
+    /// As [`Installed::notes`].
+    pub notes: Vec<String>,
 }
 
 /// Gives back the archive as it was before the first install: the index from `data.sah.svmap-editor`, then `data.saf` cut back to
@@ -593,7 +643,9 @@ pub struct Uninstalled {
 /// changed since the last install (then restoring would undo someone else's work). Removes the record and the first backup after
 /// the restored index checked out. The timestamped copies stay.
 pub fn uninstall(target: &Path, g: &Guard) -> Result<Uninstalled, String> {
-    check_target(target, &Guard { source: g.source, also: g.also, out: None }, true)?;
+    let mut notes: Vec<String> = Vec::new();
+    notes.extend(check_target(target, &Guard { source: g.source, also: g.also, out: None }, true)?);
+    notes.extend(recover(target)?);
     let rec = read_record(target)?.ok_or_else(|| format!("{} has no {RECORD}. This editor did not install into it.", target.display()))?;
     let first = target.join(FIRST_BACKUP);
     let first_bytes = fs::read(&first).map_err(|e| format!("{FIRST_BACKUP} cannot be read ({e}). Nothing was changed."))?;
@@ -628,7 +680,7 @@ pub fn uninstall(target: &Path, g: &Guard) -> Result<Uninstalled, String> {
     }
     fs::remove_file(target.join(RECORD)).map_err(|e| format!("The archive is restored but {RECORD} could not be removed: {e}"))?;
     let _ = fs::remove_file(&first);
-    Ok(Uninstalled { installs: rec.installs.len(), saf_cut: cut })
+    Ok(Uninstalled { installs: rec.installs.len(), saf_cut: cut, notes })
 }
 
 // -------------------------------------------------------------------------------------------------------------------- copy loose
@@ -650,7 +702,9 @@ pub fn loose_plan(out: &Path, target: &Path, g: &Guard) -> Result<Vec<(Staged, L
     check_target(target, &Guard { source: g.source, also: g.also, out: Some(out) }, false)?;
     let (_, idx) = read_index(target)?;
     let root = target.join("data");
-    Ok(staged_files(out)?
+    let staged = staged_files(out)?;
+    refuse_programs(&staged)?;
+    Ok(staged
         .into_iter()
         .map(|s| {
             let dest = rel_join(&root, &s.rel);
@@ -735,6 +789,46 @@ mod tests {
 
     fn sums(dir: &Path) -> (Vec<u8>, Vec<u8>) {
         (fs::read(dir.join("data.sah")).unwrap(), fs::read(dir.join("data.saf")).unwrap())
+    }
+
+    /// No `update.saf.tmp` and no `.update.saf.*.shaiya-tmp` is left in `dir`.
+    fn assert_no_temp_files(dir: &Path) {
+        assert!(!dir.join("update.saf.tmp").exists());
+        let left: Vec<String> = fs::read_dir(dir)
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|n| n.starts_with(".update.saf.") && n.ends_with(".shaiya-tmp"))
+            .collect();
+        assert!(left.is_empty(), "temporary files left: {left:?}");
+    }
+
+    #[test]
+    fn programs_are_never_staged_exported_installed_or_copied() {
+        let root = TempDir::new("c6-exe");
+        let (source, out, test) = (root.join("source"), root.join("out"), root.join("test"));
+        tiny_client(&source);
+        tiny_client(&test);
+        let none: Vec<PathBuf> = Vec::new();
+        let g = Guard { source: &source, also: &none, out: None };
+        stage(&out, &[("world/9.wld", &[1u8; 8]), ("Game.EXE", b"MZ")]);
+        let staged = staged_files(&out).unwrap();
+        assert_eq!(staged_program(&staged).map(|s| s.rel.as_str()), Some("Game.EXE"));
+        let before = (sums(&source), sums(&test));
+        let e = export_patch(&out, &source, &root.join("share"), 5).unwrap_err();
+        assert!(e.contains("Game.EXE"), "{e}");
+        assert!(!root.join("share").join("ps0005.patch").exists());
+        assert!(export_folder(&out, &source, &root.join("plain")).unwrap_err().contains("Game.EXE"));
+        assert!(!root.join("plain").exists());
+        assert!(install(&out, &test, &g, SystemTime::now()).unwrap_err().contains("Game.EXE"));
+        assert!(loose_plan(&out, &test, &g).unwrap_err().contains("Game.EXE"));
+        assert!(copy_loose(&out, &test, &g).unwrap_err().contains("Game.EXE"));
+        assert!(!test.join("data").exists() && !test.join(FIRST_BACKUP).exists() && !test.join(RECORD).exists());
+        assert_eq!(before, (sums(&source), sums(&test)));
+        // a DLL in a subfolder, any case
+        let out2 = root.join("out2");
+        stage(&out2, &[("sub/Hook.DLL", b"MZ")]);
+        assert!(export_folder(&out2, &source, &root.join("plain2")).unwrap_err().contains("Hook.DLL"));
     }
 
     #[test]
@@ -822,6 +916,14 @@ mod tests {
             assert!(e.contains("Close the game"), "{e}");
             assert!(uninstall(&test, &g).is_err());
             drop(game);
+            // game.exe of the test client held open for writing: the game is running
+            fs::write(test.join("game.exe"), b"MZ").unwrap();
+            let exe = OpenOptions::new().read(true).write(true).share_mode(1).open(test.join("game.exe")).unwrap();
+            let e = install(&out, &test, &g, now).unwrap_err();
+            assert!(e.contains("game.exe") && e.contains("Close the game"), "{e}");
+            assert!(uninstall(&test, &g).is_err());
+            drop(exe);
+            fs::remove_file(test.join("game.exe")).unwrap();
         }
         assert_eq!(before, (sums(&source), sums(&test)), "every refusal left both clients as they were");
         assert!(!test.join(FIRST_BACKUP).exists() && !test.join(RECORD).exists());
@@ -840,6 +942,7 @@ mod tests {
         stage(&out, &[("world/2.wld", &[9u8; 50]), ("world/10.wld", &[5u8; 20])]);
         let t0 = SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_700_000_000);
         let a = install(&out, &test, &g, t0).unwrap();
+        assert_no_temp_files(&test);
         assert!(a.first);
         assert_eq!((a.added.len(), a.replaced.len(), a.bytes), (1, 1, 70));
         assert_eq!(fs::read(test.join(FIRST_BACKUP)).unwrap(), sah0, "the first backup is the original index");
@@ -857,6 +960,7 @@ mod tests {
         // a second install keeps the first backup and adds its own timestamped copy
         stage(&out, &[("world/2.wld", &[8u8; 60])]);
         let b = install(&out, &test, &g, t0 + std::time::Duration::from_secs(60)).unwrap();
+        assert_no_temp_files(&test);
         assert!(!b.first);
         assert_eq!(fs::read(test.join(FIRST_BACKUP)).unwrap(), sah0, "still the original index");
         assert_ne!(a.timestamped, b.timestamped);
@@ -896,7 +1000,7 @@ mod tests {
         fs::set_permissions(test.join("data.saf"), perm).unwrap();
         assert!(e.contains("cannot be opened") || e.contains("could not be applied"), "{e}");
         assert_eq!(sums(&test), before);
-        assert!(!test.join("update.saf.tmp").exists());
+        assert_no_temp_files(&test);
         assert!(!test.join(FIRST_BACKUP).exists() && !test.join(RECORD).exists(), "a refused install leaves no backup or record");
     }
 
@@ -983,6 +1087,81 @@ mod tests {
 
     fn by_after(out: &Path, test: &Path, g: &Guard, rel: &str) -> LooseVerdict {
         loose_plan(out, test, g).unwrap().into_iter().find(|(s, _)| s.rel == rel).unwrap().1
+    }
+
+    /// Removes the copied client folder, also when the test fails.
+    struct DeleteOnDrop(PathBuf);
+    impl Drop for DeleteOnDrop {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn sha_hex(p: &Path) -> String {
+        shaiya_core::hash::to_hex(&shaiya_core::hash::sha256_file(p, &shaiya_core::Job::silent()).unwrap())
+    }
+
+    /// The real `data.sah` and `data.saf` copied into `$SHAIYA_SCRATCH/svmap-share-<pid>`: one 28-byte staged file is installed, read
+    /// back at its index entry, and uninstalled; both copied files hash as before. The originals are only read: hash, size and
+    /// modification time are checked unchanged. Needs `SHAIYA_CLIENT` and `SHAIYA_SCRATCH` (a new empty folder, outside every repo).
+    #[test]
+    fn real_client_copy_install_uninstall() {
+        let (Some(client), Some(scratch)) = (std::env::var_os("SHAIYA_CLIENT").map(PathBuf::from), std::env::var_os("SHAIYA_SCRATCH").map(PathBuf::from)) else {
+            eprintln!("skipped: SHAIYA_CLIENT and SHAIYA_SCRATCH not both set");
+            return;
+        };
+        if !client.join("data.sah").is_file() || !client.join("data.saf").is_file() || !scratch.is_dir() {
+            eprintln!("skipped: SHAIYA_CLIENT has no data.sah/data.saf or SHAIYA_SCRATCH is not a folder");
+            return;
+        }
+        let meta = |p: &Path| {
+            let m = fs::metadata(p).unwrap();
+            (m.len(), m.modified().unwrap())
+        };
+        let orig = ["data.sah", "data.saf"].map(|n| client.join(n));
+        let orig_hash = orig.clone().map(|p| sha_hex(&p));
+        let orig_meta = orig.clone().map(|p| meta(&p));
+        eprintln!("originals: data.sah sha256 {} ({} bytes), data.saf sha256 {} ({} bytes)", orig_hash[0], orig_meta[0].0, orig_hash[1], orig_meta[1].0);
+
+        let test = scratch.join(format!("svmap-share-{}", std::process::id()));
+        assert!(!test.exists(), "{} already exists", test.display());
+        fs::create_dir_all(&test).unwrap();
+        let _cleanup = DeleteOnDrop(test.clone());
+        for n in ["data.sah", "data.saf"] {
+            fs::copy(client.join(n), test.join(n)).unwrap();
+        }
+        let before = ["data.sah", "data.saf"].map(|n| sha_hex(&test.join(n)));
+        assert_eq!(before, orig_hash, "the copies hash like the originals");
+
+        let out = scratch.join(format!("svmap-share-{}-out", std::process::id()));
+        let _cleanup_out = DeleteOnDrop(out.clone());
+        let payload: Vec<u8> = (0..28u8).map(|i| i.wrapping_mul(7).wrapping_add(3)).collect();
+        stage(&out, &[("world/svmap-share-test.bin", &payload)]);
+        let none: Vec<PathBuf> = Vec::new();
+        let g = Guard { source: &client, also: &none, out: None };
+        let saf_before = fs::metadata(test.join("data.saf")).unwrap().len();
+        let done = install(&out, &test, &g, SystemTime::now()).unwrap();
+        let saf_after = fs::metadata(test.join("data.saf")).unwrap().len();
+        eprintln!("install: added {:?}, replaced {:?}, notes {:?}; data.saf grew by {} bytes (staged {} bytes)", done.added, done.replaced, done.notes, saf_after - saf_before, payload.len());
+        assert_eq!(saf_after - saf_before, payload.len() as u64, "data.saf grows by exactly the staged bytes");
+        let idx = Index::parse(&fs::read(test.join("data.sah")).unwrap()).unwrap();
+        let e = idx.get("world/svmap-share-test.bin").expect("the staged file is in the new index");
+        let mut f = File::open(test.join("data.saf")).unwrap();
+        let mut buf = vec![0u8; e.length as usize];
+        f.seek(SeekFrom::Start(e.offset)).and_then(|_| f.read_exact(&mut buf)).unwrap();
+        assert_eq!(buf, payload, "the staged bytes read back at the index entry");
+        assert_no_temp_files(&test);
+        drop(f);
+        let u = uninstall(&test, &g).unwrap();
+        assert!(u.saf_cut);
+        let after = ["data.sah", "data.saf"].map(|n| sha_hex(&test.join(n)));
+        eprintln!("copy after uninstall: data.sah sha256 {}, data.saf sha256 {}", after[0], after[1]);
+        assert_eq!(after, before, "both copied files hash as before");
+        assert_no_temp_files(&test);
+
+        let now_hash = orig.clone().map(|p| sha_hex(&p));
+        assert_eq!(now_hash, orig_hash, "the original client files hash as before");
+        assert_eq!(orig.map(|p| meta(&p)), orig_meta, "the original client files keep size and modification time");
     }
 
     /// The real client's archive, copied to a temp folder: installing the staged files and uninstalling gives the same bytes back.
