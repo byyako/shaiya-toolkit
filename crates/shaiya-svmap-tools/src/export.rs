@@ -169,12 +169,20 @@ pub fn map_json(m: &Svmap) -> Result<String, String> {
     shaiya_svmap::to_json_pretty(m).map_err(|e| e.to_string())
 }
 
-/// Whether an export may write `path`: never a map or client archive file (`.svmap`, `.sah`, `.saf`, whatever the dialog's filter
-/// said), and never one of the `protected` files (the open tabs' and the folder's maps). Err holds the reason.
-pub fn check_target(path: &std::path::Path, protected: &[&std::path::Path]) -> Result<(), String> {
+/// Whether an export may write `path`: never a map, client archive or program file (`.svmap`, `.sah`, `.saf`, `.exe`, `.dll`,
+/// whatever the dialog's filter said), never one of the `protected` files (the open tabs' and the folder's maps), and never into,
+/// around or at one of the `client_dirs` (every client folder the editor reads). Err holds the reason.
+pub fn check_target(path: &std::path::Path, protected: &[&std::path::Path], client_dirs: &[std::path::PathBuf]) -> Result<(), String> {
     let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase();
-    if matches!(ext.as_str(), "svmap" | "sah" | "saf") {
+    if matches!(ext.as_str(), "svmap" | "sah" | "saf" | "exe" | "dll") {
         return Err(format!("{}: an export never writes a .{ext} file (pick a .csv, .json or .png name)", path.display()));
+    }
+    let abs = std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf());
+    let folder = abs.parent().map(std::path::Path::to_path_buf).unwrap_or_else(|| abs.clone());
+    for c in client_dirs {
+        if crate::client_files::lies_in(&abs, c) || crate::client_files::lies_in(&folder, c) || crate::client_files::lies_in(c, &folder) {
+            return Err(format!("{}: that is in or around the client folder {}. An export never writes the client folder; pick another folder.", path.display(), c.display()));
+        }
     }
     let same = |a: &std::path::Path, b: &std::path::Path| match (std::fs::canonicalize(a), std::fs::canonicalize(b)) {
         (Ok(x), Ok(y)) => x == y,
@@ -288,14 +296,30 @@ mod tests {
         std::fs::write(&map, b"x").unwrap();
         let odd = dir.join("notes.txt");
         std::fs::write(&odd, b"x").unwrap();
-        for bad in ["1.svmap", "2.SVMAP", "data.sah", "data.SAF"] {
-            assert!(check_target(&dir.join(bad), &[]).is_err(), "{bad}");
+        for bad in ["1.svmap", "2.SVMAP", "data.sah", "data.SAF", "game.exe", "Game.EXE", "d3d9.dll", "X.Dll"] {
+            assert!(check_target(&dir.join(bad), &[], &[]).is_err(), "{bad}");
         }
         // an open file under any extension is refused, also when spelled with another case
-        assert!(check_target(&odd, &[odd.as_path()]).is_err());
-        assert!(check_target(&dir.join("NOTES.TXT"), &[odd.as_path()]).is_err());
-        assert!(check_target(&dir.join("1-monster-areas.csv"), &[map.as_path(), odd.as_path()]).is_ok());
-        assert!(check_target(&dir.join("1.json"), &[map.as_path()]).is_ok());
+        assert!(check_target(&odd, &[odd.as_path()], &[]).is_err());
+        assert!(check_target(&dir.join("NOTES.TXT"), &[odd.as_path()], &[]).is_err());
+        assert!(check_target(&dir.join("1-monster-areas.csv"), &[map.as_path(), odd.as_path()], &[]).is_ok());
+        assert!(check_target(&dir.join("1.json"), &[map.as_path()], &[]).is_ok());
+        // a client folder: a file in it, in a folder inside it, a folder around it, or the folder itself is refused
+        let client = dir.join("client");
+        std::fs::create_dir_all(client.join("sub")).unwrap();
+        let other = dir.join("elsewhere");
+        std::fs::create_dir_all(&other).unwrap();
+        let clients = [client.clone()];
+        for bad in [client.join("a.csv"), client.join("sub").join("a.json"), client.join("sub").join("not-yet").join("a.png"), dir.join("a.csv"), client.clone()] {
+            assert!(check_target(&bad, &[], &clients).is_err(), "{}", bad.display());
+        }
+        assert!(check_target(&other.join("a.csv"), &[], &clients).is_ok());
+        #[cfg(windows)]
+        {
+            // the same folder under another spelling (upper case, forward slashes) is the same folder
+            let s = client.to_string_lossy().to_uppercase().replace('\\', "/");
+            assert!(check_target(&std::path::PathBuf::from(format!("{s}/a.csv")), &[], &clients).is_err());
+        }
         let _ = std::fs::remove_dir_all(&dir);
     }
 

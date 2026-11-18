@@ -1205,6 +1205,35 @@ fn exports_refuse_map_files() {
     assert!(!maps.join("data.sah").exists());
 }
 
+/// Exports (CSV, JSON, PNG bytes, all-CSV) into the opened client folder, or under a program name, write nothing.
+#[test]
+fn exports_refuse_the_client_folder_and_program_names() {
+    let maps = TempDir::new("export-guard-client-maps");
+    three_maps(maps.path());
+    let root = TempDir::new("export-guard-client");
+    let c = client_dir(&root);
+    let mut h = Harness::new(None, StartOptions { folder: Some(maps.path().to_path_buf()), client: Some(c.clone()), maps: vec![1], ..Default::default() });
+    wait_for_folder(&mut h);
+    let before: Vec<_> = std::fs::read_dir(&c).unwrap().flatten().map(|e| e.file_name()).collect();
+    assert!(h.app.export_section_csv(crate::export::Kind::Areas, &c.join("areas.csv")).is_err());
+    assert!(h.app.export_json_to(&c.join("1.json")).is_err());
+    assert!(h.app.export_folder_areas_csv(&c.join("folder.csv")).is_err());
+    assert!(h.app.export_write(&c.join("view.png"), b"x").is_err());
+    assert!(h.app.export_all_csv(&c).is_err());
+    let sub = c.join("data");
+    std::fs::create_dir_all(&sub).unwrap();
+    assert!(h.app.export_write(&sub.join("view.png"), b"x").is_err());
+    std::fs::remove_dir(&sub).unwrap();
+    let after: Vec<_> = std::fs::read_dir(&c).unwrap().flatten().map(|e| e.file_name()).collect();
+    assert_eq!(before, after, "nothing was written into the client folder");
+    // a program name is refused anywhere
+    let out = TempDir::new("export-guard-client-out");
+    assert!(h.app.export_write(&out.join("game.exe"), b"x").is_err());
+    assert!(h.app.export_write(&out.join("D3D9.DLL"), b"x").is_err());
+    assert!(!out.join("game.exe").exists() && !out.join("D3D9.DLL").exists());
+    h.app.export_write(&out.join("ok.csv"), b"x").unwrap();
+}
+
 // ---------------------------------------------------------------------------------------------------------------------- layout
 
 impl Harness {

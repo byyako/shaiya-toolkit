@@ -961,7 +961,10 @@ impl App {
         if let Some(f) = &self.folder {
             protected.extend(f.maps.values().map(|m| m.path.as_path()));
         }
-        export::check_target(path, &protected)?;
+        // every client folder the editor reads: the opened one, the settings one and the main one from SHAIYA_CLIENT
+        let mut clients = self.share_guard_also();
+        clients.extend(self.client_path.clone());
+        export::check_target(path, &protected, &clients)?;
         std::fs::write(path, data).map_err(|e| format!("{}: {e}", path.display()))
     }
 

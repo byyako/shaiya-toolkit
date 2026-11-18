@@ -160,7 +160,7 @@ impl App {
 
     /// Folders never installed into besides the opened client: the main client from `SHAIYA_CLIENT`, and the client folder kept in
     /// the settings (when the opened client is a different one, the settings folder is most likely the one the user plays on).
-    fn share_guard_also(&self) -> Vec<PathBuf> {
+    pub(crate) fn share_guard_also(&self) -> Vec<PathBuf> {
         let mut also = main_client_guard();
         also.extend(self.settings.client_folder.as_deref().map(PathBuf::from).filter(|p| p.is_dir()));
         also
