@@ -3401,8 +3401,17 @@ fn c6_share_window() {
     for want in ["Share client changes", "Staged files: 1", "world/9.wld", "unsigned", "Export patch", "Install into a test client", "not proven in the game"] {
         assert!(h.text.contains(want), "{want}: {}", h.text);
     }
-    // export
+    // export: there is no default number, so Export patch needs one typed (this client has no Version.ini and no patch files)
+    assert_eq!(h.app.c6.win.as_ref().unwrap().number(), None);
     let dest = root.join("share");
+    h.app.share_act(Act::ExportPatch, Some(dest.clone()));
+    assert!(h.app.c6.win.as_ref().unwrap().msg.iter().any(|(bad, t)| *bad && t.contains("patch number")), "{:?}", h.app.c6.win.as_ref().unwrap().msg);
+    assert!(!dest.exists());
+    {
+        let w = h.app.c6.win.as_mut().unwrap();
+        w.number_text = "109".to_string();
+        w.typed = true;
+    }
     h.app.share_act(Act::ExportPatch, Some(dest.clone()));
     assert!(dest.join("ps0109.patch").is_file());
     let msg = h.app.c6.win.as_ref().unwrap().msg.clone();
@@ -3432,6 +3441,67 @@ fn c6_share_window() {
     assert_eq!(std::fs::read(test.join("data.sah")).unwrap(), sah0);
     assert!(h.app.c6.win.as_ref().unwrap().msg.iter().all(|(bad, _)| !bad));
     assert_eq!(client_files(&client), before);
+}
+
+/// The patch number field: no default, both candidates shown, the higher one suggested, and a typed number kept.
+#[test]
+fn c6_patch_number_field() {
+    use super::c6_ui::{Act, ShareWin};
+    // no client folder: the line says so and nothing is suggested
+    let none = ShareWin { number_text: String::new(), typed: false, hint: Default::default(), has_client: false, staged: Vec::new(), target: None, status: String::new(), confirm: false, msg: Vec::new() };
+    assert_eq!(none.hint_lines(), vec!["Set the client folder to get a patch number".to_string()]);
+    assert_eq!(none.number(), None);
+
+    let root = TempDir::new("c6-number");
+    let (mut h, client, _maps) = c5_harness(&root);
+    let out = root.join("out");
+    std::fs::create_dir_all(out.join("data/world")).unwrap();
+    std::fs::write(out.join("data/world/9.wld"), [3u8; 40]).unwrap();
+    h.size = Vec2::new(1400.0, 1500.0);
+    h.app.open_share();
+    h.frames(3);
+    // neither candidate exists
+    assert_eq!(h.app.c6.win.as_ref().unwrap().number_text, "");
+    for want in ["Version.ini CurrentVersion: none found", "Highest patch file: none found", "Suggested: none"] {
+        assert!(h.text.contains(want), "{want}: {}", h.text);
+    }
+    // Version.ini only: 108 -> 109
+    std::fs::write(client.join("Version.ini"), "[Version]\r\nCheckVersion=108\r\nCurrentVersion=108\r\n").unwrap();
+    h.app.share_act(Act::Refresh, None);
+    h.frames(3);
+    assert_eq!(h.app.c6.win.as_ref().unwrap().number_text, "109");
+    for want in ["Version.ini CurrentVersion 108: next 109", "Highest patch file: none found", "Suggested: 109"] {
+        assert!(h.text.contains(want), "{want}: {}", h.text);
+    }
+    // an export folder with ps0110.patch: both candidates, the higher one (111) is suggested
+    let dest = root.join("share");
+    std::fs::create_dir_all(&dest).unwrap();
+    std::fs::write(dest.join("ps0110.patch"), b"x").unwrap();
+    h.app.c6.last_export = Some(dest.clone());
+    h.app.share_act(Act::Refresh, None);
+    h.frames(3);
+    assert_eq!(h.app.c6.win.as_ref().unwrap().number_text, "111");
+    for want in ["Version.ini CurrentVersion 108: next 109", "Highest patch file ps0110.patch in share: next 111", "Suggested: 111 (the higher)"] {
+        assert!(h.text.contains(want), "{want}: {}", h.text);
+    }
+    // exporting with the suggested number writes ps0111 and the field moves on to 112
+    h.app.share_act(Act::ExportPatch, Some(dest.clone()));
+    assert!(dest.join("ps0111.patch").is_file());
+    assert_eq!(h.app.c6.win.as_ref().unwrap().number_text, "112");
+    // a typed number is kept when the suggestion changes
+    {
+        let w = h.app.c6.win.as_mut().unwrap();
+        w.number_text = "150".to_string();
+        w.typed = true;
+    }
+    std::fs::write(dest.join("ps0200.patch"), b"x").unwrap();
+    h.app.share_act(Act::Refresh, None);
+    let w = h.app.c6.win.as_ref().unwrap();
+    assert_eq!((w.number_text.as_str(), w.hint.suggested), ("150", Some(201)));
+    // an existing patch file is still refused
+    h.app.c6.win.as_mut().unwrap().number_text = "111".to_string();
+    h.app.share_act(Act::ExportPatch, Some(dest.clone()));
+    assert!(h.app.c6.win.as_ref().unwrap().msg.iter().any(|(bad, t)| *bad && t.contains("already")), "{:?}", h.app.c6.win.as_ref().unwrap().msg);
 }
 
 /// The client chip carries the episode notes: a client without `NpcQuest.SData` names it in the chip text, a complete one shows no

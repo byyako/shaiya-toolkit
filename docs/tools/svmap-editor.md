@@ -917,7 +917,7 @@ The staged files are plain files under `data`. **Tools > Client > Share client c
 
 ### Export a patch
 
-**Export patch...** writes `psNNNN.patch` into a folder you pick. Set the number first. The file is the format of the game's updater: the staged files, nothing else. The editor reads the new patch back and checks that it lists exactly the staged files. It never replaces a patch that is already in the folder.
+**Export patch...** writes `psNNNN.patch` into a folder you pick. The number field starts from the client and never from a fixed number. It shows two candidates. The first is the `CurrentVersion` of the client's `Version.ini` plus one. The second is the highest `psNNNN.patch` plus one. That file is looked for in the client folder, its `data` folder and the folder of your last export. It suggests the higher of the two and fills the field with it until you type a number. A candidate that is not found says "none found". Without a client folder the field stays empty, and Export patch waits for a number from 1 to 9999. The file is the format of the game's updater: the staged files, nothing else. The editor reads the new patch back and checks that it lists exactly the staged files. It never replaces a patch that is already in the folder.
 
 The patch is **unsigned**. The original updater does not check signatures. An updater that requires signed patches needs a signature file: sign the patch with `shaiya patch sign` or in Shaiya Toolkit (Sign & verify). The editor does not sign.
 

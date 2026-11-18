@@ -14,10 +14,18 @@ use crate::share::{self, Guard, LooseVerdict, Staged};
 #[derive(Default)]
 pub struct C6 {
     pub win: Option<ShareWin>,
+    /// The folder of the last export of this run: its patch files count for the next number.
+    pub last_export: Option<PathBuf>,
 }
 
 pub struct ShareWin {
-    pub number: u32,
+    /// The number field as typed or suggested; empty until there is a suggestion.
+    pub number_text: String,
+    /// The user typed in the field: the suggestion no longer overwrites it.
+    pub typed: bool,
+    pub hint: shaiya_patch::NumberHint,
+    /// A client folder was set when the hint was made.
+    pub has_client: bool,
     pub staged: Vec<Staged>,
     pub target: Option<PathBuf>,
     /// What the chosen folder holds: a line of text.
@@ -25,6 +33,47 @@ pub struct ShareWin {
     pub confirm: bool,
     /// `(is an error, text)` of the last action.
     pub msg: Vec<(bool, String)>,
+}
+
+impl ShareWin {
+    /// The patch number in the field, when it is a number from 1 to 9999.
+    pub fn number(&self) -> Option<u32> {
+        self.number_text.trim().parse::<u32>().ok().filter(|n| (1..=9999).contains(n))
+    }
+
+    /// Takes a new hint; the field follows the suggestion unless the user typed a number.
+    pub fn set_hint(&mut self, hint: shaiya_patch::NumberHint, has_client: bool) {
+        if !self.typed {
+            self.number_text = hint.suggested.map(|n| n.to_string()).unwrap_or_default();
+        }
+        self.hint = hint;
+        self.has_client = has_client;
+    }
+
+    /// The lines under the number field: both candidates and the suggestion.
+    pub fn hint_lines(&self) -> Vec<String> {
+        if !self.has_client {
+            return vec!["Set the client folder to get a patch number".to_string()];
+        }
+        let mut v = Vec::new();
+        v.push(match self.hint.from_version_ini {
+            Some((seen, next)) => format!("Version.ini CurrentVersion {seen}: next {next}"),
+            None => "Version.ini CurrentVersion: none found".to_string(),
+        });
+        v.push(match &self.hint.from_patch_files {
+            Some((n, next, dir)) => {
+                let folder = dir.file_name().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
+                format!("Highest patch file {} in {folder}: next {next}", shaiya_patch::patch_name(*n))
+            }
+            None => "Highest patch file: none found".to_string(),
+        });
+        v.push(match (self.hint.suggested, self.hint.from_version_ini.is_some() && self.hint.from_patch_files.is_some()) {
+            (Some(s), true) => format!("Suggested: {s} (the higher)"),
+            (Some(s), false) => format!("Suggested: {s}"),
+            (None, _) => "Suggested: none".to_string(),
+        });
+        v
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -72,7 +121,25 @@ impl App {
             return;
         }
         let staged = self.settings.client_out.as_deref().map(|o| share::staged_files(Path::new(o)).unwrap_or_default()).unwrap_or_default();
-        self.c6.win = Some(ShareWin { number: 109, staged, target: None, status: String::new(), confirm: false, msg: Vec::new() });
+        let mut win = ShareWin { number_text: String::new(), typed: false, hint: Default::default(), has_client: false, staged, target: None, status: String::new(), confirm: false, msg: Vec::new() };
+        let hint = self.share_number_hint();
+        win.set_hint(hint, self.client_path.is_some());
+        self.c6.win = Some(win);
+    }
+
+    /// The next patch number from the client's Version.ini and the patch files in the client folder and the last export folder.
+    fn share_number_hint(&self) -> shaiya_patch::NumberHint {
+        let dirs: Vec<&Path> = self.c6.last_export.iter().map(|p| p.as_path()).collect();
+        shaiya_patch::number_hint(self.client_path.as_deref(), &dirs)
+    }
+
+    /// Recomputes the hint (after an export folder was picked or the Refresh button).
+    fn share_refresh_hint(&mut self) {
+        let hint = self.share_number_hint();
+        let has_client = self.client_path.is_some();
+        if let Some(w) = self.c6.win.as_mut() {
+            w.set_hint(hint, has_client);
+        }
     }
 
     pub(super) fn demo_share(&mut self, arg: &str) {
@@ -122,7 +189,16 @@ impl App {
                         self.c6.win = Some(w);
                         return;
                     };
-                    let r = if act == Act::ExportPatch { share::export_patch(out, source, &dest, w.number) } else { share::export_folder(out, source, &dest) };
+                    // picking the export folder counts its patch files for the next number
+                    self.c6.last_export = Some(dest.clone());
+                    let r = if act == Act::ExportPatch {
+                        match w.number() {
+                            Some(n) => share::export_patch(out, source, &dest, n),
+                            None => Err("Type a patch number from 1 to 9999.".to_string()),
+                        }
+                    } else {
+                        share::export_folder(out, source, &dest)
+                    };
                     match r {
                         Ok(e) => {
                             msg.push((false, format!("Wrote {} with {} file(s).", short(&e.path), e.files.len())));
@@ -214,13 +290,17 @@ impl App {
             _ => w.msg = msg,
         }
         self.c6.win = Some(w);
+        if matches!(act, Act::ExportPatch | Act::ExportFolder | Act::Refresh) {
+            self.share_refresh_hint();
+        }
         self.share_status();
     }
 
     pub(super) fn share_window(&mut self, ctx: &egui::Context) {
         let Some(w) = self.c6.win.as_ref() else { return };
-        let (staged, number, target, status, confirm, msgs) = (w.staged.clone(), w.number, w.target.clone(), w.status.clone(), w.confirm, w.msg.clone());
-        let mut num = number;
+        let (staged, target, status, confirm, msgs) = (w.staged.clone(), w.target.clone(), w.status.clone(), w.confirm, w.msg.clone());
+        let (mut num_text, mut typed) = (w.number_text.clone(), w.typed);
+        let hint_lines = w.hint_lines();
         let mut confirm_now = confirm;
         let mut act: Option<(Act, Option<PathBuf>)> = None;
         let mut open = true;
@@ -247,19 +327,25 @@ impl App {
                 }
                 ui.separator();
                 ui.heading("Export");
+                let num: Option<u32> = num_text.trim().parse::<u32>().ok().filter(|n| (1..=9999).contains(n));
                 ui.horizontal(|ui| {
                     ui.label("Patch number");
-                    ui.add(egui::DragValue::new(&mut num).range(1..=9999));
-                    ui.label(share::patch_name(num).unwrap_or_default());
+                    if ui.add(egui::TextEdit::singleline(&mut num_text).desired_width(56.0)).changed() {
+                        typed = true;
+                    }
+                    ui.label(num.and_then(|n| share::patch_name(n).ok()).unwrap_or_default());
                 });
+                for l in &hint_lines {
+                    ui.label(RichText::new(l.as_str()).weak());
+                }
                 ui.horizontal(|ui| {
-                    let on = !staged.is_empty();
+                    let on = !staged.is_empty() && num.is_some();
                     if ui.add_enabled(on, egui::Button::new("Export patch...")).on_hover_text(help_text::tip("share-patch")).clicked() {
                         if let Some(p) = rfd::FileDialog::new().set_title("Folder for the patch").pick_folder() {
                             act = Some((Act::ExportPatch, Some(p)));
                         }
                     }
-                    if ui.add_enabled(on, egui::Button::new("Export folder...")).on_hover_text(help_text::tip("share-folder")).clicked() {
+                    if ui.add_enabled(!staged.is_empty(), egui::Button::new("Export folder...")).on_hover_text(help_text::tip("share-folder")).clicked() {
                         if let Some(p) = rfd::FileDialog::new().set_title("Empty folder for the copy").pick_folder() {
                             act = Some((Act::ExportFolder, Some(p)));
                         }
@@ -304,7 +390,8 @@ impl App {
             });
         });
         if let Some(w) = self.c6.win.as_mut() {
-            w.number = num;
+            w.number_text = num_text;
+            w.typed = typed;
             w.confirm = confirm_now;
         }
         if !open {

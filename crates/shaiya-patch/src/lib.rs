@@ -155,7 +155,12 @@ pub fn number_hint(client: Option<&Path>, patch_dirs: &[&Path]) -> NumberHint {
     let mut hint = NumberHint::default();
     let mut dirs: Vec<PathBuf> = Vec::new();
     if let Some(c) = client {
-        if let Some(cur) = ClientFiles::locate(c).ok().and_then(|f| client::read_version_ini(&f)).and_then(|v| v.current_version) {
+        // An extracted client has no archive: its Version.ini is still read.
+        let files = ClientFiles::locate(c).ok().or_else(|| {
+            let ini = fs::read_dir(c).ok()?.flatten().find(|e| e.file_name().to_string_lossy().eq_ignore_ascii_case("version.ini") && e.path().is_file())?.path();
+            Some(ClientFiles { dir: c.to_path_buf(), sah: c.join("data.sah"), saf: c.join("data.saf"), game_exe: None, version_ini: Some(ini) })
+        });
+        if let Some(cur) = files.and_then(|f| client::read_version_ini(&f)).and_then(|v| v.current_version) {
             hint.from_version_ini = Some((cur, cur.saturating_add(1)));
         }
         dirs.push(c.to_path_buf());
@@ -957,6 +962,11 @@ mod tests {
         assert_eq!(h.from_version_ini, Some((108, 109)));
         assert_eq!(h.from_patch_files, None);
         assert_eq!(h.suggested, Some(109));
+        // an extracted client (no archive) still has its Version.ini read
+        let x = tmp.path().join("extracted");
+        fs::create_dir_all(&x).unwrap();
+        fs::write(x.join("VERSION.INI"), "[Version]\nCurrentVersion=77\n").unwrap();
+        assert_eq!(number_hint(Some(&x), &[]).from_version_ini, Some((77, 78)));
     }
 
     #[test]
