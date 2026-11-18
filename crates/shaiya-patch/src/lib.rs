@@ -137,6 +137,47 @@ pub fn patch_name(number: u32) -> String {
     format!("ps{number:04}.patch")
 }
 
+/// Where the next patch number could come from (see [`number_hint`]).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct NumberHint {
+    /// `(CurrentVersion seen in Version.ini, next)`.
+    pub from_version_ini: Option<(u32, u32)>,
+    /// `(highest psNNNN.patch number seen, next, folder of that file)`.
+    pub from_patch_files: Option<(u32, u32, PathBuf)>,
+    /// The higher of the two `next` values; `None` when there is none or it is outside 1..=9999.
+    pub suggested: Option<u32>,
+}
+
+/// The next free patch number: `CurrentVersion + 1` of the client's `Version.ini`, and the highest `psNNNN.patch` found in the client
+/// folder, its `data` subfolder and each of `patch_dirs`, plus one. Suggests the higher of the two (never the number of a patch file
+/// that is there). Unreadable folders are skipped.
+pub fn number_hint(client: Option<&Path>, patch_dirs: &[&Path]) -> NumberHint {
+    let mut hint = NumberHint::default();
+    let mut dirs: Vec<PathBuf> = Vec::new();
+    if let Some(c) = client {
+        if let Some(cur) = ClientFiles::locate(c).ok().and_then(|f| client::read_version_ini(&f)).and_then(|v| v.current_version) {
+            hint.from_version_ini = Some((cur, cur.saturating_add(1)));
+        }
+        dirs.push(c.to_path_buf());
+        dirs.push(c.join("data"));
+    }
+    dirs.extend(patch_dirs.iter().map(|p| p.to_path_buf()));
+    let mut best: Option<(u32, PathBuf)> = None;
+    for d in dirs {
+        let Ok(rd) = fs::read_dir(&d) else { continue };
+        for e in rd.flatten() {
+            let Some(n) = e.file_name().to_str().and_then(patch_number) else { continue };
+            if best.as_ref().is_none_or(|(b, _)| n > *b) {
+                best = Some((n, d.clone()));
+            }
+        }
+    }
+    hint.from_patch_files = best.map(|(n, d)| (n, n.saturating_add(1), d));
+    let next = [hint.from_version_ini.map(|v| v.1), hint.from_patch_files.as_ref().map(|v| v.1)].into_iter().flatten().max();
+    hint.suggested = next.filter(|n| (1..=9999).contains(n));
+    hint
+}
+
 /// Archive paths with their lengths, and loose file names.
 pub type PatchListing = (Vec<(String, u32)>, Vec<String>);
 
@@ -887,6 +928,100 @@ mod tests {
 
     fn tmpdir(name: &str) -> shaiya_testkit::TempDir {
         shaiya_testkit::TempDir::new(name)
+    }
+
+    fn hint_client(dir: &Path, version_ini: Option<&str>) {
+        fs::create_dir_all(dir).unwrap();
+        fs::write(dir.join("data.sah"), b"").unwrap();
+        fs::write(dir.join("data.saf"), b"").unwrap();
+        if let Some(t) = version_ini {
+            fs::write(dir.join("Version.ini"), t).unwrap();
+        }
+    }
+
+    #[test]
+    fn number_hint_without_sources_suggests_nothing() {
+        assert_eq!(number_hint(None, &[]), NumberHint::default());
+        let tmp = tmpdir("hint-none");
+        hint_client(&tmp.path().join("c"), None);
+        assert_eq!(number_hint(Some(&tmp.path().join("c")), &[]).suggested, None);
+        assert_eq!(number_hint(Some(&tmp.path().join("missing")), &[&tmp.path().join("also-missing")]).suggested, None);
+    }
+
+    #[test]
+    fn number_hint_from_version_ini_only() {
+        let tmp = tmpdir("hint-ini");
+        let c = tmp.path().join("c");
+        hint_client(&c, Some("[Version]\r\nCheckVersion=108\r\nCurrentVersion=108\r\n"));
+        let h = number_hint(Some(&c), &[]);
+        assert_eq!(h.from_version_ini, Some((108, 109)));
+        assert_eq!(h.from_patch_files, None);
+        assert_eq!(h.suggested, Some(109));
+    }
+
+    #[test]
+    fn number_hint_from_patch_files_only() {
+        let tmp = tmpdir("hint-files");
+        let c = tmp.path().join("c");
+        hint_client(&c, None);
+        fs::create_dir_all(c.join("data")).unwrap();
+        fs::write(c.join("ps0105.patch"), b"x").unwrap();
+        fs::write(c.join("data").join("ps0107.patch"), b"x").unwrap();
+        let h = number_hint(Some(&c), &[]);
+        assert_eq!(h.from_version_ini, None);
+        assert_eq!(h.from_patch_files, Some((107, 108, c.join("data"))));
+        assert_eq!(h.suggested, Some(108));
+        // a patch folder alone (no client)
+        let out = tmp.path().join("out");
+        fs::create_dir_all(&out).unwrap();
+        fs::write(out.join("ps0030.patch"), b"x").unwrap();
+        let h = number_hint(None, &[&out]);
+        assert_eq!(h.from_patch_files, Some((30, 31, out.clone())));
+        assert_eq!(h.suggested, Some(31));
+    }
+
+    #[test]
+    fn number_hint_takes_the_higher_candidate() {
+        let tmp = tmpdir("hint-both");
+        let c = tmp.path().join("c");
+        hint_client(&c, Some("[Version]\nCurrentVersion=108\n"));
+        let out = tmp.path().join("out");
+        fs::create_dir_all(&out).unwrap();
+        fs::write(out.join("ps0110.patch"), b"x").unwrap();
+        let h = number_hint(Some(&c), &[&out]);
+        assert_eq!(h.from_version_ini, Some((108, 109)));
+        assert_eq!(h.from_patch_files, Some((110, 111, out.clone())));
+        assert_eq!(h.suggested, Some(111));
+        // a higher Version.ini wins
+        fs::write(c.join("Version.ini"), "[Version]\nCurrentVersion=200\n").unwrap();
+        assert_eq!(number_hint(Some(&c), &[&out]).suggested, Some(201));
+    }
+
+    #[test]
+    fn number_hint_follows_patch_number_for_names() {
+        let tmp = tmpdir("hint-names");
+        let d = tmp.path().join("d");
+        fs::create_dir_all(&d).unwrap();
+        fs::write(d.join("PS0120.PATCH"), b"x").unwrap();
+        fs::write(d.join("ps0109.patch.sig"), b"x").unwrap();
+        fs::write(d.join("ps0500.patch.tmp"), b"x").unwrap();
+        fs::write(d.join("ps12.patch"), b"x").unwrap();
+        fs::write(d.join("notes.patch"), b"x").unwrap();
+        let h = number_hint(None, &[&d]);
+        assert_eq!(h.suggested, Some(121));
+        // the suggestion is never the number of an existing patch file
+        assert!(!d.join(patch_name(121)).exists());
+    }
+
+    #[test]
+    fn number_hint_gives_no_suggestion_past_9999() {
+        let tmp = tmpdir("hint-max");
+        let d = tmp.path().join("d");
+        fs::create_dir_all(&d).unwrap();
+        fs::write(d.join("ps9999.patch"), b"x").unwrap();
+        let h = number_hint(None, &[&d]);
+        assert_eq!(h.from_patch_files, Some((9999, 10000, d.clone())));
+        assert_eq!(h.suggested, None);
     }
 
     #[test]
