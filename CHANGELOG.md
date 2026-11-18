@@ -4,6 +4,10 @@ All notable changes are listed here, newest first. The format follows [Keep a Ch
 
 ## [Unreleased]
 
+### shaiya (CLI)
+
+- `shaiya svmap`: `check`, `dump`, `build`, `roundtrip`, `diff`, `wld-check`, `spawns`, `bulk` for server map files and a client's `.wld` files, with the toolkit's exit codes and JSON.
+
 ### Libraries
 
 - `shaiya-clientdata`: `wld_raw` (lossless `.wld` model and writer), `area_txt` (line-preserving `world/<id>.txt`), `sdata::Gate` and `Npc.gates` (gatekeeper destinations).

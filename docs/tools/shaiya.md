@@ -10,10 +10,11 @@ shaiya [GLOBAL FLAGS] <COMMAND> [ARGS]
 | [`archive`](#shaiya-archive) | List, check, extract, edit, compare, pack, swap `data.sah` / `data.saf` |
 | [`patch`](#shaiya-patch) | Build, verify, apply and roll back `psNNNN.patch` files; sign them |
 | [`sdata`](#shaiya-sdata) | Describe, check, decrypt and encrypt SData files |
+| [`svmap`](#shaiya-svmap) | Server map files (`.svmap`): check, dump, build, round trip, compare; check a client's `.wld` files; spawn report; bulk-edit dry run |
 | [`clients`](#shaiya-clients) | The saved "my client folders" list (`@name`) |
 | [`version`](#shaiya-version) | Version, git revision, target |
 
-Planned: `log` and `svmap`. New to the toolkit? Start with [the five-minute guide](../getting-started.md).
+Planned: `log`. New to the toolkit? Start with [the five-minute guide](../getting-started.md).
 
 ## Global flags
 
@@ -32,7 +33,7 @@ They may come before or after the command.
 ## Conventions (every command follows them)
 
 - **ARCHIVE arguments** (`archive`, `sdata --from`) accept a client folder (the one holding `data.sah`, in any letter case), a `.sah` file (its `.saf` is the file with the same stem next to it), or `@name` from the saved client folders ([`clients`](#shaiya-clients)). Read-only commands that only need the index (`list`, `stats`, `index`, `check`, `diff --quick`) also accept a `.sah` whose `.saf` is missing and say `note: data.saf not found; working from the index only`.
-- **CLIENT arguments** (`patch apply`, `patch rollback`, `patch history`, `archive swap`) accept a client folder or `@name`. Commands that change the archive in place only work on a folder's own `data.sah`/`data.saf`; for any other pair write a new one with `-o`.
+- **CLIENT arguments** (`patch apply`, `patch rollback`, `patch history`, `archive swap`, and the client of [`svmap`](#shaiya-svmap)) accept a client folder or `@name`. Commands that change the archive in place only work on a folder's own `data.sah`/`data.saf`; for any other pair write a new one with `-o`.
 - **`@name`** is looked up in the saved list. An unknown name stops with exit 3 and a message ending `(hint: shaiya clients list)`. **In PowerShell a bare `@name` is splatting, not text: write it in double quotes (`"@us"`).** Double quotes work the same in `cmd.exe`, so the pages here use them. Single quotes work in PowerShell only; in `cmd.exe` they are passed on literally and the name is not found. Patterns such as `"*.SData"` are quoted the same way. When a path contains `$` or a backtick, the hints the tool prints use single quotes (the PowerShell form), which `cmd.exe` does not accept.
 - **Writing a client in place.** `archive add`, `replace`, `remove`, `compact` and `patch apply` need either `--in-place` (the client's own files; `patch apply` is always in place) or `-o OUT` (a new archive pair, nothing else touched). Giving neither stops with exit 4. `-o OUT` ending in `.sah` names the index (the `.saf` gets the same stem); any other path is a folder that receives `data.sah` and `data.saf`. An existing output stops with exit 4 unless `--force`; an output is never allowed to be one of its inputs.
 - **`--dry-run`** prints what would happen, in the shape of the real output, and changes nothing. With `--json` the document has `"dry_run": true`.
@@ -235,6 +236,54 @@ $ shaiya sdata encrypt plain/ -o enc/ --like "@us"
 JSON: `{"items": [{"name", "status", "size", "plain_size", "crc", "crc_ok", "padding_zero", "tail_zero", "out", "message"}], "summary": {"<status>": count}}`.
 
 Guide: [SData files](../guides/sdata-files.md).
+
+## `shaiya svmap`
+
+Server map files (`<id>.svmap`) and a client's `.wld` files. Nothing here edits the game: `build` is the only subcommand that writes, and only to the `-o` file. The editor's former command line (`svmap-editor check|dump|build|roundtrip|diff|wld-check|spawns|bulk`) maps one to one onto `shaiya svmap <command>` with the same arguments, but with this page's exit codes and JSON (the editor's 0/1/2 are gone) and with `--json` as the global flag.
+
+| Command | Arguments and flags | Exit |
+|---|---|---|
+| `check` | `FILE\|FOLDER` `--client CLIENT` `--server-data DIR` `--afterglow-defs PATH` (needs `--server-data`) `--target original\|afterglow` | 0 no error finding; 1 an error finding; 2 usage; 3 a map unreadable, no `.svmap`, client cannot be opened, `--server-data` folder missing; 4 `CLIENT` is a file other than `data.sah` |
+| `dump` | `FILE` | 0; 3 unreadable, not a map, a NaN or infinity with `--json` |
+| `build` | `JSON -o OUT.svmap` `--force` | 0 written; 3 JSON unreadable or invalid; 4 `OUT` exists without `--force`, or `OUT` is the input; 5 the output did not read back to the same map (nothing is written) |
+| `roundtrip` | `FOLDER` | 0 every file identical (binary and through JSON); 1 a difference; 3 an unreadable file, no `.svmap` |
+| `diff` | `A B` (two files or two folders) | 0 identical; 1 different, or a map only on one side; 2 one file and one folder; 3 unreadable input |
+| `wld-check` | `CLIENT` | 0 every `world/*.wld` writes back byte for byte; 1 a file differs; 3 a `.wld` unreadable (an unknown layout counts), no `world/*.wld`, client cannot be opened; 4 `CLIENT` is a file other than `data.sah` |
+| `spawns` | `FOLDER` `--client CLIENT` | 0 report made (it reports, it does not judge); 3 an unreadable file, no `.svmap`; 4 as for `check` |
+| `bulk` | `FOLDER --rule "<where> => <action>"` `--client CLIENT` `--allow-above-8` | 0 plan made; 2 the rule does not parse; 3 an unreadable file, no `.svmap`; 4 as for `check` |
+
+- `CLIENT` (`--client` of `check`, `spawns` and `bulk`, the argument of `wld-check`) is a client folder (archive or extracted), its `data.sah`, or `@name`. Any other file is refused (exit 4), a missing path is exit 3.
+- When a command could make its result, files it could not read are reported **inside** it and raise the exit code to 3. The `{"error": ...}` object is printed only when there is no result (a missing folder, a client that cannot be opened). The exit code is the highest met. A usage error found at run time (`--server-data` with a single file, `diff` of one file and one folder, a `bulk` rule that does not parse) is exit 2, with `--json` `{"error": {"kind": "usage", "message": ...}}`.
+- `check` on a folder also runs the cross-file rules (portal destinations between maps). `--client` adds the rules against the client's data (`Monster.SData`, `NpcQuest.SData`, `world/<id>.wld`); `--server-data DIR` (the server's Data folder: `Map.ini`, `MapWar.ini`, `NpcQuest.SData`, `Obelisk.ini`; a folder of maps only) adds the server and client rules; `--afterglow-defs` adds the monster check; `--target` says which server the cross-file rules judge for (default `original`). Text output lists errors and warnings per file, then totals per rule; information findings appear only in the totals.
+- `build` reads the JSON that `dump --json` prints. It builds the file in memory, reads it back and compares it with the map before anything is written, then writes it atomically. An existing `OUT` stops with exit 4 unless `--force`; `OUT` equal to the input is refused even with `--force`.
+- `diff` of two folders compares the maps by id. Text rows show the counts of records only in A, only in B and changed per section.
+- `wld-check` reads every `world/*.wld` with the lossless model and writes it back in memory; a file that does not come back identical is read-only in the Shaiya SVMap Editor.
+- `bulk` is a dry run: it reports what the rule would do to the monster areas of every map. It never writes.
+- Notes (a client file that was skipped, an episode note such as `Monster.SData did not read with the EP4.5 layout: ...`) go to stderr as `note:` lines (silenced by `-q`) and into the `notes` array of the JSON.
+
+```
+$ shaiya svmap roundtrip maps/
+77 files: binary roundtrip identical 77, JSON roundtrip identical 77, differs 0, unreadable 0
+
+$ shaiya svmap check maps/ --client "@us"
+...
+errors 0 (+0 unreadable), warnings 146, info 123
+
+$ shaiya svmap bulk maps/ --rule "mob:1 => count +1"
+```
+
+JSON (keys are snake_case; a `Finding` is `{"severity": "error"|"warning"|"info", "section": "size"|"blocked"|"section_a"|"section_b"|"mob_areas"|"npcs"|"portals"|"binds"|"regions", "index": n or null, "sub": n or null, "code", "message"}`):
+
+- `check`: `{"target", "kind": "file"|"folder", "maps": [{"map": id or null, "file", "read_error": null or text, "findings": [Finding]}], "server_and_client": null or [{"map", "finding": Finding}], "notes": [...], "totals": {"files", "unreadable", "errors", "warnings", "info"}}` (`server_and_client` is `null` without `--server-data`).
+- `dump`: the map document itself (`size`, `blocked` as base64, and one array per record section), exactly what `build` reads.
+- `build`: `{"out", "bytes", "size", "blocked", "counts": {"section_a", "points_b", "mob_areas", "npcs", "portals", "binds", "regions"}}`.
+- `roundtrip`: `{"folder", "files": [{"file", "map", "binary": "identical"|"differs"|"unreadable", "json": "identical"|"differs"|"failed"|"not_run", "first_difference", "length_in", "length_out", "message"}], "totals": {"files", "binary_identical", "json_identical", "differs", "unreadable"}}`.
+- `diff` of files: `{"a", "b", "kind": "files", "identical", "sections": [{"section", "added", "removed", "changed"}], "entries": [{"section", "kind": "added"|"removed"|"changed", "index", "index_b", "text"}]}`. Of folders: `{"a", "b", "kind": "folders", "rows": [{"map", "status": "same"|"differs"|"only_a"|"only_b"|"unreadable", "counts", "message"}], "totals": {"same", "differs", "only_a", "only_b", "unreadable"}}`, where `counts` (only for `differs`, else `null`) is `{"sections": [{"section", "only_a", "only_b", "differ"}], "cells": n, "size": {"a", "b"} or null}` (`cells` are blocked cells that differ; `size` is set when the sizes differ).
+- `wld-check`: `{"client", "files": [{"path", "bytes", "status": "identical"|"differs"|"unreadable", "first_difference", "written", "reason"}], "totals": {"files", "identical", "differs", "unreadable"}}`.
+- `spawns`: `{"maps": [{"map", "areas", "monsters", "kinds", "range": [lo, hi] or null, "findings": {"<group>": n}}], "totals": {"maps", "areas", "monsters", "kinds", "findings": {...}, "never_spawned": n or null}, "findings": [{"map", "group", "areas": [...], "monsters": [...], "text"}], "never_spawned": [ids] or null, "unreadable": [...], "notes": [...]}` (`never_spawned` needs `--client` with a readable `Monster.SData`).
+- `bulk`: `{"rule", "dry_run": true, "maps": [{"map", "matched", "changed", "entries", "monsters_before", "monsters_after", "held_at_8", "emptied", "deleted"}], "totals": {"matched", "maps_matched", "changed", "maps_changed", "entries", "held_at_8", "emptied"}, "unreadable": [...], "notes": [...]}`.
+
+The full user guide and the format pages come with the editor's documentation.
 
 ## `shaiya clients`
 

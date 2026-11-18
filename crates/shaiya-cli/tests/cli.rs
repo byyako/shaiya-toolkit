@@ -202,6 +202,11 @@ fn usage_errors_exit_2() {
     assert_eq!(o.status.code(), Some(0));
     assert!(text(&o.stdout).contains("info"));
     let help = text(&o.stdout);
+    assert!(help.contains("svmap"), "{help}");
+    for sub in ["check", "dump", "build", "roundtrip", "diff", "wld-check", "spawns", "bulk"] {
+        let o = run(&["svmap", sub, "--help"]);
+        assert_eq!(o.status.code(), Some(0), "svmap {sub} --help");
+    }
     assert!(help.contains("usually be rolled back") && help.contains("archive compact --in-place"), "{help}");
     assert!(!help.contains("can be undone"), "{help}");
 }
