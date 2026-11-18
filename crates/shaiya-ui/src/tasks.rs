@@ -424,15 +424,23 @@ mod tests {
         }
         assert_eq!(max_seen.load(Ordering::SeqCst), 1);
         // different keys may overlap, and cancel_all stops a waiting task
-        let mut a = t.spawn(TaskSpec { title: "hold".into(), cancellable: true, exclusive: Some("k".into()) }, |job| -> shaiya_core::Result<()> {
+        let (held_tx, held_rx) = std::sync::mpsc::channel();
+        let mut a = t.spawn(TaskSpec { title: "hold".into(), cancellable: true, exclusive: Some("k".into()) }, move |job| -> shaiya_core::Result<()> {
+            let _ = held_tx.send(());
             while job.check().is_ok() {
                 std::thread::sleep(Duration::from_millis(5));
             }
             Err(Error::Cancelled)
         });
+        // the first task must hold the key before the second is spawned (thread start order is not guaranteed)
+        held_rx.recv_timeout(Duration::from_secs(30)).expect("the first task took the key");
         let mut b = t.spawn(TaskSpec { title: "wait".into(), cancellable: true, exclusive: Some("k".into()) }, |_| Ok(()));
-        std::thread::sleep(Duration::from_millis(60));
-        assert!(t.views().iter().any(|v| v.waiting), "the second task waits for the key");
+        // the second task must show up as waiting; it cannot finish while the first holds the key
+        let deadline = Instant::now() + Duration::from_secs(30);
+        while !t.views().iter().any(|v| v.waiting) {
+            assert!(Instant::now() < deadline, "the second task waits for the key");
+            std::thread::sleep(Duration::from_millis(1));
+        }
         assert_eq!(t.running(), 2);
         t.cancel_all();
         assert!(matches!(wait(&mut a), TaskOutcome::Cancelled));
