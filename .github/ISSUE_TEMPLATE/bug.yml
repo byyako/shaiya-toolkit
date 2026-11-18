@@ -13,6 +13,7 @@ body:
       options:
         - shaiya (command line)
         - Shaiya Toolkit (desktop app)
+        - Shaiya SVMap Editor (desktop app)
         - A library (shaiya-core, shaiya-archive, shaiya-patch, shaiya-seed, ...)
         - Other
     validations:

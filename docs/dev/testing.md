@@ -12,8 +12,9 @@
 4. **Robustness:** truncation at every byte of a small index, SEED file and patch returns an error; a single-bit flip at every byte never panics; a flip inside a SEED body always fails the checksum.
 5. **CLI tests** (`crates/shaiya-cli/tests/{cli,archive,patch,sdata,clients}.rs`) run the real `shaiya` binary (`CARGO_BIN_EXE_shaiya`) with `--data-dir` pointing at a temporary folder, and check text, `--json` keys (parsed with `serde_json`), exit codes, `--dry-run` writing nothing, `@name` resolution and `--help` of every command. A patch end to end: keygen, build, sign, verify, apply with a key, history, rollback, verify against the client.
 6. **GUI harness tests** (`shaiya-ui`, `shaiya-toolkit`): headless frames with synthetic input: the empty state, drop, tasks with progress, cancel, the theme switch, the command palette, settings written with `--data-dir` and read back, `--no-settings` writing nothing, the contrast of both palettes; in Shaiya Toolkit also adding a client, opening an archive, search, folder navigation, previews, queueing changes and applying them, the apply and roll-back flow, the patch builder, signing and verifying, the SData tab, and the Retry dialog when a file is open on Windows.
-7. **Opt-in tests on your own client** (below).
-8. **Real-window smoke:** `shaiya-toolkit --smoke report.txt`.
+7. **Editor tests** (`shaiya-svmap-editor`): headless harness tests of the app with synthetic input (windows, tools, undo, saving, the Help guide and its lints), plus the opt-in tests below that need `SVMAP_ORIGINALS` or `SHAIYA_CLIENT`. The Windows-only ones are `#[cfg(windows)]`.
+8. **Opt-in tests on your own client** (below).
+9. **Real-window smoke:** `shaiya-toolkit --smoke report.txt`, and `shaiya-svmap-editor --smoke out.png`.
 
 ## The testkit
 

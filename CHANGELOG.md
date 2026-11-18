@@ -19,6 +19,12 @@ All notable changes are listed here, newest first. The format follows [Keep a Ch
 - New `shaiya-svmap`: the `.svmap` server map format (model, reader, writer, validation, bit grid, JSON).
 - New `shaiya-svmap-tools`: the SVMap editor's engine without a GUI (documents with undo, client pairing, checks, spawn report, bulk planner, Map.ini, new map, install) and the `batch` entry points of `shaiya svmap`.
 
+### Documentation
+
+- The user guide of Shaiya SVMap Editor (`docs/tools/svmap-editor.md`, also its Help window): what it writes, verified episodes and what was checked in the game, install and data folder on all three platforms, free space notes for Install.
+- Fourteen formats pages: `.svmap` (with its JSON form), `.wld`, world area names, `Map.ini` and `MapWar.ini`, `Obelisk.ini`, `NpcQuest.SData`, `Monster.SData`, `.dg`, `.smod`, textures, `sysmsg-uni.txt` and map names, `TacticsZone.zon`, `mobs.psv`, and the editor's own files. Each has Verified on and Other episodes sections.
+- The version matrix has a section "SVMap Editor and `shaiya svmap`" with the assumptions per episode. README, install, FAQ, getting started and the developer pages describe the second desktop program.
+
 ### Breaking
 
 - `shaiya_clientdata::sdata::Npc` has a new field `gates`; code building `Npc` with a struct literal must set it.

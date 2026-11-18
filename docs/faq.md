@@ -62,6 +62,26 @@ You did not give a public key. To accept only patches you signed, pass `--key pu
 
 Patches use the same `psNNNN.patch` layout. The original updater ignores `remove.txt`, so a patch that relies on removals only works through this toolkit or a replacement updater.
 
+## Which episodes does the SVMap Editor support?
+
+It was written for and verified on the US EP4.5 client (patch 108), the original EP4.5 server files and the Afterglow server. Other episodes are detected and handled by refusing, warning or a setting, never silently. A client table that does not read turns off the rules that need it, with one note on the client chip. The names of the map-name table are the EP4.5 client's, so on another client the info rule map-no-name may be wrong. The table of assumptions is in [the editor guide](tools/svmap-editor.md#verified-on-and-other-episodes) and the [version matrix](version-matrix.md#svmap-editor-and-shaiya-svmap).
+
+## Why does a map open read-only on the client side?
+
+The editor only writes a client map (`world/<id>.wld`) when the file reads and writes back byte for byte. The game reads a map file with no length check, so a wrong count would make it read garbage. A file that does not write back identically stays read-only on the client side: edits change the server map only, and the status bar says "client map read-only". `shaiya svmap wld-check <client folder>` names the first byte that differs. See [the World format page](formats/wld.md).
+
+## Why is the exported patch unsigned?
+
+The original updater does not check signatures, and the editor holds no key. An updater that requires signed patches needs a signature file: sign the patch with `shaiya patch sign` or in Shaiya Toolkit (Sign & verify) ([make a patch](guides/make-a-patch.md#4-sign-it-recommended)).
+
+## Can the editor change game.exe or a DLL?
+
+No. The editor and `shaiya svmap` change data only. A staged file whose name ends in `.exe` or `.dll` is refused by Export patch, Export folder, Install and Copy loose. This is why a new map's name cannot be added by the editor: the table of map names is in the game's program. The editor writes a note file with the name you chose instead.
+
+## Where are the editor's settings and backups?
+
+In the `shaiya-svmap-editor` folder inside the toolkit data folder ([install.md](install.md#portable-mode-and-where-settings-live)); **Help > Open data folder** in the editor opens it. It holds `settings.json`, `log.txt`, `recovery/` (unsaved work after a crash) and `backups/` (a copy of every map file before a save). The first version of a saved map is also kept as `<id>.svmap.bak` beside it. Install into a test client keeps its own index copies in that client folder.
+
 ## Does the toolkit send anything over the network?
 
 No. No program or library contains network code and nothing is downloaded. Shaiya Toolkit's **Help > Support the project** item opens a web page in your own browser, only when you click it.

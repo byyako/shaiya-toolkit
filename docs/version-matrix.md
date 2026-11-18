@@ -41,7 +41,28 @@ Reading the table:
 - The `Monsters` and `NpcQuest` rows are the layouts of the original client generation; later episodes change them. Schema support for those is planned work.
 - The two `_stub` rows edit a copy of each client's real index against an empty `data.saf`, so no client file is changed and no client contents are needed. Archive operations that need a full `data.saf` (check with the data file, extract, compaction, swap) are covered by synthetic tests and, for one client you supply yourself, by the opt-in tests in [dev/testing.md](dev/testing.md#opt-in-variables).
 - World files are not part of the eight test clients (they hold SData files and `sysmsg-uni.txt` only), so the `.wld` and `world/*.txt` rows are `n/a` there; only the US client's full `data.saf` measures them.
-- The gatekeeper row is `fails` where `NpcQuest::parse` fails (kr-ep8, fawkes-v68), and `n/a` where there is no file (ru-ep54). On those two clients the gates were never reached because `NpcQuest::parse` fails first.
+- The gatekeeper row is `fails` where `NpcQuest::parse` fails (kr-ep8, fawkes-v68), and `n/a` where there is no file (ru-ep54). The gates were not measured on those two clients: `NpcQuest::parse` fails first there (the layout differs from the original generation's), so the gate row says `fails`.
 - The map-name row measures the presence of text for the distinct map-name message ids of the EP4.5 table (47 message ids covering 67 map ids), not its correctness; the cn-ep4 sysmsg lacks text for three of them.
+
+## SVMap Editor and `shaiya svmap`
+
+Shaiya SVMap Editor and `shaiya svmap` were written for and verified on the US EP4.5 client (patch 108), the original EP4.5 server files and the Afterglow server. Everything else is detected and handled by refusing, warning or a parameter. The assumptions:
+
+| Assumption | Verified on | On anything else |
+|---|---|---|
+| `.svmap` layout ([svmap.md](formats/svmap.md)) | the 77 original EP4.5 server maps, Afterglow | The reader must end at the last byte. A file that does not parse is refused (editor: an error, `shaiya svmap`: exit 3). EP3 and EP5.4 maps are reported to share the layout: unverified. |
+| `.wld` layout ([wld.md](formats/wld.md)) | US EP4.5, 83 of 83 byte-identical | Checked per file. A file that does not write back stays read-only on the client side, and `shaiya svmap wld-check` names it (exit 1 or 3). |
+| `world/<id>.txt` ([area-txt.md](formats/area-txt.md)) | US EP4.5 | A line-preserving model: lines it does not understand are kept. |
+| Name code page cp949 | US EP4.5 | A parameter in the editor's Preferences: cp949, Shift-JIS, GBK or Windows-1252. |
+| `Monster.SData` and `NpcQuest.SData` layouts, with the gatekeeper gates ([monster.md](formats/monster.md), [npcquest.md](formats/npcquest.md)) | US EP4.5. Both parse on ru-ep3, ru-ep45, fr-ep54 and phoenix-ep63, and NpcQuest on cn-ep4. | A parse failure turns off the rules that need the table, with one note. They fail on kr-ep8 and fawkes-v68 (the matrix rows above). |
+| The table of map names, mirrored from the EP4.5 client ([sysmsg.md](formats/sysmsg.md)) | US EP4.5 patch 108 | Used for display and for the info rule `map-no-name`, never to decide a write. On another client the names and that rule may be wrong, and a note says so. Without a client the map number is shown. |
+| Map id limits: `MapCount` for the original server, 0 to 255 except 200 for Afterglow | the original server, Afterglow | The Target server setting. Other server builds are unverified. |
+| The client forces size 1600 on map 70, and ids 100 to 200 limit item use | US EP4.5 | The wizard warnings say "on the EP4.5 client". |
+| Field chunk textures: `_L.dds` 1024 DXT1 and `_A<k>.dds` 256 DXT5, the headers of the original files ([textures.md](formats/textures.md)) | US EP4.5 (map 110 loads) | The wizard note says the files follow the EP4.5 layout and other episodes are unverified. |
+| Loose files lose to the archive | US EP4.5 | Copy loose refuses every path the archive holds, which is safe for either order. |
+| `data.sah` with a header | all nine matrix clients | A `data.sah` without a header is refused by Install. Use an extracted folder to read it. |
+| Minimap `interface/MiniMap/<id>.tga`, 512 x 512 | US EP4.5 | Written only when ticked. |
+
+When a client opens, the editor (on the client chip) and `shaiya svmap check`, `spawns` and `bulk` (as `note:` lines and in the JSON `notes`) say when `Monster.SData` or `NpcQuest.SData` did not read with the EP4.5 layout, and how many ids of the map-name table the client's `sysmsg-uni.txt` lacks. What was checked in the game and what was not is in [the editor guide](tools/svmap-editor.md#what-was-checked-in-the-game).
 
 Run it on your own copies: [dev/testing.md](dev/testing.md#the-version-matrix).

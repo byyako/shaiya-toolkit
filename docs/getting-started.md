@@ -87,6 +87,10 @@ shaiya archive list "@practice" "shaiya-test/*"
 
 Run `shaiya-toolkit`. Pick the client in the toolbar (the list from step 1 is already there). The **Archive** tab lists and previews files; drop a file on it, check the target folder in the dialog that opens, press Queue changes, then **Apply to client...** (nothing is written before that). Open **Apply & history** to see the change and **Roll back...**. See [the Shaiya Toolkit page](tools/toolkit.md).
 
+## Server maps
+
+If you run a server, Shaiya SVMap Editor edits its map files (`<id>.svmap`) over the client's terrain and checks them against the client. Start with [its guide](tools/svmap-editor.md). From the command line, `shaiya svmap check <map folder> --client "@practice"` lists what is wrong with every map of a folder and changes nothing ([tools/shaiya.md](tools/shaiya.md#shaiya-svmap)).
+
 ## Where next
 
 - Changing game files for a mod: [guides/mod-files.md](guides/mod-files.md)
