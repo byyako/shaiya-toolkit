@@ -148,7 +148,7 @@ fn check_usage_errors_exit_2() {
 fn client_arguments_resolve_like_the_other_commands() {
     let (w, maps) = fixture();
     two_maps(&maps);
-    // the world's client holds a data.sah; the editor-style notes (no readable Monster.SData) come out as `note:` lines and in `notes`
+    // the world's client holds a data.sah; the editor-style notes (no Monster.SData) come out as `note:` lines and in `notes`
     let c = p(&w.client);
     let o = sh(&w.data, &["svmap", "check", p(&maps), "--client", c]);
     assert_eq!(code(&o), 0, "{}", err(&o));
@@ -415,11 +415,11 @@ fn wld_check_exit_codes_and_json() {
     assert_eq!(code(&o), 3);
     let v = json(&o);
     assert!(v["files"][2]["status"] == "unreadable" && v["files"][2]["reason"].is_string(), "{v}");
-    // 3: no world/*.wld; a client that cannot be opened
+    // 3: no world/*.wld (and so no client files at all); a client that cannot be opened
     let empty = w.tmp.path().join("noworld");
     write(&empty.join("world").join("1.txt"), b"x");
     let o = sh(&w.data, &["svmap", "wld-check", p(&empty), "--json"]);
-    assert_eq!((code(&o), error_kind(&json(&o)).to_string()), (3, "format".to_string()));
+    assert_eq!((code(&o), error_kind(&json(&o)).to_string()), (3, "io".to_string()));
     assert_eq!(code(&sh(&w.data, &["svmap", "wld-check", p(&w.tmp.path().join("gone"))])), 3);
     assert_eq!(code(&sh(&w.data, &["svmap", "wld-check"])), 2);
 }
@@ -671,4 +671,61 @@ fn build_over_its_own_input_does_not_offer_in_place() {
     let o = sh(&w.data, &["svmap", "build", p(&doc), "-o", p(&doc)]);
     assert_eq!(code(&o), 4, "{}", err(&o));
     assert!(err(&o).contains("is the input file") && !err(&o).contains("--in-place"), "{}", err(&o));
+}
+
+// ------------------------------------------------------------------------------------------------------------------ final review
+
+#[test]
+fn diff_names_a_missing_path_whatever_the_other_side_is() {
+    let (w, maps) = fixture();
+    two_maps(&maps);
+    let gone = w.tmp.path().join("gone");
+    let file = maps.join("5.svmap");
+    for (a, b) in [(&maps, &gone), (&gone, &maps), (&file, &gone), (&gone, &file)] {
+        let o = sh(&w.data, &["svmap", "diff", p(a), p(b)]);
+        assert_eq!(code(&o), 3, "{}", err(&o));
+        assert!(err(&o).contains("gone") && !err(&o).contains("Access is denied"), "{}", err(&o));
+    }
+    let o = sh(&w.data, &["svmap", "diff", p(&maps), p(&gone), "--json"]);
+    assert_eq!((code(&o), error_kind(&json(&o)).to_string()), (3, "io".to_string()));
+}
+
+#[test]
+fn an_empty_client_folder_cannot_be_opened_and_missing_tables_are_called_missing() {
+    let (w, maps) = fixture();
+    two_maps(&maps);
+    let empty = w.tmp.path().join("noclient");
+    std::fs::create_dir_all(&empty).unwrap();
+    for cmd in [vec!["svmap", "check", p(&maps), "--client", p(&empty)], vec!["svmap", "spawns", p(&maps), "--client", p(&empty)], vec!["svmap", "wld-check", p(&empty)]] {
+        let o = sh(&w.data, &cmd);
+        assert_eq!(code(&o), 3, "{cmd:?}: {}{}", out(&o), err(&o));
+        assert!(err(&o).contains("no client files"), "{}", err(&o));
+    }
+    let o = sh(&w.data, &["svmap", "check", p(&maps), "--client", p(&empty), "--json"]);
+    assert_eq!((code(&o), error_kind(&json(&o)).to_string()), (3, "io".to_string()));
+    // a client that has a map but no tables: "missing", not "did not read"
+    let c = wld_client(w.tmp.path());
+    let o = sh(&w.data, &["svmap", "check", p(&maps), "--client", p(&c)]);
+    assert_eq!(code(&o), 0, "{}", err(&o));
+    assert!(err(&o).contains("note: Monster.SData is missing") && err(&o).contains("note: NpcQuest.SData is missing") && !err(&o).contains("did not read"), "{}", err(&o));
+    // present but junk: "did not read"
+    write(&c.join("Monster").join("Monster.SData"), b"junk");
+    let o = sh(&w.data, &["svmap", "check", p(&maps), "--client", p(&c)]);
+    assert!(err(&o).contains("note: Monster.SData did not read") && err(&o).contains("note: NpcQuest.SData is missing"), "{}", err(&o));
+}
+
+#[test]
+fn an_empty_server_data_folder_is_said_in_notes_without_changing_the_exit_code() {
+    let (w, maps) = fixture();
+    two_maps(&maps);
+    let server = w.tmp.path().join("server-empty");
+    std::fs::create_dir_all(&server).unwrap();
+    let o = sh(&w.data, &["svmap", "check", p(&maps), "--server-data", p(&server)]);
+    assert_eq!(code(&o), 0, "{}", err(&o));
+    for f in ["Map.ini", "NpcQuest.SData", "Obelisk.ini"] {
+        assert!(err(&o).contains(&format!("note: {f}")), "{f}: {}", err(&o));
+    }
+    let v = json(&sh(&w.data, &["svmap", "check", p(&maps), "--server-data", p(&server), "--json"]));
+    let notes: Vec<&str> = v["notes"].as_array().unwrap().iter().filter_map(Value::as_str).collect();
+    assert!(notes.iter().any(|n| n.starts_with("Map.ini: not found")) && notes.iter().any(|n| n.starts_with("Obelisk.ini")), "{notes:?}");
 }

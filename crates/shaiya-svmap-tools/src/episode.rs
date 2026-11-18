@@ -20,10 +20,18 @@ pub fn map_name_ids() -> BTreeSet<u32> {
 pub fn client_notes(rules: &ClientRules) -> Vec<String> {
     let mut notes = Vec::new();
     if rules.monsters.is_none() {
-        notes.push("Monster.SData did not read with the EP4.5 layout: monster names and levels and the monster rules are off.".to_string());
+        notes.push(if rules.source.exists("Monster/Monster.SData") {
+            "Monster.SData did not read with the EP4.5 layout: monster names and levels and the monster rules are off.".to_string()
+        } else {
+            "Monster.SData is missing from this client: monster names and levels and the monster rules are off.".to_string()
+        });
     }
     if rules.npcs.is_none() {
-        notes.push("NpcQuest.SData did not read with the EP4.5 layout: NPC names and the NPC and gatekeeper rules are off.".to_string());
+        notes.push(if rules.source.exists("Npc/NpcQuest.SData") {
+            "NpcQuest.SData did not read with the EP4.5 layout: NPC names and the NPC and gatekeeper rules are off.".to_string()
+        } else {
+            "NpcQuest.SData is missing from this client: NPC names and the NPC and gatekeeper rules are off.".to_string()
+        });
     }
     let ids = map_name_ids();
     let sys = rules.source.sysmsg().ok();
@@ -77,15 +85,17 @@ mod tests {
         let rules = ClientRules::open(dir.path()).unwrap();
         let notes = client_notes(&rules);
         assert_eq!(notes.len(), 3, "{notes:?}");
-        assert!(notes[0].starts_with("Monster.SData did not read"));
-        assert!(notes[1].starts_with("NpcQuest.SData did not read"));
+        assert!(notes[0].starts_with("Monster.SData is missing"), "absent files are missing, not unreadable");
+        assert!(notes[1].starts_with("NpcQuest.SData is missing"));
         assert!(notes[2].contains(&format!("lacks {n} of its {n} ids", n = map_name_ids().len())), "{}", notes[2]);
 
         // junk tables read as unreadable too
         put(dir.path(), "Monster/Monster.SData", b"junk");
         put(dir.path(), "Npc/NpcQuest.SData", b"junk");
         let rules = ClientRules::open(dir.path()).unwrap();
-        assert_eq!(client_notes(&rules).len(), 3);
+        let junk = client_notes(&rules);
+        assert_eq!(junk.len(), 3);
+        assert!(junk[0].starts_with("Monster.SData did not read") && junk[1].starts_with("NpcQuest.SData did not read"), "{junk:?}");
 
         // a sysmsg with some of the ids: the note counts the rest
         let some: Vec<u32> = map_name_ids().into_iter().take(10).collect();

@@ -37,8 +37,8 @@ The editor was written and checked on one client and two sets of server files: t
 
 When a client opens, the editor tells you what does not read as it does on EP4.5. The client chip in the toolbar turns to the warning colour and its tooltip lists the notes. `shaiya svmap check`, `spawns` and `bulk` print the same notes with `--client`. A note is one of three sentences:
 
-- `Monster.SData` did not read with the EP4.5 layout: monster names and levels and the monster rules are off.
-- `NpcQuest.SData` did not read with the EP4.5 layout: NPC names and the NPC and gatekeeper rules are off.
+- `Monster.SData` did not read with the EP4.5 layout, or the client has no such file. Monster names and levels and the monster rules are off.
+- `NpcQuest.SData` did not read with the EP4.5 layout, or the client has no such file. NPC names and the NPC and gatekeeper rules are off.
 - The map names and the `map-no-name` rule come from the EP4.5 client's table, and this client's `sysmsg-uni.txt` lacks some of its ids. Some names and `map-no-name` findings may be wrong.
 
 A note changes nothing in your files. It tells you which names and rules to doubt.

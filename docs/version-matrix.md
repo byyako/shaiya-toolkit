@@ -63,6 +63,6 @@ Shaiya SVMap Editor and `shaiya svmap` were written for and verified on the US E
 | `data.sah` with a header | all nine matrix clients | A `data.sah` without a header is refused by Install. Use an extracted folder to read it. |
 | Minimap `interface/MiniMap/<id>.tga`, 512 x 512 | US EP4.5 | Written only when ticked. |
 
-When a client opens, the editor (on the client chip) and `shaiya svmap check`, `spawns` and `bulk` (as `note:` lines and in the JSON `notes`) say when `Monster.SData` or `NpcQuest.SData` did not read with the EP4.5 layout, and how many ids of the map-name table the client's `sysmsg-uni.txt` lacks. What was checked in the game and what was not is in [the editor guide](tools/svmap-editor.md#what-was-checked-in-the-game).
+When a client opens, the editor (on the client chip) and `shaiya svmap check`, `spawns` and `bulk` (as `note:` lines and in the JSON `notes`) say when `Monster.SData` or `NpcQuest.SData` is missing or did not read with the EP4.5 layout, and how many ids of the map-name table the client's `sysmsg-uni.txt` lacks. What was checked in the game and what was not is in [the editor guide](tools/svmap-editor.md#what-was-checked-in-the-game).
 
 Run it on your own copies: [dev/testing.md](dev/testing.md#the-version-matrix).

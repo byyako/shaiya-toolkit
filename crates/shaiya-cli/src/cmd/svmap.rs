@@ -351,6 +351,12 @@ impl Report for RoundtripReport {
 // ------------------------------------------------------------------------------------------------------------------ diff
 
 fn diff(ctx: &Ctx, a: &DiffArgs, job: &Job) -> Res {
+    // a missing path is named as such (exit 3), whatever the other side is
+    for p in [&a.a, &a.b] {
+        if !p.exists() {
+            return Err(Failure::Error(Error::io(p.clone(), std::io::Error::new(std::io::ErrorKind::NotFound, "no such file or folder"))));
+        }
+    }
     if (a.a.is_dir() && a.b.is_file()) || (a.a.is_file() && a.b.is_dir()) {
         return Err(Failure::Usage("diff compares two files or two folders, not one of each".into()));
     }

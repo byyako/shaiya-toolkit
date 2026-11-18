@@ -3590,8 +3590,8 @@ fn the_client_chip_shows_the_episode_notes() {
     assert!(h.app.client.is_some());
     let (label, hover) = h.app.client_chip_text();
     assert!(label.starts_with("client: "), "{label}");
-    assert!(hover.contains("NpcQuest.SData did not read with the EP4.5 layout"), "{hover}");
-    assert!(hover.contains("Monster.SData did not read"), "{hover}");
+    assert!(hover.contains("NpcQuest.SData is missing"), "{hover}");
+    assert!(hover.contains("Monster.SData is missing"), "{hover}");
     h.frames(2);
     assert!(h.text.contains(&label), "the chip is drawn: {}", h.text);
 

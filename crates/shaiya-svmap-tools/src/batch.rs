@@ -87,13 +87,15 @@ fn file_name(p: &Path) -> String {
 /// `Format`, so every failure to open is exit code 3.
 pub fn open_client(dir: &Path) -> Result<ClientRules> {
     use shaiya_clientdata::Error as CdError;
-    if let Err(e) = shaiya_clientdata::ClientSource::open(dir) {
-        return Err(match e {
-            CdError::NotFound(p) => not_found(Path::new(&p), "not found"),
-            CdError::Io { path, source } => Error::io(path, source),
-            CdError::Format { file, what, offset } => Error::format(file, Some(offset as u64), what),
-            CdError::Archive(s) => Error::format(dir.display().to_string(), None, s),
-        });
+    let source = shaiya_clientdata::ClientSource::open(dir).map_err(|e| match e {
+        CdError::NotFound(p) => not_found(Path::new(&p), "not found"),
+        CdError::Io { path, source } => Error::io(path, source),
+        CdError::Format { file, what, offset } => Error::format(file, Some(offset as u64), what),
+        CdError::Archive(s) => Error::format(dir.display().to_string(), None, s),
+    })?;
+    // an extracted folder must hold something of a client; an empty or wrong folder is a client that cannot be opened
+    if !source.is_archive() && !["Monster/Monster.SData", "Npc/NpcQuest.SData", "sysmsg-uni.txt"].iter().any(|p| source.exists(p)) && source.wld_paths().is_empty() {
+        return Err(not_found(dir, "no client files here (no data.sah and no extracted data such as world/*.wld or Monster/Monster.SData)"));
     }
     ClientRules::open(dir).map_err(|s| Error::format(dir.display().to_string(), None, s))
 }
@@ -329,6 +331,7 @@ pub fn check(target: &Path, opts: &CheckOptions, job: &Job) -> Result<CheckRepor
             job.stage("Reading the server data");
             let arcs: BTreeMap<u32, Arc<Svmap>> = maps.iter().map(|(k, v)| (*k, Arc::new(v.clone()))).collect();
             let data = crate::server_data::ServerData::load(dir, opts.afterglow_defs.as_deref());
+            notes.extend(data.notes.iter().cloned());
             let found = crate::cross_rules::check(&crate::cross_rules::Inputs { maps: &arcs, client: rules.as_ref(), server: Some(&data), target: opts.target });
             cross = Some(found.into_iter().map(|c| CrossRow { map: c.map, finding: c.finding }).collect());
         }
@@ -1145,8 +1148,8 @@ mod tests {
         let r = check(&maps, &opts, &job()).unwrap();
         assert_eq!(r.totals.files, 1);
         assert!(r.server_and_client.is_some());
-        // no Monster.SData, no NpcQuest.SData, no sysmsg: three episode notes, each also a "client file skipped" line
-        assert!(r.notes.iter().any(|n| n.starts_with("Monster.SData did not read")), "{:?}", r.notes);
+        // no Monster.SData, no NpcQuest.SData, no sysmsg: three episode notes (the two tables are missing, not unreadable), each also a "client file skipped" line
+        assert!(r.notes.iter().any(|n| n.starts_with("Monster.SData is missing")), "{:?}", r.notes);
         assert!(r.notes.iter().any(|n| n.starts_with("client file skipped")), "{:?}", r.notes);
         let json = serde_json::to_value(&r).unwrap();
         assert_eq!(json["kind"], "folder");
@@ -1176,7 +1179,7 @@ mod tests {
         assert!(r.files.iter().find(|f| f.status == "unreadable").unwrap().reason.is_some());
         assert_eq!(wld_check(&t.join("no-such"), &job()).unwrap_err().kind(), shaiya_core::ErrorKind::Io);
         let empty = TempDir::new("batch-wld-empty");
-        assert_eq!(wld_check(empty.path(), &job()).unwrap_err().kind(), shaiya_core::ErrorKind::Format, "no world/*.wld");
+        assert_eq!(wld_check(empty.path(), &job()).unwrap_err().kind(), shaiya_core::ErrorKind::Io, "an empty folder is no client");
         let json = serde_json::to_value(&r).unwrap();
         assert_eq!(json["totals"]["files"], 4);
         // the user's own client: all 83 are identical

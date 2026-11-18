@@ -47,7 +47,7 @@ They may come before or after the command.
 - **Shadowed entries.** When two entries have the same name (any case) in one folder, the client loads the later one; the earlier is *shadowed*. Commands show only visible files; `--include-shadowed` adds the others (extract names them `name~shadowed-N.ext`). See [the archive format](../formats/archive.md#shadowing).
 - Archive paths are shown with `/`, matched case-insensitively, and handled in code page 949 in the archive.
 - Human output goes to **stdout** (one record per line for listings; summaries go to stderr); progress, notes, warnings and errors go to **stderr** (`error: <message>`, optional `hint: <text>` lines).
-- **`--json`**: stdout holds exactly one JSON value, the result object or an error object, for example `{"error": {"kind": "format", "message": "Item.SData: SEED checksum failed (at byte 40)", "file": "Item.SData", "offset": 40}}`. Keys are snake_case, sizes are integers in bytes, hashes lower-case hex, times ISO-8601 UTC, archive paths use `/`. Adding a key is not a breaking change; renaming or removing one is (CHANGELOG "Breaking").
+- **`--json`**: stdout holds exactly one JSON value, the result object or an error object, for example `{"error": {"kind": "format", "message": "Item.SData: SEED checksum failed (at byte 40)", "file": "Item.SData", "offset": 40}}`. The error kinds are `io`, `format`, `unsupported`, `refused`, `cancelled`, plus `usage` (exit 2) and `internal` (exit 5) from `shaiya svmap`. Keys are snake_case, sizes are integers in bytes, hashes lower-case hex, times ISO-8601 UTC, archive paths use `/`. Adding a key is not a breaking change; renaming or removing one is (CHANGELOG "Breaking").
 - Progress line (stderr, at most 10 updates per second): `[stage]  45%  900.0 MB / 2.0 GB  120.0 MB/s  ETA 8 s`, shown for jobs over 64 MiB or 2 seconds.
 - Output files are written atomically (temporary file, then rename), so an interrupted run leaves the target as it was and at most a `*.shaiya-tmp` file.
 - On Windows, when `shaiya.exe` is started by double-click, it prints the help and "This is a command-line program. Open a terminal and run `shaiya --help`." and waits for Enter.
@@ -61,7 +61,7 @@ They may come before or after the command.
 | 2 | Usage error (unknown flag, missing argument). |
 | 3 | Input error: unreadable or missing file, unknown `@name`, bad format, checksum failure, unsupported version. |
 | 4 | Refused by a safety rule: existing output, no `--in-place` or `-o`, the game or another program has the files open, blocked rollback, bad names. |
-| 5 | Internal error (a panic); the message asks for a bug report. |
+| 5 | Internal error: a panic, or the one detected bug of `svmap build` (the output did not read back to the same map). The message asks for a bug report. With `--json` the second case prints `{"error": {"kind": "internal", "message": ...}}`. |
 | 130 | Cancelled. |
 
 A command over several inputs continues past bad inputs, reports each, and exits with the highest code met.
@@ -239,15 +239,15 @@ Guide: [SData files](../guides/sdata-files.md).
 
 ## `shaiya svmap`
 
-Server map files (`<id>.svmap`) and a client's `.wld` files. Nothing here edits the game: `build` is the only subcommand that writes, and only to the `-o` file. The editor's former command line (`svmap-editor check|dump|build|roundtrip|diff|wld-check|spawns|bulk`) maps one to one onto `shaiya svmap <command>` with the same arguments, but with this page's exit codes and JSON (the editor's 0/1/2 are gone) and with `--json` as the global flag.
+Server map files (`<id>.svmap`; the format is in [formats/svmap.md](../formats/svmap.md)) and a client's `.wld` files. Nothing here edits the game: `build` is the only subcommand that writes, and only to the `-o` file. The editor's former command line (`svmap-editor check|dump|build|roundtrip|diff|wld-check|spawns|bulk`) maps one to one onto `shaiya svmap <command>` with the same arguments, but with this page's exit codes and JSON (the editor's 0/1/2 are gone) and with `--json` as the global flag.
 
 | Command | Arguments and flags | Exit |
 |---|---|---|
-| `check` | `FILE\|FOLDER` `--client CLIENT` `--server-data DIR` `--afterglow-defs PATH` (needs `--server-data`) `--target original\|afterglow` | 0 no error finding; 1 an error finding; 2 usage; 3 a map unreadable, no `.svmap`, client cannot be opened, `--server-data` folder missing; 4 `CLIENT` is a file other than `data.sah` |
+| `check` | `FILE\|FOLDER` `--client CLIENT` `--server-data DIR` `--afterglow-defs PATH` (needs `--server-data`) `--target original\|afterglow` | 0 no error finding; 1 an error finding; 2 usage; 3 a map unreadable, no `.svmap`, client cannot be opened (a `--client` folder with no `data.sah` and no extracted client files counts), `--server-data` folder missing; 4 `CLIENT` is a file other than `data.sah` |
 | `dump` | `FILE` | 0; 3 unreadable, not a map, a NaN or infinity with `--json` |
 | `build` | `JSON -o OUT.svmap` `--force` | 0 written; 3 JSON unreadable or invalid; 4 `OUT` exists without `--force`, or `OUT` is the input; 5 the output did not read back to the same map (nothing is written) |
 | `roundtrip` | `FOLDER` | 0 every file identical (binary and through JSON); 1 a difference; 3 an unreadable file, no `.svmap` |
-| `diff` | `A B` (two files or two folders) | 0 identical; 1 different, or a map only on one side; 2 one file and one folder; 3 unreadable input |
+| `diff` | `A B` (two files or two folders) | 0 identical; 1 different, or a map only on one side; 2 one file and one folder; 3 unreadable or missing input (the message names the missing path) |
 | `wld-check` | `CLIENT` | 0 every `world/*.wld` writes back byte for byte; 1 a file differs; 3 a `.wld` unreadable (an unknown layout counts), no `world/*.wld`, client cannot be opened; 4 `CLIENT` is a file other than `data.sah` |
 | `spawns` | `FOLDER` `--client CLIENT` | 0 report made (it reports, it does not judge); 3 an unreadable file, no `.svmap`; 4 as for `check` |
 | `bulk` | `FOLDER --rule "<where> => <action>"` `--client CLIENT` `--allow-above-8` | 0 plan made; 2 the rule does not parse; 3 an unreadable file, no `.svmap`; 4 as for `check` |
@@ -259,7 +259,8 @@ Server map files (`<id>.svmap`) and a client's `.wld` files. Nothing here edits 
 - `diff` of two folders compares the maps by id. Text rows show the counts of records only in A, only in B and changed per section.
 - `wld-check` reads every `world/*.wld` with the lossless model, writes it back in memory and says for each file whether the bytes come back identical. That is all it checks.
 - `bulk` is a dry run: it reports what the rule would do to the monster areas of every map. It never writes.
-- Notes (a client file that was skipped, a `.svmap` left out of `spawns`, `bulk` or a folder `diff` because its file name is not a map id, an episode note such as `Monster.SData did not read with the EP4.5 layout: ...`) go to stderr as `note:` lines (silenced by `-q`) and into the `notes` array of the JSON.
+- `check --server-data DIR` still exits by the findings alone when `Map.ini`, `MapWar.ini`, `NpcQuest.SData` or `Obelisk.ini` is missing from DIR, but says so: one `note:` line (and `notes` entry) per file whose rules are skipped.
+- Notes (a client file that was skipped, a missing server data file, a `.svmap` left out of `spawns`, `bulk` or a folder `diff` because its file name is not a map id, an episode note such as `Monster.SData did not read with the EP4.5 layout: ...`) go to stderr as `note:` lines (silenced by `-q`) and into the `notes` array of the JSON.
 
 ```
 $ shaiya svmap roundtrip maps/

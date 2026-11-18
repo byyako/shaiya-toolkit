@@ -44,7 +44,8 @@ pub fn print_json(v: &serde_json::Value) {
     let _ = w.flush();
 }
 
-/// The JSON error object for a failure: `{"error": {"kind", "message", "file", "offset"}}`.
+/// The JSON error object for a failure: `{"error": {"kind", "message", "file", "offset"}}`. The kinds are the `ErrorKind`s below; `shaiya svmap`
+/// adds `usage` (exit 2) and `internal` (exit 5) with just `kind` and `message`.
 pub fn error_json(e: &shaiya_core::Error) -> serde_json::Value {
     let (kind, file, offset) = match e {
         shaiya_core::Error::Io { path, .. } => ("io", path.as_ref().map(|p| p.display().to_string()), None),
