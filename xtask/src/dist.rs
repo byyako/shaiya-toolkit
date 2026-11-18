@@ -50,7 +50,7 @@ fn program_name(t: &Tool, platform: &str) -> String {
 }
 
 /// What Shaiya SVMap Editor writes, derived from the list in the spec (section 1.1); shown in the README.txt of a zip that holds it.
-pub const EDITOR_SENTENCE: &str = "Shaiya SVMap Editor saves server map files and Map.ini where you open them (keeping a .bak of the first version), writes client files to a staging folder you pick, writes patches and folder exports only where you say, and changes data.sah/data.saf only of a test client you pick with Install, which keeps its own copy of the index there (no journal) so Uninstall can restore it; Copy loose adds new files to that test client. It never writes the client it reads from, never edits game.exe or a DLL.";
+pub const EDITOR_SENTENCE: &str = "Shaiya SVMap Editor saves server map files, Map.ini and MapWar.ini where you open them (keeping a .bak of the first version), writes client files to a staging folder you pick, writes patches and folder exports only where you say, and changes data.sah/data.saf only of a test client you pick with Install, which keeps its own copy of the index there (no journal) so Uninstall can restore it; Copy loose adds new files to that test client. It never writes the client it reads from, and never edits game.exe or a DLL. Everything else is written only to a path you name, apart from temporary files in the system temp folder.";
 
 pub fn readme(title: &str, tools: &[&Tool], platform: &str, version: &str) -> String {
     let mut s = format!("{title} {version} ({platform})\n{}\n\n", "=".repeat(title.len() + version.len() + platform.len() + 5));
@@ -61,11 +61,8 @@ pub fn readme(title: &str, tools: &[&Tool], platform: &str, version: &str) -> St
     }
     let editor = tools.iter().any(|t| t.bin == "shaiya-svmap-editor");
     let changes = if editor { "Changes the toolkit's other tools make to a client folder" } else { "Changes to a client folder" };
-    s.push_str(&format!("\nThese tools work on your own copy of the game. The repository and the releases contain no game files, and the tools never download any. {changes} are recorded in a journal so they can usually be rolled back, but not changes made with --no-journal or archive compact --in-place, which keep at most the previous index (data.sah.bak). Everything else is written only to a path you name.\n\n"));
-    if editor {
-        s.push_str(EDITOR_SENTENCE);
-        s.push_str("\n\n");
-    }
+    let tail = if editor { EDITOR_SENTENCE } else { "Everything else is written only to a path you name." };
+    s.push_str(&format!("\nThese tools work on your own copy of the game. The repository and the releases contain no game files, and the tools never download any. {changes} are recorded in a journal so they can usually be rolled back, but not changes made with --no-journal or archive compact --in-place, which keep at most the previous index (data.sah.bak). {tail}\n\n"));
     s.push_str(platform_notes(platform));
     s.push_str("\n\nCheck the download against SHA256SUMS.txt from the release page.\n\nDocumentation: https://github.com/byyako/shaiya-toolkit/tree/main/docs\nLicence: MIT (LICENSE.txt). Third-party components: THIRD-PARTY-NOTICES.txt\nMade by byyako.\n");
     s
@@ -374,10 +371,12 @@ mod tests {
         let r = readme("Shaiya Toolkit", &all, "windows-x86_64", "0.1.0");
         assert!(r.starts_with("Shaiya Toolkit 0.1.0"));
         assert!(r.contains(EDITOR_SENTENCE) && r.contains("shaiya-svmap-editor.exe"));
+        assert!(r.contains("Map.ini and MapWar.ini") && r.contains("apart from temporary files in the system temp folder."));
         assert!(r.contains("Changes the toolkit's other tools make to a client folder are recorded in a journal"));
         let cli = readme("Shaiya command line", &[&TOOLS[0]], "windows-x86_64", "0.1.0");
         assert!(!cli.contains("SVMap Editor") && !cli.contains("Copy loose"));
         assert!(cli.contains("Changes to a client folder are recorded in a journal"));
+        assert!(cli.contains("Everything else is written only to a path you name.") && !cli.contains("temp folder"));
     }
 
     #[test]

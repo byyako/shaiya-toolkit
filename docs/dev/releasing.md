@@ -25,7 +25,7 @@
 
 `<name>-<version>-<platform>.zip` with `name` either `shaiya-toolkit` (the desktop apps Shaiya Toolkit and Shaiya SVMap Editor, and the `shaiya` command line: the programs `shaiya-toolkit`, `shaiya-svmap-editor` and `shaiya`) or `shaiya` (the command line only, which includes `shaiya svmap`), and `platform` in `windows-x86_64`, `linux-x86_64`, `macos-universal`; plus `SHA256SUMS.txt`. Each zip holds a folder named like the zip with the program(s), `README.txt`, `LICENSE.txt` and `THIRD-PARTY-NOTICES.txt`. On macOS each GUI is an app bundle (`io.github.byyako.<tool>`, ad-hoc signed), the CLI a plain universal binary. Zips are deterministic (sorted entries, fixed timestamps from the commit). The workflow signs nothing with keys (there are none); a repository that is public also gets a build provenance attestation.
 
-The `README.txt` inside each zip carries the same sentence as the repository README: these tools work on your own copy of the game, contain no game files and download none.
+The `README.txt` inside each zip carries the same notice as the repository README: these tools work on your own copy of the game, contain no game files and download none. In the zip that holds Shaiya SVMap Editor it also says what the editor writes (including that temporary files go to the system temp folder); the command-line zip says everything else is written only to a path you name.
 
 ## Budgets
 
