@@ -6,6 +6,7 @@
 //! `files/<archive path with "/" replaced by "__">` (SData files and `sysmsg-uni.txt`, fetched by HTTP range).
 
 mod t1;
+mod t5;
 
 use shaiya_archive::{Archive, Index};
 use shaiya_core::Job;
@@ -55,9 +56,15 @@ pub enum Cap {
     PatchApplyRollbackStub,
     SdataBatchCheck,
     SdataLikeRoundtrip,
+    // world and map capabilities
+    WldParse,
+    WldLossless,
+    AreaTxtRoundtrip,
+    NpcQuestGates,
+    MapNameIds,
 }
 
-pub const CAPS: [Cap; 17] = [
+pub const CAPS: [Cap; 22] = [
     Cap::IndexParse,
     Cap::ToBytesIdentical,
     Cap::InspectSah,
@@ -75,6 +82,11 @@ pub const CAPS: [Cap; 17] = [
     Cap::PatchApplyRollbackStub,
     Cap::SdataBatchCheck,
     Cap::SdataLikeRoundtrip,
+    Cap::WldParse,
+    Cap::WldLossless,
+    Cap::AreaTxtRoundtrip,
+    Cap::NpcQuestGates,
+    Cap::MapNameIds,
 ];
 
 /// The archive and patch capabilities, which need a readable `data.sah` (they all fail with it).
@@ -108,6 +120,11 @@ impl Cap {
             Cap::PatchApplyRollbackStub => "`patch_apply_rollback_stub`",
             Cap::SdataBatchCheck => "`sdata_batch_check`",
             Cap::SdataLikeRoundtrip => "`sdata_like_roundtrip`",
+            Cap::WldParse => "clientdata `Wld::parse`, every `world/*.wld`",
+            Cap::WldLossless => "`wld_raw` writes every `.wld` back byte-identical",
+            Cap::AreaTxtRoundtrip => "`area_txt` writes every `world/*.txt` back byte-identical",
+            Cap::NpcQuestGates => "gatekeepers: 3 gates each, map ids 0..=255, finite positions",
+            Cap::MapNameIds => "sysmsg has text for the ids of the EP4.5 map-name table",
         }
     }
 }
@@ -123,7 +140,7 @@ use Cell::{Fails as F, NotAvailable as NA, Ok as O, Plain as P};
 ///
 /// Note: the 9 EP8 `DB*Data` binary-header files of kr-ep8 and fawkes-v68 do not survive `seed::unwrap` + CRC
 /// (the SEED rows of those two clients may need `Fails` once a run shows it); a run that disagrees must be reported, not forced to pass.
-pub const EXPECTED: [[Cell; 9]; 17] = [
+pub const EXPECTED: [[Cell; 9]; 22] = [
     /* IndexParse       */ [O, O, O, O, O, O, O, O, O],
     /* ToBytesIdentical */ [O, O, O, O, O, O, O, O, O],
     /* InspectSah       */ [O, O, O, O, O, O, O, O, O],
@@ -141,16 +158,28 @@ pub const EXPECTED: [[Cell; 9]; 17] = [
     /* PatchApplyRollbackStub  */ [O, O, O, O, O, O, O, O, O],
     /* SdataBatchCheck         */ [O, O, O, NA, O, O, O, O, P],
     /* SdataLikeRoundtrip      */ [O, O, O, NA, O, O, O, O, O],
+    /* WldParse               */ [O, NA, NA, NA, NA, NA, NA, NA, NA],
+    /* WldLossless            */ [O, NA, NA, NA, NA, NA, NA, NA, NA],
+    /* AreaTxtRoundtrip       */ [O, NA, NA, NA, NA, NA, NA, NA, NA],
+    /* NpcQuestGates          */ [O, O, O, NA, O, O, F, F, O],
+    /* MapNameIds             */ [O, O, O, NA, O, O, O, O, O],
 ];
 
 /// The numbers the T1 rows assert (the "OK 19,939" style cells of docs/version-matrix.md), in `CLIENTS` order; `None` = a plain "OK" cell.
 /// `ArchiveVisibleCount`: files minus shadowed. `ArchiveCheckIndex`: the `shadowed` warnings of the index-only check. `ArchiveFreeList`:
 /// free-list entries (preserved by an in-place edit). `ArchiveDataEnd`: `max(offset + length)`, asserted where the table gives it.
-pub const NUMBERS: [(Cap, [Option<u64>; 9]); 4] = [
+/// `WldParse`/`WldLossless`: `.wld` files parsed / written back identically. `AreaTxtRoundtrip`: `world/*.txt` identical. `NpcQuestGates`: gatekeepers.
+/// `MapNameIds`: ids of the map-name table that have text in sysmsg.
+pub const NUMBERS: [(Cap, [Option<u64>; 9]); 9] = [
     (Cap::ArchiveVisibleCount, [Some(19_939), Some(21_523), Some(23_533), Some(24_745), Some(24_599), Some(30_340), Some(34_418), Some(48_118), Some(20_418)]),
     (Cap::ArchiveCheckIndex, [Some(0), Some(0), Some(0), Some(0), Some(0), Some(0), Some(1), Some(1), Some(0)]),
     (Cap::ArchiveFreeList, [Some(0), Some(0), Some(507), Some(500), Some(500), Some(0), Some(0), Some(630), Some(500)]),
     (Cap::ArchiveDataEnd, [None, None, None, None, None, None, None, Some(6_645_531_195), None]),
+    (Cap::WldParse, [Some(83), None, None, None, None, None, None, None, None]),
+    (Cap::WldLossless, [Some(83), None, None, None, None, None, None, None, None]),
+    (Cap::AreaTxtRoundtrip, [Some(33), None, None, None, None, None, None, None, None]),
+    (Cap::NpcQuestGates, [Some(61), Some(61), Some(72), None, Some(72), Some(106), None, None, Some(61)]),
+    (Cap::MapNameIds, [Some(47), Some(47), Some(47), None, Some(47), Some(47), Some(47), Some(47), Some(44)]),
 ];
 
 pub fn expected_number(client: &str, cap: Cap) -> Option<u64> {
@@ -168,7 +197,7 @@ pub fn expected(client: &str, cap: Cap) -> Option<Cell> {
 #[derive(Clone, Debug)]
 pub struct Observed {
     pub client: String,
-    pub cells: [Cell; 17],
+    pub cells: [Cell; 22],
     /// Measured numbers of the T1 rows (see [`NUMBERS`]).
     pub numbers: Vec<(Cap, u64)>,
     /// Counts and other facts printed with the table (not asserted).
@@ -231,7 +260,7 @@ fn by_name<'a>(files: &'a [(String, Vec<u8>)], tail: &str) -> Option<&'a (String
 
 /// Measures one client folder.
 pub fn observe(client: &str, dir: &Path) -> Observed {
-    let mut o = Observed { client: client.to_string(), cells: [NA; 17], numbers: Vec::new(), facts: Vec::new(), sah_files: None, sah_millis: None, sdata_files: 0, sdata_bytes: 0, notes: Vec::new() };
+    let mut o = Observed { client: client.to_string(), cells: [NA; 22], numbers: Vec::new(), facts: Vec::new(), sah_files: None, sah_millis: None, sdata_files: 0, sdata_bytes: 0, notes: Vec::new() };
     let set = |o: &mut Observed, cap: Cap, c: Cell| o.cells[CAPS.iter().position(|x| *x == cap).expect("cap")] = c;
 
     // the index
@@ -281,6 +310,9 @@ pub fn observe(client: &str, dir: &Path) -> Observed {
 
     // the SData batch capabilities
     t1::sdata_caps_for(&mut o, dir, find_ci(dir, "data.saf").is_some());
+
+    // the world and map capabilities
+    t5::world_caps(&mut o, dir);
 
     // the SData files
     match sdata_files(dir) {

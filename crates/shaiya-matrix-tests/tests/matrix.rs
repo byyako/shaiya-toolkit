@@ -13,6 +13,7 @@ fn observed_all() -> Option<&'static Vec<Observed>> {
     ALL.get_or_init(|| {
         let (us, root) = (env_client(), env_test_clients());
         if us.is_none() && root.is_none() {
+            eprintln!("skipped: SHAIYA_CLIENT and SHAIYA_TEST_CLIENTS not set");
             return None;
         }
         let clients = present_clients(us.as_deref(), root.as_deref());
@@ -110,6 +111,31 @@ fn sdata_batch_check() {
 #[test]
 fn sdata_like_roundtrip() {
     check(Cap::SdataLikeRoundtrip);
+}
+
+#[test]
+fn clientdata_wld_parse() {
+    check(Cap::WldParse);
+}
+
+#[test]
+fn wld_raw_is_lossless() {
+    check(Cap::WldLossless);
+}
+
+#[test]
+fn area_txt_is_lossless() {
+    check(Cap::AreaTxtRoundtrip);
+}
+
+#[test]
+fn npcquest_gatekeeper_gates() {
+    check(Cap::NpcQuestGates);
+}
+
+#[test]
+fn sysmsg_has_the_map_name_ids() {
+    check(Cap::MapNameIds);
 }
 
 /// Prints the observed table (run with `--nocapture`) and the timing of the SAH parse; the table is what `docs/version-matrix.md` mirrors.
