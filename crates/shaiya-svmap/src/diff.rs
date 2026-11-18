@@ -95,15 +95,15 @@ fn diff_list<T: std::fmt::Debug>(
     }
     // Match equal records inside the middle by value.
     let mut pool: HashMap<&str, Vec<usize>> = HashMap::new();
-    for j in start..eb {
-        pool.entry(kb[j].as_str()).or_default().push(j);
+    for (j, key) in kb.iter().enumerate().take(eb).skip(start) {
+        pool.entry(key.as_str()).or_default().push(j);
     }
     for v in pool.values_mut() {
         v.reverse(); // pop() takes the earliest
     }
     let mut left_a = Vec::new();
-    for i in start..ea {
-        match pool.get_mut(ka[i].as_str()).and_then(|v| v.pop()) {
+    for (i, key) in ka.iter().enumerate().take(ea).skip(start) {
+        match pool.get_mut(key.as_str()).and_then(|v| v.pop()) {
             Some(_) => {}
             None => left_a.push(i),
         }

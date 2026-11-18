@@ -20,6 +20,7 @@ shaiya-seed = { path = "crates/shaiya-seed" }
 shaiya-archive = { path = "crates/shaiya-archive" }
 shaiya-patch = { path = "crates/shaiya-patch" }
 shaiya-clientdata = { path = "crates/shaiya-clientdata" }
+shaiya-svmap = { path = "crates/shaiya-svmap" }
 shaiya-inspect = { path = "crates/shaiya-inspect" }
 shaiya-ui = { path = "crates/shaiya-ui" }
 shaiya-testkit = { path = "crates/shaiya-testkit" }
@@ -72,4 +73,6 @@ opt-level = 3
 [profile.dev.package.shaiya-seed]            # keeps the opt-in tests over real SData quick
 opt-level = 3
 [profile.release.package.shaiya-svmap]       # bit grid and map I/O
+opt-level = 3
+[profile.release.package.shaiya-svmap-tools]  # scans, pairing, checks
 opt-level = 3

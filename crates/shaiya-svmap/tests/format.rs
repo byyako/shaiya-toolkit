@@ -2,6 +2,7 @@
 
 use shaiya_svmap::*;
 
+#[allow(clippy::approx_constant)] // 3.14 and 6.28 are test data, not constants
 fn sample() -> Svmap {
     let mut m = Svmap::new(16);
     m.blocked.set(1, 0, true);
