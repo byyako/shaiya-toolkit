@@ -394,7 +394,7 @@ fn wld_check_exit_codes_and_json() {
     let c = wld_client(w.tmp.path());
     let o = sh(&w.data, &["svmap", "wld-check", p(&c)]);
     assert_eq!(code(&o), 0, "{}", err(&o));
-    assert!(out(&o).contains("world/1.wld: byte-identical") && out(&o).contains("1 files: byte-identical 1, differs 0, unreadable 0") && out(&o).contains("Every .wld writes back byte for byte"), "{}", out(&o));
+    assert!(out(&o).contains("world/1.wld: byte-identical") && out(&o).contains("1 files: byte-identical 1, differs 0, unreadable 0") && out(&o).contains("Every .wld writes back byte for byte.") && !out(&o).contains("can edit"), "{}", out(&o));
     let v = json(&sh(&w.data, &["svmap", "wld-check", p(&c), "--json"]));
     assert!(v["client"].is_string());
     let f = &v["files"][0];
@@ -620,4 +620,55 @@ fn the_original_server_maps_through_the_binary() {
     assert_eq!(code(&o), 0, "{}", err(&o));
     assert_eq!(json(&o)["totals"]["matched"], 30);
     assert_eq!(snapshot(&orig), before, "nothing was written to the maps");
+}
+
+// ------------------------------------------------------------------------------------------------------------------ notes
+
+/// A readable `.svmap` whose file name is not a map id is left out of `spawns`, `bulk` and a folder `diff`: each says so as a
+/// `note:` line and in the `notes` array, never silently.
+#[test]
+fn a_map_file_without_an_id_name_is_noted_not_skipped_silently() {
+    let (w, maps) = fixture();
+    put(&maps, 1, &area_map(&[(1, 2)]));
+    write(&maps.join("extra.svmap"), &write_map(&area_map(&[(2, 3)])));
+    let want = "extra.svmap: the file name is not a map id";
+    // spawns
+    let o = sh(&w.data, &["svmap", "spawns", p(&maps)]);
+    assert_eq!(code(&o), 0, "{}", err(&o));
+    assert!(err(&o).contains(&format!("note: {want}")), "{}", err(&o));
+    let o = sh(&w.data, &["-q", "svmap", "spawns", p(&maps), "--json"]);
+    assert!(err(&o).is_empty(), "{}", err(&o));
+    let v = json(&o);
+    assert_eq!(v["totals"]["maps"], 1, "only the map with an id is reported");
+    assert!(v["notes"].as_array().unwrap().iter().any(|n| n.as_str().unwrap().starts_with(want)), "{v}");
+    // bulk
+    let o = sh(&w.data, &["svmap", "bulk", p(&maps), "--rule", "mob:1 => count +1"]);
+    assert_eq!(code(&o), 0, "{}", err(&o));
+    assert!(err(&o).contains(&format!("note: {want}")), "{}", err(&o));
+    let v = json(&sh(&w.data, &["svmap", "bulk", p(&maps), "--rule", "mob:1 => count +1", "--json"]));
+    assert!(v["notes"].as_array().unwrap().iter().any(|n| n.as_str().unwrap().starts_with(want)), "{v}");
+    // folder diff: the odd file in B is named with its side
+    let other = w.tmp.path().join("other");
+    std::fs::create_dir_all(&other).unwrap();
+    put(&other, 1, &area_map(&[(1, 2)]));
+    write(&other.join("odd.svmap"), &write_map(&Svmap::new(16)));
+    let o = sh(&w.data, &["svmap", "diff", p(&maps), p(&other)]);
+    assert_eq!(code(&o), 0, "{}{}", err(&o), out(&o));
+    assert!(err(&o).contains("note: extra.svmap (folder A): the file name is not a map id") && err(&o).contains("note: odd.svmap (folder B): the file name is not a map id"), "{}", err(&o));
+    let v = json(&sh(&w.data, &["svmap", "diff", p(&maps), p(&other), "--json"]));
+    assert_eq!(v["notes"].as_array().unwrap().len(), 2, "{v}");
+}
+
+/// `build -o <its own input>` is refused (exit 4) with a message that does not offer a `--in-place` build does not have.
+#[test]
+fn build_over_its_own_input_does_not_offer_in_place() {
+    let (w, maps) = fixture();
+    two_maps(&maps);
+    let doc = w.tmp.path().join("doc.json");
+    let d = sh(&w.data, &["svmap", "dump", p(&maps.join("5.svmap")), "--json"]);
+    assert_eq!(code(&d), 0);
+    write(&doc, out(&d).as_bytes());
+    let o = sh(&w.data, &["svmap", "build", p(&doc), "-o", p(&doc)]);
+    assert_eq!(code(&o), 4, "{}", err(&o));
+    assert!(err(&o).contains("is the input file") && !err(&o).contains("--in-place"), "{}", err(&o));
 }

@@ -235,7 +235,8 @@ pub struct CheckReport {
 }
 
 type CodeMap = BTreeMap<(std::cmp::Reverse<Severity>, &'static str), (usize, BTreeMap<String, usize>)>;
-type ReadableMaps = (Vec<(u32, Svmap)>, Vec<String>);
+/// The maps with an id, the messages of unreadable files, and a note for each readable file that was left out (its name is not a map id).
+type ReadableMaps = (Vec<(u32, Svmap)>, Vec<String>, Vec<String>);
 
 /// One line of the totals table of the text output: a rule, how often it fired and on which maps.
 #[derive(Debug)]
@@ -427,6 +428,10 @@ pub fn build(input: &Path, out: &Path, force: bool, job: &Job) -> Result<BuildRe
         return Err(Error::format(out.display().to_string(), None, "internal: the output does not read back to the same map"));
     }
     job.check()?;
+    // `build` has no --in-place, so the generic refusal (which offers it) is not used for this case
+    if shaiya_core::fs::same_file(input, out) {
+        return Err(Error::Refused(format!("the output {} is the input file; give a different path after -o", out.display())));
+    }
     let plan = shaiya_core::fs::plan_output(input, Some(out), false, force)?;
     shaiya_core::fs::write_atomic(&plan.target, &bytes)?;
     Ok(BuildReport {
@@ -641,6 +646,8 @@ pub struct FolderDiff {
     pub kind: &'static str,
     pub rows: Vec<FolderRow>,
     pub totals: FolderTotals,
+    /// Files of either folder that were left out because their name is not a map id.
+    pub notes: Vec<String>,
     #[serde(skip)]
     raw: Vec<crate::folderdiff::Row>,
 }
@@ -674,6 +681,15 @@ pub fn diff_folders(a: &Path, b: &Path, job: &Job) -> Result<FolderDiff> {
     job.stage("Comparing folders");
     let raw = crate::folderdiff::scan(a, b);
     job.check()?;
+    // the maps are compared by id: a `.svmap` whose name is not an id is left out, and the report says so
+    let mut notes = Vec::new();
+    for (side, d) in [("A", a), ("B", b)] {
+        for p in list_folder(d).unwrap_or_default() {
+            if map_id(&p).is_none() {
+                notes.push(format!("{} (folder {side}): the file name is not a map id, so it was not compared", file_name(&p)));
+            }
+        }
+    }
     if raw.is_empty() {
         return Err(Error::format(a.display().to_string(), None, "neither folder holds <id>.svmap files"));
     }
@@ -705,7 +721,7 @@ pub fn diff_folders(a: &Path, b: &Path, job: &Job) -> Result<FolderDiff> {
         }
         rows.push(FolderRow { map: r.id, status, counts, message });
     }
-    Ok(FolderDiff { a: a.display().to_string(), b: b.display().to_string(), kind: "folders", rows, totals, raw })
+    Ok(FolderDiff { a: a.display().to_string(), b: b.display().to_string(), kind: "folders", rows, totals, notes, raw })
 }
 
 // ------------------------------------------------------------------------------------------------------------------ wld-check
@@ -790,14 +806,15 @@ fn readable_maps(dir: &Path, job: &Job) -> Result<ReadableMaps> {
     let loaded = load_folder(dir, job)?;
     let mut maps = Vec::new();
     let mut unreadable = Vec::new();
+    let mut skipped = Vec::new();
     for (p, r) in loaded {
         match (map_id(&p), r) {
             (Some(id), Ok(m)) => maps.push((id, m)),
             (_, Err(e)) => unreadable.push(e.to_string()),
-            (None, Ok(_)) => {}
+            (None, Ok(_)) => skipped.push(format!("{}: the file name is not a map id, so this map was skipped", file_name(&p))),
         }
     }
-    Ok((maps, unreadable))
+    Ok((maps, unreadable, skipped))
 }
 
 #[derive(Debug, Serialize)]
@@ -870,8 +887,9 @@ fn with_env<R>(rules: Option<&ClientRules>, f: impl FnOnce(&crate::search::Env) 
 pub fn spawns(folder: &Path, client: Option<&Path>, job: &Job) -> Result<SpawnsReport> {
     use crate::spawns::{analyze, never_spawned, Group, Opts};
     let rules = client.map(open_client).transpose()?;
-    let notes = rules.as_ref().map(client_note_lines).unwrap_or_default();
-    let (maps, unreadable) = readable_maps(folder, job)?;
+    let mut notes = rules.as_ref().map(client_note_lines).unwrap_or_default();
+    let (maps, unreadable, skipped) = readable_maps(folder, job)?;
+    notes.extend(skipped);
     job.stage("Analysing");
     let monsters = rules.as_ref().and_then(|r| r.monsters.as_ref());
     let ins: Vec<crate::search::MapIn> = maps.iter().map(|(id, m)| crate::search::MapIn { id: Some(*id), map: m, findings: None }).collect();
@@ -957,8 +975,9 @@ pub fn parse_rule(text: &str) -> std::result::Result<crate::bulk::Rule, String> 
 pub fn bulk(folder: &Path, rule_text: &str, client: Option<&Path>, opts: crate::bulk::Opts, job: &Job) -> Result<BulkReport> {
     let rule = parse_rule(rule_text).map_err(|e| Error::format("--rule", None, e))?;
     let rules = client.map(open_client).transpose()?;
-    let notes = rules.as_ref().map(client_note_lines).unwrap_or_default();
-    let (maps, unreadable) = readable_maps(folder, job)?;
+    let mut notes = rules.as_ref().map(client_note_lines).unwrap_or_default();
+    let (maps, unreadable, skipped) = readable_maps(folder, job)?;
+    notes.extend(skipped);
     job.stage("Planning");
     let ins: Vec<crate::search::MapIn> = maps.iter().map(|(id, m)| crate::search::MapIn { id: Some(*id), map: m, findings: None }).collect();
     let plan = with_env(rules.as_ref(), |env| crate::bulk::plan(&rule, &ins, env, opts, None));
@@ -1263,6 +1282,8 @@ mod tests {
         assert_eq!(build(&j, &built, false, &job()).unwrap_err().kind(), Refused);
         assert!(build(&j, &built, true, &job()).is_ok(), "--force replaces it");
         assert_eq!(build(&j, &j, true, &job()).unwrap_err().kind(), Refused);
+        let own = build(&j, &j, false, &job()).unwrap_err().to_string();
+        assert!(own.contains("is the input file") && !own.contains("--in-place"), "svmap build has no --in-place: {own}");
         assert_eq!(build(&dir.join("none.json"), &built, true, &job()).unwrap_err().kind(), Io);
         std::fs::write(dir.join("bad.json"), "{").unwrap();
         assert_eq!(build(&dir.join("bad.json"), &dir.join("out.svmap"), false, &job()).unwrap_err().kind(), Format);

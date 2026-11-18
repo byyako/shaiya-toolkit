@@ -356,6 +356,7 @@ fn diff(ctx: &Ctx, a: &DiffArgs, job: &Job) -> Res {
     }
     if a.a.is_dir() && a.b.is_dir() {
         let r = batch::diff_folders(&a.a, &a.b, job)?;
+        notes(ctx, &r.notes);
         emit(ctx, &r);
         Ok(r.exit_code())
     } else {
@@ -432,7 +433,7 @@ impl Report for WldCheckReport {
         let t = &self.totals;
         writeln!(w, "{} files: byte-identical {}, differs {}, unreadable {}", t.files, t.identical, t.differs, t.unreadable)?;
         if t.identical == t.files {
-            writeln!(w, "Every .wld writes back byte for byte, so the Shaiya SVMap Editor can edit this client.")
+            writeln!(w, "Every .wld writes back byte for byte.")
         } else {
             writeln!(w, "The files that are not identical stay read-only in the Shaiya SVMap Editor.")
         }
