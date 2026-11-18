@@ -49,6 +49,9 @@ fn program_name(t: &Tool, platform: &str) -> String {
     }
 }
 
+/// What Shaiya SVMap Editor writes, derived from the list in the spec (section 1.1); shown in the README.txt of a zip that holds it.
+pub const EDITOR_SENTENCE: &str = "Shaiya SVMap Editor saves server map files and Map.ini where you open them (keeping a .bak of the first version), writes client files to a staging folder you pick, writes patches and folder exports only where you say, and changes data.sah/data.saf only of a test client you pick with Install, which keeps its own copy of the index there (no journal) so Uninstall can restore it; Copy loose adds new files to that test client. It never writes the client it reads from, never edits game.exe or a DLL.";
+
 pub fn readme(title: &str, tools: &[&Tool], platform: &str, version: &str) -> String {
     let mut s = format!("{title} {version} ({platform})\n{}\n\n", "=".repeat(title.len() + version.len() + platform.len() + 5));
     s.push_str("Part of the Shaiya Toolkit (https://github.com/byyako/shaiya-toolkit).\n\n");
@@ -56,7 +59,13 @@ pub fn readme(title: &str, tools: &[&Tool], platform: &str, version: &str) -> St
     for t in tools {
         s.push_str(&format!("  {:<34} {}\n", program_name(t, platform), if t.gui { "window program: double-click it, or drop files on it" } else { "command line: open a terminal here and run it with --help" }));
     }
-    s.push_str("\nThese tools work on your own copy of the game. The repository and the releases contain no game files, and the tools never download any. Changes to a client folder are recorded in a journal so they can usually be rolled back, but not changes made with --no-journal or archive compact --in-place, which keep at most the previous index (data.sah.bak). Everything else is written only to a path you name.\n\n");
+    let editor = tools.iter().any(|t| t.bin == "shaiya-svmap-editor");
+    let changes = if editor { "Changes the toolkit's other tools make to a client folder" } else { "Changes to a client folder" };
+    s.push_str(&format!("\nThese tools work on your own copy of the game. The repository and the releases contain no game files, and the tools never download any. {changes} are recorded in a journal so they can usually be rolled back, but not changes made with --no-journal or archive compact --in-place, which keep at most the previous index (data.sah.bak). Everything else is written only to a path you name.\n\n"));
+    if editor {
+        s.push_str(EDITOR_SENTENCE);
+        s.push_str("\n\n");
+    }
     s.push_str(platform_notes(platform));
     s.push_str("\n\nCheck the download against SHA256SUMS.txt from the release page.\n\nDocumentation: https://github.com/byyako/shaiya-toolkit/tree/main/docs\nLicence: MIT (LICENSE.txt). Third-party components: THIRD-PARTY-NOTICES.txt\nMade by byyako.\n");
     s
@@ -276,6 +285,14 @@ pub fn run(args: &Args) -> Result<(), String> {
         let bytes = build_zip(&entries, when)?;
         std::fs::write(out.join(&name), &bytes).map_err(|e| format!("{name}: {e}"))?;
         println!("dist: {name} ({} bytes, {} entries)", bytes.len(), list_zip(&bytes)?.len());
+        if windows {
+            let limit = crate::sizes::zip_budget(&asset);
+            let ok = crate::sizes::within(bytes.len() as u64, limit);
+            println!("dist: {name} budget {limit} bytes: {}", if ok { "budget ok" } else { "budget OVER" });
+            if !ok {
+                return Err(format!("{name} is {} bytes, over the {limit} budget", bytes.len()));
+            }
+        }
         written.push((name, bytes));
     }
     let sums_name = format!("SHA256SUMS-{platform}.txt");
@@ -349,6 +366,18 @@ mod tests {
         let m = readme(gui.title, &[gui], "macos-universal", "0.1.0");
         assert!(m.contains("xattr -dr com.apple.quarantine") && m.contains("Shaiya Toolkit.app"));
         assert!(readme("x", &[&TOOLS[0]], "linux-x86_64", "0.1.0").contains("chmod +x"));
+    }
+
+    #[test]
+    fn the_editor_sentence_is_only_in_the_zip_that_holds_the_editor() {
+        let all: Vec<&Tool> = TOOLS.iter().collect();
+        let r = readme("Shaiya Toolkit", &all, "windows-x86_64", "0.1.0");
+        assert!(r.starts_with("Shaiya Toolkit 0.1.0"));
+        assert!(r.contains(EDITOR_SENTENCE) && r.contains("shaiya-svmap-editor.exe"));
+        assert!(r.contains("Changes the toolkit's other tools make to a client folder are recorded in a journal"));
+        let cli = readme("Shaiya command line", &[&TOOLS[0]], "windows-x86_64", "0.1.0");
+        assert!(!cli.contains("SVMap Editor") && !cli.contains("Copy loose"));
+        assert!(cli.contains("Changes to a client folder are recorded in a journal"));
     }
 
     #[test]

@@ -7,6 +7,23 @@ use std::path::PathBuf;
 
 pub const CLI_BUDGET: u64 = 6_000_000;
 pub const GUI_BUDGET: u64 = 20_000_000;
+// temporary until the 0.2.0 dry run is measured (WP8b)
+pub const ZIP_BUDGET_ALL_IN_ONE: u64 = 40_000_000;
+pub const ZIP_BUDGET_CLI: u64 = 10_000_000;
+
+/// The zip budget (Windows) for a release asset name: `shaiya` is the command line zip, anything else the all-in-one.
+pub fn zip_budget(asset: &str) -> u64 {
+    if asset == "shaiya" {
+        ZIP_BUDGET_CLI
+    } else {
+        ZIP_BUDGET_ALL_IN_ONE
+    }
+}
+
+/// True when `size` does not exceed `limit`.
+pub fn within(size: u64, limit: u64) -> bool {
+    size <= limit
+}
 
 pub fn budget(gui: bool) -> u64 {
     if gui {
@@ -53,6 +70,13 @@ pub fn run(platform: Option<&str>, target: Option<&str>) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_zip_budget_check() {
+        assert_eq!(zip_budget("shaiya"), ZIP_BUDGET_CLI);
+        assert_eq!(zip_budget("shaiya-toolkit"), ZIP_BUDGET_ALL_IN_ONE);
+        assert!(within(1000, 1000) && !within(1001, 1000) && within(0, 5));
+    }
 
     #[test]
     fn budgets_and_paths() {
