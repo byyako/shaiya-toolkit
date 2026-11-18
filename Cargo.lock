@@ -2635,10 +2635,13 @@ dependencies = [
  "serde_json",
  "shaiya-archive",
  "shaiya-build",
+ "shaiya-clientdata",
  "shaiya-core",
  "shaiya-inspect",
  "shaiya-patch",
  "shaiya-seed",
+ "shaiya-svmap",
+ "shaiya-svmap-tools",
  "shaiya-testkit",
  "windows-sys 0.52.0",
 ]

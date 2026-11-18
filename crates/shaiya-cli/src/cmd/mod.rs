@@ -5,5 +5,6 @@ pub mod clients;
 pub mod info;
 pub mod patch;
 pub mod sdata;
+pub mod svmap;
 pub mod util;
 pub mod version;

@@ -22,6 +22,9 @@ shaiya-archive = { workspace = true, features = ["serde"] }
 shaiya-patch = { workspace = true, features = ["serde"] }
 shaiya-seed = { workspace = true, features = ["serde"] }
 shaiya-inspect = { workspace = true }
+shaiya-svmap = { workspace = true }
+shaiya-svmap-tools = { workspace = true }
+shaiya-clientdata = { workspace = true }
 clap = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
@@ -37,3 +40,5 @@ shaiya-testkit = { workspace = true }
 shaiya-seed = { workspace = true }
 shaiya-patch = { workspace = true }
 shaiya-archive = { workspace = true }
+shaiya-svmap = { workspace = true }
+shaiya-svmap-tools = { workspace = true, features = ["testing"] }

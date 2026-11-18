@@ -102,6 +102,13 @@ struct ClientsGroup {
     cmd: cmd::clients::Cmd,
 }
 
+#[derive(clap::Args)]
+#[command(arg_required_else_help = true, subcommand_required = true)]
+struct SvmapGroup {
+    #[command(subcommand)]
+    cmd: cmd::svmap::Cmd,
+}
+
 #[derive(Subcommand)]
 enum Command {
     /// Identify files and describe them (kind, size, details, optional SHA-256)
@@ -114,6 +121,8 @@ enum Command {
     Sdata(SdataGroup),
     /// The saved "my client folders" list (use them as @name)
     Clients(ClientsGroup),
+    /// Server map files (.svmap): check, dump, build, round trip, compare; check a client's .wld files; spawn report; bulk-edit dry run
+    Svmap(SvmapGroup),
     /// Print the version, git revision and target
     Version,
 }
@@ -178,6 +187,7 @@ fn run() -> u8 {
                 Command::Patch(g) => cmd::patch::run(&ctx, &g.cmd, &job),
                 Command::Sdata(g) => cmd::sdata::run(&ctx, &g.cmd, &job),
                 Command::Clients(g) => cmd::clients::run(&ctx, &g.cmd),
+                Command::Svmap(g) => cmd::svmap::run(&ctx, &g.cmd, &job),
                 Command::Version => unreachable!("handled above"),
             };
             sink.finish();
