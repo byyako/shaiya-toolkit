@@ -28,7 +28,7 @@ Client ids: `us-108` (US patch level 108), and the eight test clients `ru-ep3`, 
 | `wld_raw` writes every `.wld` back byte-identical | OK 83 | n/a | n/a | n/a | n/a | n/a | n/a | n/a | n/a |
 | `area_txt` writes every `world/*.txt` back byte-identical | OK 33 | n/a | n/a | n/a | n/a | n/a | n/a | n/a | n/a |
 | gatekeepers: 3 gates each, map ids 0..=255, finite positions (the number is the count of gatekeepers) | OK 61 | OK 61 | OK 72 | n/a | OK 72 | OK 106 | fails | fails | OK 61 |
-| sysmsg has text for the ids of the EP4.5 map-name table (the number is the ids with text, of 47) | OK 47 | OK 47 | OK 47 | n/a | OK 47 | OK 47 | OK 47 | OK 47 | OK 44 |
+| sysmsg has text for the distinct map-name message ids of the EP4.5 table (the number is the message ids with text, of 47) | OK 47 | OK 47 | OK 47 | n/a | OK 47 | OK 47 | OK 47 | OK 47 | OK 44 |
 
 Reading the table:
 
@@ -41,7 +41,7 @@ Reading the table:
 - The `Monsters` and `NpcQuest` rows are the layouts of the original client generation; later episodes change them. Schema support for those is planned work.
 - The two `_stub` rows edit a copy of each client's real index against an empty `data.saf`, so no client file is changed and no client contents are needed. Archive operations that need a full `data.saf` (check with the data file, extract, compaction, swap) are covered by synthetic tests and, for one client you supply yourself, by the opt-in tests in [dev/testing.md](dev/testing.md#opt-in-variables).
 - World files are not part of the eight test clients (they hold SData files and `sysmsg-uni.txt` only), so the `.wld` and `world/*.txt` rows are `n/a` there; only the US client's full `data.saf` measures them.
-- The gatekeeper row is `fails` where `NpcQuest::parse` fails (kr-ep8, fawkes-v68), and `n/a` where there is no file (ru-ep54).
-- The map-name row measures the presence of text for the ids of the EP4.5 map-name table, not its correctness. The table has 47 ids; the cn-ep4 sysmsg lacks text for three of them.
+- The gatekeeper row is `fails` where `NpcQuest::parse` fails (kr-ep8, fawkes-v68), and `n/a` where there is no file (ru-ep54). On those two clients the gates were never reached because `NpcQuest::parse` fails first.
+- The map-name row measures the presence of text for the distinct map-name message ids of the EP4.5 table (47 message ids covering 67 map ids), not its correctness; the cn-ep4 sysmsg lacks text for three of them.
 
 Run it on your own copies: [dev/testing.md](dev/testing.md#the-version-matrix).

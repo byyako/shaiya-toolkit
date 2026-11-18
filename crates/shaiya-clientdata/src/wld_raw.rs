@@ -429,7 +429,7 @@ impl WldRaw {
                 extra: r.i32("area extra")?,
             });
         }
-        // NPC list: the client subtracts each record's extra point count from the declared n (FUN_005254e0)
+        // NPC list: the client subtracts each record's extra point count from the declared n
         let declared = r.count(0, 10_000_000, "npc count")?;
         let mut left = declared as i64;
         let mut npcs = Vec::new();

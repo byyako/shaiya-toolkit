@@ -124,7 +124,7 @@ impl Cap {
             Cap::WldLossless => "`wld_raw` writes every `.wld` back byte-identical",
             Cap::AreaTxtRoundtrip => "`area_txt` writes every `world/*.txt` back byte-identical",
             Cap::NpcQuestGates => "gatekeepers: 3 gates each, map ids 0..=255, finite positions",
-            Cap::MapNameIds => "sysmsg has text for the ids of the EP4.5 map-name table",
+            Cap::MapNameIds => "sysmsg has text for the distinct map-name message ids of the EP4.5 table",
         }
     }
 }

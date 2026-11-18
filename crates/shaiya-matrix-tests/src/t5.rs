@@ -134,8 +134,7 @@ pub(crate) fn world_caps(o: &mut Observed, dir: &Path) {
                 .and_then(|raw| shaiya_seed::unwrap(&raw, name).map_err(|e| e.to_string()))
                 .and_then(|(plain, _)| NpcQuest::parse(&plain, name).map_err(|e| e.to_string()));
             match parsed {
-                Err(e) => {
-                    o.notes.push(format!("{name}: {e}"));
+                Err(_) => {
                     o.set(Cap::NpcQuestGates, F);
                 }
                 Ok(q) => {
@@ -157,7 +156,7 @@ pub(crate) fn world_caps(o: &mut Observed, dir: &Path) {
         None => o.set(Cap::MapNameIds, NA),
         Some(name) => match files.read(name).map_err(|e| e.to_string()).and_then(|raw| SysMsg::parse(&raw, name).map_err(|e| e.to_string())) {
             Err(e) => {
-                o.notes.push(format!("{name}: {e}"));
+                o.notes.push(e);
                 o.set(Cap::MapNameIds, F);
             }
             Ok(msgs) => {
@@ -165,7 +164,7 @@ pub(crate) fn world_caps(o: &mut Observed, dir: &Path) {
                 let with_text = ids.iter().filter(|id| msgs.get(**id).is_some_and(|t| !t.trim().is_empty())).count() as u64;
                 o.set(Cap::MapNameIds, O);
                 o.numbers.push((Cap::MapNameIds, with_text));
-                o.facts.push(format!("map-name table: {} ids, {with_text} with text in sysmsg", ids.len()));
+                o.facts.push(format!("map-name table: {} distinct message ids, {with_text} with text in sysmsg", ids.len()));
             }
         },
     }
