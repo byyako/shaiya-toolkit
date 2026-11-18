@@ -629,7 +629,7 @@ impl Wizard {
         let modal = egui::Modal::new(egui::Id::unique("setup-wizard")).show(ctx, |ui| {
             ui.set_width(620.0);
             ui.horizontal(|ui| {
-                ui.heading("Welcome to the svmap editor");
+                ui.heading("Welcome to the Shaiya SVMap Editor");
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     ui.label(RichText::new(format!("step {} of 3", self.step + 1)).weak());
                 });

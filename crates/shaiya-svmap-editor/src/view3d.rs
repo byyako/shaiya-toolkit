@@ -2178,7 +2178,7 @@ mod tests {
         assert_eq!(doc.map, before, "one undo returns the original map");
     }
 
-    /// Acceptance (M5), real data (needs `SHAIYA_CLIENT` and `SVMAP_ORIGINALS`): on maps 1, 18, 35 (fields) and 65 (a dungeon)
+    /// Acceptance test on real data (needs `SHAIYA_CLIENT` and `SVMAP_ORIGINALS`): on maps 1, 18, 35 (fields) and 65 (a dungeon)
     /// a ground drag leaves NPC points and monster areas on the ground (y = ground within 0.01), as one undo step.
     #[test]
     fn real_maps_ground_drag_keeps_y_on_the_ground() {
@@ -2418,7 +2418,7 @@ mod tests {
         assert!(d.scale_at([100000.0, 0.0, 0.0]) <= 12.0);
     }
 
-    // ---- R4: the 3D polish
+    // ---- the 3D polish
 
     #[test]
     fn compass_click_faces_north() {

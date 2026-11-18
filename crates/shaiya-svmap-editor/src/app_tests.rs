@@ -117,7 +117,7 @@ fn wizard_flow() {
     let mut h = Harness::new(Some(data.path()), StartOptions::default());
     assert!(h.app.wizard.is_some() && !h.app.settings.first_run_done);
     h.frames(2);
-    assert!(h.text.contains("Welcome to the svmap editor") && h.text.contains("The server's map files"), "{}", h.text);
+    assert!(h.text.contains("Welcome to the Shaiya SVMap Editor") && h.text.contains("The server's map files"), "{}", h.text);
 
     // set the paths as typing or Browse would, wait for the inspections, finish
     let w = h.app.wizard.as_mut().unwrap();
@@ -594,7 +594,7 @@ fn every_help_page_renders_and_search_highlights() {
     assert!(h.text.contains("No page has those words."));
 }
 
-// ------------------------------------------------------------------------------------------------------------------ Q2
+// ------------------------------------------------------------------------------------------------------------------ safety features
 
 fn add_area(d: &mut Doc, x: f32) {
     let n = d.map.mob_areas.len();
@@ -741,7 +741,7 @@ fn recovery_leaves_entries_this_window_does_not_own() {
     assert!(offered().is_empty());
 }
 
-// ------------------------------------------------------------------------------------------------------------------ Q3
+// ------------------------------------------------------------------------------------------------------------------ templates and context menu
 
 fn mob_area(x: f32, mobs: &[(u32, u32)]) -> Rec {
     Rec::Mob(shaiya_svmap::MobArea { min: [x, 0.0, 10.0], max: [x + 4.0, 2.0, 14.0], mobs: mobs.iter().map(|(m, c)| shaiya_svmap::MobEntry { mob: *m, count: *c }).collect() })
@@ -1098,7 +1098,7 @@ fn level_filter_and_overview_settings_are_kept() {
     assert_eq!(h2.app.settings.templates.len(), 1);
 }
 
-// ------------------------------------------------------------------------------------------------------------------ Q3 review
+// ------------------------------------------------------------------------------------------------------------------ templates regressions
 
 /// "This map" results belong to the tab they were found on: switching tabs runs the search again, so Select all on this map and
 /// the hover outline never use indices of another map.
@@ -1205,7 +1205,7 @@ fn exports_refuse_map_files() {
     assert!(!maps.join("data.sah").exists());
 }
 
-// ---------------------------------------------------------------------------------------------------------------------- R1: layout
+// ---------------------------------------------------------------------------------------------------------------------- layout
 
 impl Harness {
     /// A click at a point: move there, press, release (one frame each).
@@ -1413,7 +1413,7 @@ fn toolbar_single_row() {
     assert!(!h.app.r1.toolbar_overflow && h.text.contains("template"), "{}", h.text);
 }
 
-/// The four points of the R1 acceptance review: oversized saved panels, deleting the layout in use, Esc in Save layout, a very
+/// Four layout edge cases: oversized saved panels, deleting the layout in use, Esc in Save layout, a very
 /// narrow toolbar.
 #[test]
 fn r1_review_fixes() {
@@ -1547,7 +1547,7 @@ fn bookmark_rename_follows_its_map() {
     assert_eq!(h.app.settings.bookmarks[&key1][0].name, "gate");
 }
 
-// ------------------------------------------------------------------------------------------------------------------ R2
+// ------------------------------------------------------------------------------------------------------------------ heatmap and level range
 
 /// A one-map app (size 64) whose map holds the given monster areas.
 fn spawn_app(data: &Path, maps: &Path, areas: Vec<shaiya_svmap::MobArea>) -> Harness {
@@ -1714,7 +1714,7 @@ fn never_spawned_originals() {
     println!("never spawned: {want} of {} named monsters with a level ({} distinct ids used)", named.len(), used.len());
 }
 
-/// Review R2: the level range numbers belong to the map they were opened on; showing another map closes them, so Set cannot
+/// The level range numbers belong to the map they were opened on; showing another map closes them, so Set cannot
 /// store them under the wrong map.
 #[test]
 fn r2_review_band_edit_follows_its_map() {
@@ -1741,7 +1741,7 @@ fn r2_review_band_edit_follows_its_map() {
     assert!(h.app.settings.spawn_bands.is_empty());
 }
 
-// ---------------------------------------------------------------------------------------------------------------------- R3: spawn editing
+// ---------------------------------------------------------------------------------------------------------------------- spawn editing
 
 impl Harness {
     /// The screen position of a world point of the active map in the 2D viewport.
@@ -1956,7 +1956,7 @@ fn bulk_skips_read_only() {
     }
 }
 
-/// Every R3 edit path leaves a read-only tab alone: Scatter apply and Bulk apply (the Take paths of R5 join this test then).
+/// Every spawn edit path leaves a read-only tab alone: Scatter apply and Bulk apply.
 #[test]
 fn read_only_refuses_r_edits() {
     let maps = TempDir::new("r-ro");
@@ -2060,7 +2060,7 @@ fn the_bulk_window_shows_the_plan_and_saves_rules() {
     assert_eq!(h.app.r3.bulk.as_ref().unwrap().text, "map:1 mob:5 => count +1");
 }
 
-/// R3 review: Find's Replace monster... opens Bulk edit with "replace 5 with 5", which is not a valid rule yet. The action builder
+/// Find's Replace monster... opens Bulk edit with "replace 5 with 5", which is not a valid rule yet. The action builder
 /// still shows a replace (not "count +"), and picking the second monster fills the right side.
 #[test]
 fn r3_review_replace_from_find_picks_the_new_monster() {
@@ -2181,7 +2181,7 @@ fn read_only_refuses_the_3d_and_context_menu_edits() {
     assert_eq!(d.map.mob_areas.len(), 2);
 }
 
-// ---------------------------------------------------------------------------------------------------------------------- R5: world and folders
+// ---------------------------------------------------------------------------------------------------------------------- world and folders
 
 fn mob_of(m: &Svmap, i: usize) -> shaiya_svmap::MobArea {
     m.mob_areas[i].clone()
@@ -2657,9 +2657,9 @@ fn staging_setting_checked_on_open() {
     assert_eq!(h.app.client.as_ref().unwrap().staging(), Some(root.join("out")));
 }
 
-// ------------------------------------------------------------------------------------------------------------------ C2: paired documents
+// ------------------------------------------------------------------------------------------------------------------ paired documents
 
-/// A window over the C2 folders (map 9 pairs with its `.wld`, map 10 does not write back) with the staging folder set.
+/// A window over the paired folders (map 9 pairs with its `.wld`, map 10 does not write back) with the staging folder set.
 fn c2_harness(root: &TempDir) -> (Harness, PathBuf, PathBuf) {
     let (client, maps) = crate::testutil::paired_folders(root);
     let out = root.join("out");
@@ -2804,7 +2804,7 @@ fn save_as_another_number_writes_the_client_map_the_edits_belong_to() {
 fn a_failed_client_save_keeps_the_client_half_modified() {
     let root = TempDir::new("c2-save-fail");
     let (mut h, client, _out) = c2_harness(&root);
-    // a staging folder inside the client is refused by the same check as the C1 stage command
+    // a staging folder inside the client is refused by the same check as the stage command
     h.app.settings.client_out = Some(client.join("staged").display().to_string());
     move_active_portal(&mut h, 0, 2.0);
     let file = h.app.docs[h.app.active].path.clone().unwrap();
@@ -3014,7 +3014,7 @@ fn chain_rows_and_the_two_way_sync_window() {
     assert!(h.text.contains("all take server") && h.text.contains("take client"), "{}", h.text);
 }
 
-// ---------------------------------------------------------------------------------------------------------------- C4: terrain
+// ---------------------------------------------------------------------------------------------------------------- terrain
 
 /// A terrain stroke on a tab: the tool key selects it; the stroke is live, one undo step at its end; the tab's picture and ground
 /// follow the heights; Ctrl+S writes the staged `.wld` (heights only changed) and leaves the svmap file and the client folder alone.
@@ -3163,12 +3163,12 @@ fn review_a_stroke_in_progress_never_reaches_a_file() {
     assert!(!h.app.docs[h.app.active].part().unwrap().has_live());
 }
 
-// ------------------------------------------------------------------------------------------------------------------ C5: Map.ini and new maps
+// ------------------------------------------------------------------------------------------------------------------ Map.ini and new maps
 
 const C5_MAP_INI: &[u8] = b"[BASE]\r\nMapCount\t  = 11\r\n\r\n[DEFAULT_SET_ZONE]\r\nMapType = F\r\nWeatherState = 0\r\n\r\n[SET_ZONE_9]\r\nMapType = F\t// \xB0\xA1\r\n\r\n[SET_ZONE_10]\r\nMapType = D\r\nRebirthMapPos = 9, 1, 2, 3\r\n\r\n";
 const C5_MAP_WAR: &[u8] = b"[BASE]\r\nMapCount = 1\r\n\r\n[DEFAULT_SET_ZONE]\r\nMapType = F\r\n\r\n[SET_ZONE_100]\r\nMapType = D\r\n";
 
-/// A window over the C2 folders with a server data folder (`Map.ini` MapCount 11, zones 9 and 10, `MapWar.ini` with zone 100)
+/// A window over the paired folders with a server data folder (`Map.ini` MapCount 11, zones 9 and 10, `MapWar.ini` with zone 100)
 /// beside the map folder, a staging folder and a data folder.
 fn c5_harness(root: &TempDir) -> (Harness, PathBuf, PathBuf) {
     let (client, maps) = crate::testutil::paired_folders(root);
@@ -3533,10 +3533,27 @@ fn the_client_chip_shows_the_episode_notes() {
     let mut rules = ClientRules::open(&client).unwrap();
     rules.monsters = Some(shaiya_clientdata::Monsters { records: Vec::new() });
     rules.npcs = Some(shaiya_clientdata::NpcQuest { lists: Vec::new(), quests_offset: 0 });
+    rules.problems.clear();
     assert!(client_notes(&rules).is_empty());
     h.app.adopt_client(&client, rules);
     assert!(h.app.client_notes.is_empty());
     let (_, hover) = h.app.client_chip_text();
     assert!(!hover.contains("differs from US EP4.5"), "{hover}");
     h.frames(2);
+    assert!(!h.text.contains(&label), "no chip for a complete client: {}", h.text);
+}
+
+/// With no data folder (`no_data_folder`), the status bar says settings and backups are off, and nothing is persisted.
+#[test]
+fn no_data_folder_shows_the_status_bar_warning() {
+    let mut h = Harness::new(None, StartOptions { no_data_folder: true, ..Default::default() });
+    h.app.settings.first_run_done = true;
+    h.frames(3);
+    assert!(h.text.contains("No data folder: settings and backups are off; use --data-dir"), "{}", h.text);
+    h.app.flush_settings();
+    assert!(!h.app.persist && h.app.settings_path.is_none() && h.app.data_dir.is_none());
+    let mut h = Harness::new(None, StartOptions::default());
+    h.app.settings.first_run_done = true;
+    h.frames(3);
+    assert!(!h.text.contains("No data folder"), "{}", h.text);
 }

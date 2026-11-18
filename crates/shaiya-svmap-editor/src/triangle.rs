@@ -1,4 +1,4 @@
-//! A single coloured triangle drawn through egui-wgpu's paint callback (M0 proof that custom wgpu rendering works).
+//! A single coloured triangle drawn through egui-wgpu's paint callback (proof that custom wgpu rendering works).
 
 use egui_wgpu::{CallbackResources, CallbackTrait, RenderState, ScreenDescriptor};
 

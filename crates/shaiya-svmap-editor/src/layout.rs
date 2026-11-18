@@ -77,7 +77,7 @@ pub struct LayoutState {
     pub inspector: PanelState,
     pub dock: PanelState,
     pub browser_tab: BrowserTab,
-    /// Maps above the Outliner in one Browser (the layout before R1).
+    /// Maps above the Outliner in one Browser (the older layout).
     pub browser_split: bool,
     pub dock_tab: DockTab,
     /// Share of the height the Browser gets when it is stacked above the Inspector.

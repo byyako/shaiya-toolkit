@@ -128,7 +128,7 @@ impl FolderUi {
     }
 }
 
-/// Everything R5 keeps between frames.
+/// Everything the world and folders features keep between frames.
 #[derive(Default)]
 pub struct R5 {
     pub showing: Showing,

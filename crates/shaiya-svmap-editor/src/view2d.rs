@@ -32,9 +32,9 @@ pub enum Tool {
     Paint,
     Measure,
     Scatter,
-    /// Select, move, turn, add and delete the buildings, shapes and trees of the client map (C3).
+    /// Select, move, turn, add and delete the buildings, shapes and trees of the client map.
     Place,
-    /// Raise, lower, flatten, smooth, set and ramp the corner heights of the client map (C4).
+    /// Raise, lower, flatten, smooth, set and ramp the corner heights of the client map.
     Terrain,
 }
 
@@ -1551,7 +1551,7 @@ fn draw_terrain(p: &egui::Painter, rect: Rect, xf: &Xf, doc: &Doc, terrain: &mut
     }
 }
 
-/// The Placements tool (C3): click picks, drag moves, a click with a model armed adds it, R turns, Esc cancels or clears.
+/// The Placements tool: click picks, drag moves, a click with a model armed adds it, R turns, Esc cancels or clears.
 fn place_interact(ui: &egui::Ui, c: &mut Ctx, xf: &Xf, resp: &egui::Response, shift: bool, alt: bool, out: &mut Out) {
     use crate::place_ui as pu;
     let primary = egui::PointerButton::Primary;
@@ -3023,7 +3023,7 @@ mod tests {
         assert_eq!(h.doc.undo.len(), 2);
     }
 
-    // ---- Q3: templates, context menu, overview, level filter
+    // ---- templates, context menu, overview, level filter
 
     #[test]
     fn template_stamp() {

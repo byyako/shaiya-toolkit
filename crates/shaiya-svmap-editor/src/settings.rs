@@ -200,7 +200,7 @@ pub const SNAP_STEPS_DEFAULT: [f32; 8] = [0.1, 0.5, 1.0, 2.0, 4.0, 8.0, 16.0, 64
 pub struct Settings {
     pub svmap_folder: Option<String>,
     pub client_folder: Option<String>,
-    /// A second copy of the original map files to compare against (Q2).
+    /// A second copy of the original map files to compare against.
     pub reference_folder: Option<String>,
     pub first_run_done: bool,
     /// Tool hint line in the status bar and the empty-state hints.
@@ -229,13 +229,13 @@ pub struct Settings {
     pub prop_distance: f32,
     /// Bookmarks per `<folder key>#<map id>`.
     pub bookmarks: std::collections::BTreeMap<String, Vec<Bookmark>>,
-    /// Spawn templates for the Box tool (Q3).
+    /// Spawn templates for the Box tool.
     pub templates: Vec<Template>,
     /// Monster areas outside this mean-level range are dimmed and cannot be picked (None = off).
     pub level_filter: Option<[u32; 2]>,
     /// The overview inset in the 2D viewport.
     pub overview: bool,
-    /// The panel arrangement (R1): Browser, Inspector and Dock.
+    /// The panel arrangement: Browser, Inspector and Dock.
     pub layout: crate::layout::LayoutState,
     /// The name of the layout in use ("Simple", "Editing", "Review" or a saved one).
     pub layout_name: String,
@@ -251,7 +251,7 @@ pub struct Settings {
     pub open_sections: std::collections::BTreeMap<String, bool>,
     /// The Maps list shows each map's size.
     pub show_map_sizes: bool,
-    /// The heatmap of monster areas (R2).
+    /// The heatmap of monster areas.
     pub heat: crate::heat::HeatSettings,
     /// Levels past a map's range by more than this are findings in the Spawns tab.
     pub spawn_tolerance: u32,
@@ -259,13 +259,13 @@ pub struct Settings {
     pub spawn_bands: std::collections::BTreeMap<String, [u32; 2]>,
     /// Edge rulers in the 2D viewport.
     pub rulers: bool,
-    /// The Scatter tool's options and monster list (R3).
+    /// The Scatter tool's options and monster list.
     pub scatter: crate::scatter::ScatterSettings,
-    /// Saved bulk edit rules (R3).
+    /// Saved bulk edit rules.
     pub bulk_rules: Vec<BulkRule>,
-    /// A left drag in the 3D view that starts on the ground orbits around that point (R4).
+    /// A left drag in the 3D view that starts on the ground orbits around that point.
     pub orbit_at_cursor: bool,
-    /// Frame selection, Frame map, Go to and the compass ease over 200 ms in the 3D view (R4).
+    /// Frame selection, Frame map, Go to and the compass ease over 200 ms in the 3D view.
     pub smooth_camera: bool,
     /// World view: card positions, per folder key then map id.
     pub world_layout: std::collections::BTreeMap<String, std::collections::BTreeMap<String, [f32; 2]>>,
@@ -280,9 +280,9 @@ pub struct Settings {
     pub afterglow_defs_path: Option<String>,
     /// Which server the cross-file checks judge for.
     pub target_server: TargetServer,
-    /// The staging folder for edited client files (C1): `<folder>/data/world/<id>.wld`. Never inside the client folder.
+    /// The staging folder for edited client files: `<folder>/data/world/<id>.wld`. Never inside the client folder.
     pub client_out: Option<String>,
-    /// The code page of the names in client files: `cp949` (EP4 default), `shift_jis`, `gbk` or `latin1` (C1).
+    /// The code page of the names in client files: `cp949` (EP4 default), `shift_jis`, `gbk` or `latin1`.
     pub client_codepage: String,
 }
 
@@ -472,7 +472,7 @@ mod tests {
         assert_eq!(s.recent.iter().filter(|p| *p == "f3").count(), 1);
     }
 
-    /// A settings file as the M3 build wrote it (before the Q1 keys existed).
+    /// A settings file as an early build wrote it (before the later keys existed).
     const M3_FILE: &str = r#"{
   "svmap_folder": "D:\\maps",
   "client_folder": null,
@@ -519,7 +519,7 @@ mod tests {
         assert!(!f.with_extension("json.tmp").exists());
     }
 
-    /// A settings file as the Q3 build wrote it: every Q1 to Q3 key, the old panel sizes, no `layout`.
+    /// A settings file as an earlier build wrote it: every key before `layout`, the old panel sizes, no `layout`.
     const Q3_FILE: &str = r#"{
   "svmap_folder": "D:\\maps",
   "client_folder": "D:\\client",
@@ -574,7 +574,7 @@ mod tests {
         assert!(s.orbit_at_cursor && s.smooth_camera, "the 3D camera options start on");
         assert!(s.world_layout.is_empty() && s.other_folder.is_none() && s.world_filter == crate::world::WorldFilter::default());
         assert!(s.server_data.is_none() && s.afterglow_defs_path.is_none() && s.target_server == TargetServer::Original, "the server-data keys start empty");
-        assert!(s.client_out.is_none() && s.client_codepage == "cp949", "the C1 keys start empty");
+        assert!(s.client_out.is_none() && s.client_codepage == "cp949", "the client keys start empty");
         // saving and loading again round-trips every new key and is not migrated twice
         let mut t = s.clone();
         t.layout.dock.visible = true;
@@ -608,7 +608,7 @@ mod tests {
         let (u, migrated) = Settings::load_report(&f);
         assert!(!migrated);
         assert_eq!(u, t);
-        // a file that is not a Q3 file at all (garbage) gives the defaults, not a migration
+        // a file that is not a settings file at all (garbage) gives the defaults, not a migration
         std::fs::write(&f, "garbage").unwrap();
         assert_eq!(Settings::load_report(&f), (Settings::default(), false));
     }

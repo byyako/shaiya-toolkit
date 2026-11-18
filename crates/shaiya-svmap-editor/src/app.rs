@@ -84,7 +84,7 @@ pub struct StartOptions {
     pub prop_distance: Option<f32>,
     /// `--help-page <n>`: start with the Help window open on that page (same as `--show help:<n>`).
     pub help_page: Option<usize>,
-    /// `--data-dir <dir>`: settings, log, recovery and backups live here instead of `%APPDATA%\svmap-editor`.
+    /// `--data-dir <dir>`: settings, log, recovery and backups live here instead of the toolkit data folder.
     pub data_dir: Option<PathBuf>,
     /// `--show <setup[:1-3]|help[:page]|palette|quickopen|goto|shortcuts|prefs>`: open that window at start (for screenshots).
     pub show: Option<String>,
@@ -268,9 +268,9 @@ pub struct App {
     paint: PaintSettings,
     gen: Option<GenWin>,
     newmap: Option<NewMapWin>,
-    /// The Map.ini editor, the Add a map window and the rebirth pick (C5).
+    /// The Map.ini editor, the Add a map window and the rebirth pick.
     c5: c5_ui::C5,
-    /// The Share client changes window (C6).
+    /// The Share client changes window.
     c6: c6_ui::C6,
     sync: Option<SyncWin>,
     vp: VpState,
@@ -297,7 +297,7 @@ pub struct App {
     r3: R3,
     /// The World view and Compare folders (`app_world.rs`).
     r5: R5,
-    /// The Placements tool (C3).
+    /// The Placements tool.
     pub(crate) place: crate::place_ui::PlaceUi,
     pub(crate) terrain: crate::terrain_ui::TerrainUi,
     /// Per tab with terrain edits: the redrawn picture and the ground the tab sees.
@@ -1162,7 +1162,7 @@ impl App {
         palette::resolve(&g, &env)
     }
 
-    /// Bookmarks of the open map (Q3 adds a way to make them; Go to already reads them).
+    /// Bookmarks of the open map (Go to reads them).
     fn bookmarks_here(&self) -> Vec<crate::settings::Bookmark> {
         let Some(d) = self.docs.get(self.active) else { return Vec::new() };
         let key = format!("{}#{}", crate::settings::path_key(&self.settings.svmap_folder.clone().unwrap_or_default()), d.map_id.unwrap_or(0));
@@ -2605,7 +2605,7 @@ impl App {
         let have_folder = self.folder.is_some();
         ui.vertical_centered(|ui| {
             ui.add_space(70.0);
-            ui.heading("svmap editor");
+            ui.heading("Shaiya SVMap Editor");
             ui.label("Edit server map files over the client's terrain.");
             ui.add_space(10.0);
             if !have_folder {

@@ -678,7 +678,7 @@ fn single(ui: &mut Ui, doc: &mut Doc, c: &InspCtx, sec: SectionId, idx: usize, r
     finish(doc, sec, idx, before, after, ch);
 }
 
-// ---------------------------------------------------------------------------------------------------------------- client half (C2)
+// ---------------------------------------------------------------------------------------------------------------- client half
 
 /// The chain row under the heading of a record: whether the section is edited together with the client map.
 fn chain_row(ui: &mut Ui, doc: &Doc, sec: SectionId) {

@@ -44,10 +44,6 @@ First release: the foundation of the toolkit and the archive and patch tools.
 - Shell: menus, command palette (Ctrl+Shift+P), Activity panel (Ctrl+J) with progress and cancel, error banner with copyable details, dark/light/system theme, UI scale, recent files with pins, settings that keep unknown keys, CJK font fallback from the system.
 - Help > Support the project opens the author's donation page in the default browser, only when clicked.
 
-### Shaiya SVMap Editor
-
-- New desktop program `shaiya-svmap-editor` (ships in the Shaiya Toolkit zip): edits server map files (`.svmap`) in 2D and 3D over the client's terrain, with every section of the file, checks against the client and server data, paired client `.wld` edits written to a staging folder, placements and terrain, a Map.ini editor, Add a map, unsigned patch export, and Install and Uninstall on a test client. Verified on US EP4.5; other episodes are detected and the checks that depend on EP4.5 data say so. Its settings, log, recovery files and backups live in the `shaiya-svmap-editor` folder of the toolkit data folder. It has no subcommands: the command-line tools are `shaiya svmap`.
-
 ### Libraries
 
 - `shaiya-core`: one error type, jobs with progress and cancel, atomic writes and backups (`plan_output`), a bounds-checked reader, text encodings, hashing, UTC time; glob patterns and filters, byte sources, the saved client folders and the data folder.

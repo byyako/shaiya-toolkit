@@ -703,7 +703,7 @@ pub fn show(ctx: &egui::Context, open: &mut bool, st: &mut HelpState, can_run: &
                                 block(ui, b, &query, st, &mut actions, can_run);
                             }
                             if p.title == "About" {
-                                ui.label(RichText::new(format!("svmap editor version {}", env!("CARGO_PKG_VERSION"))).weak());
+                                ui.label(RichText::new(format!("Shaiya SVMap Editor version {}", env!("CARGO_PKG_VERSION"))).weak());
                             }
                         }
                         None => {

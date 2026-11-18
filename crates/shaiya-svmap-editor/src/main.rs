@@ -385,6 +385,15 @@ fn data_folder(data_dir_arg: Option<std::path::PathBuf>, env: &shaiya_ui::settin
     Some(shaiya_ui::settings::Paths::new(root, TOOL_ID).tool_dir)
 }
 
+/// Settles the data folder of this run: none with `--no-settings`, else `--data-dir` or the toolkit's root. Sets `no_data_folder` when no
+/// folder can be determined, and stores the result in `opts.data_dir`.
+fn resolve_data_dir(opts: &mut app::StartOptions, env: &shaiya_ui::settings::Env, os: shaiya_ui::settings::Os) -> Option<std::path::PathBuf> {
+    let data_dir = if opts.no_settings { None } else { data_folder(opts.data_dir.take(), env, os) };
+    opts.no_data_folder = !opts.no_settings && data_dir.is_none();
+    opts.data_dir = data_dir.clone();
+    data_dir
+}
+
 /// The settings folder name and the data-folder name of this program.
 const TOOL_ID: &str = "shaiya-svmap-editor";
 
@@ -437,9 +446,7 @@ fn main() -> eframe::Result {
             std::process::exit(2);
         }
     };
-    let data_dir = if opts.no_settings { None } else { data_folder(opts.data_dir.take(), &shaiya_ui::settings::Env::from_process(), shaiya_ui::settings::Os::CURRENT) };
-    opts.no_data_folder = !opts.no_settings && data_dir.is_none();
-    opts.data_dir = data_dir.clone();
+    let data_dir = resolve_data_dir(&mut opts, &shaiya_ui::settings::Env::from_process(), shaiya_ui::settings::Os::CURRENT);
     let settings = data_dir.as_deref().map(settings::file_in).map_or_else(settings::Settings::default, |p| settings::Settings::load_from(&p));
     if let Some(d) = &data_dir {
         log::init(d);
@@ -523,6 +530,27 @@ mod arg_tests {
         assert_eq!(data_folder(None, &env, Os::Linux), Some(std::path::PathBuf::from("D:/home").join("shaiya-svmap-editor")));
         // the argument wins over the environment
         assert_eq!(data_folder(Some("D:/dd".into()), &env, Os::Linux), Some(std::path::PathBuf::from("D:/dd").join("shaiya-svmap-editor")));
+    }
+
+    #[test]
+    fn without_any_root_nothing_is_stored_and_the_run_is_flagged() {
+        let dir = testutil::TempDir::new("no-root");
+        let scratch = dir.path().to_path_buf();
+        for os in [Os::Windows, Os::Mac, Os::Linux] {
+            let mut opts = app::StartOptions::default();
+            assert_eq!(resolve_data_dir(&mut opts, &Env::default(), os), None);
+            assert!(opts.no_data_folder && opts.data_dir.is_none(), "the status bar warning is on and no folder is set");
+        }
+        // --no-settings is not a missing folder
+        let mut opts = app::StartOptions { no_settings: true, ..Default::default() };
+        assert_eq!(resolve_data_dir(&mut opts, &Env::default(), Os::Windows), None);
+        assert!(!opts.no_data_folder);
+        // an explicit --data-dir needs no root, and the flag stays off
+        let mut opts = app::StartOptions { data_dir: Some(scratch.clone()), ..Default::default() };
+        assert_eq!(resolve_data_dir(&mut opts, &Env::default(), Os::Linux), Some(scratch.join("shaiya-svmap-editor")));
+        assert!(!opts.no_data_folder);
+        // resolving only decides: nothing was created
+        assert_eq!(std::fs::read_dir(&scratch).unwrap().count(), 0, "nothing is written");
     }
 
     #[test]

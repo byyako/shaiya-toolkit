@@ -1,4 +1,4 @@
-//! The M4 windows of the editor: the Paint-blocked toolbar, Generate blocked cells (with its preview overlay), New from client
+//! The tool windows of the editor: the Paint-blocked toolbar, Generate blocked cells (with its preview overlay), New from client
 //! map and Sync from client. Declared from `app.rs` (`#[path]`), so it shares the app's private state.
 
 use std::collections::HashMap;

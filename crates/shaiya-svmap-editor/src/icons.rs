@@ -5,7 +5,7 @@ use egui::epaint::StrokeKind;
 use egui::{Color32, Painter, Pos2, Rect, Response, Sense, Shape, Stroke, Ui, Vec2};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[allow(dead_code)] // World, Compare, Dice, Layout and Scatter are used from R3 on
+#[allow(dead_code)] // World, Compare, Dice, Layout and Scatter are used by the later features
 pub enum Icon {
     // tools
     Select,

@@ -82,7 +82,7 @@ impl App {
     /// write or the write was verified; on a failure the tab keeps its client edits, `client_error` says why and a dialog opens.
     pub(super) fn save_client_part(&mut self, uid: u64) -> bool {
         let Some(i) = self.docs.iter().position(|d| d.uid == uid) else { return true };
-        // a terrain stroke in progress holds heights that are no step yet: they must not reach the file (C4)
+        // a terrain stroke in progress holds heights that are no step yet: they must not reach the file
         if self.terrain.stroking(uid) {
             self.terrain.abort(&mut self.docs[i]);
             self.toast("The terrain stroke was cancelled: the map was saved without it.");

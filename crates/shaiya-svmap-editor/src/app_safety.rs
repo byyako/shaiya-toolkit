@@ -96,7 +96,7 @@ pub struct BackupWin {
     pub rows: Vec<BackupRow>,
 }
 
-/// Everything the Q2 features keep between frames.
+/// Everything the safety features keep between frames.
 pub struct Safety {
     autosave: HashMap<u64, AutoState>,
     pub(super) last_autosave: Option<Instant>,
@@ -323,7 +323,7 @@ impl App {
     /// file as it is on disk. The entry stays until the tab is saved or discarded (autosave takes it over).
     pub(super) fn restore_recovered(&mut self, e: recovery::Entry) -> Result<(), String> {
         let map = e.map.map_err(|e| format!("damaged: {e}"))?;
-        // the client half of the work (C2): needs the client folder, since it is applied to the map as the client holds it
+        // the client half of the work: needs the client folder, since it is applied to the map as the client holds it
         let client = match &e.client {
             Some((wld, txt)) => {
                 if self.client.is_none() {

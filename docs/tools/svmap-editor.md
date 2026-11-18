@@ -1142,7 +1142,7 @@ Next to a server map file the editor writes `<number>.svmap.tmp` while saving (r
 
 ## Command line
 
-The same program has command line tools; they need no window.
+The command line tools belong to the separate program `shaiya` of the Shaiya Toolkit. They need no window and no editor. The editor itself has no subcommands.
 
 - `shaiya svmap check <file|folder> [--client <dir>] [--server-data <dir>] [--afterglow-defs <path>] [--target original|afterglow] [--json]`: checks one map or a whole folder and prints what Problems would list; exit code 1 when there are errors. `--server-data` adds the Server and client rules for a folder. The command line does not look for the server folder by itself. With `--json` and `--server-data` the output is an object with the lists `maps` and `server_and_client`.
 - `shaiya svmap dump <file> [--json]`: a summary of a map, or all of it as JSON.
@@ -1154,11 +1154,11 @@ The same program has command line tools; they need no window.
 - `shaiya svmap spawns <folder> [--client <dir>] [--json]`: per map the areas, monsters, kinds, level range and spawn findings, then the folder totals. With `--client` it also counts the monsters no area spawns. The exit code is always 0.
 - `shaiya svmap bulk <folder> --rule "<where> => <action>" [--client <dir>] [--allow-above-8]`: what a bulk edit rule would do, map by map. It is a dry run and writes nothing.
 
-Without a command the window opens. Options for it:
+The editor program `shaiya-svmap-editor` always opens its window. Options for it:
 
 - `shaiya-svmap-editor [file.svmap ...]`: open these files.
 - `--folder <Map dir>`: open this server map folder; `--client <dir>`: open this client folder; `--map <id>`: open that map of the folder (repeat for several).
-- `--data-dir <dir>`: keep the settings and the log there instead of the `shaiya-svmap-editor` folder of the toolkit data folder; `--no-settings`: use no data folder at all.
+- `--data-dir <dir>`: keep the settings and the log in the `shaiya-svmap-editor` folder inside `<dir>` instead of in the toolkit data folder; `--no-settings`: use no data folder at all.
 - `shaiya-svmap-editor --help` prints every option. A release build has no console window: redirect the output (`shaiya-svmap-editor --help > help.txt`) or pipe it to read it.
 
 The file formats the editor reads and writes are described in the Formats section of the toolkit documentation.

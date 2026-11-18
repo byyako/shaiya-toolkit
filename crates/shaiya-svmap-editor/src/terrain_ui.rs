@@ -1,7 +1,7 @@
 //! The Terrain tool between the pure brushes of `terrain.rs` and the two viewports. A stroke draws live into the
 //! tab's client model (corner by corner, with no undo step) and ends as one step: a corner diff, plus the re-drop of the records
 //! that stand on the ground and the blocked cells whose slope class changed. Nothing here writes a file; the save is the normal
-//! staged client save (C1).
+//! staged client save.
 
 use std::time::{Duration, Instant};
 

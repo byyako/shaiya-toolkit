@@ -812,7 +812,7 @@ impl App {
     }
 
     /// Replace monster (Find): the same engine with the Find query as the condition, limited to the areas Find lists.
-    /// Kept as the entry point the Q3 tests use; the window builds the same rule (Find's Replace monster... opens it filled in).
+    /// Kept as the entry point the tests use; the window builds the same rule (Find's Replace monster... opens it filled in).
     #[cfg(test)]
     pub(super) fn replace_monster(&mut self, from: u32, to: u32) -> String {
         // the results must describe the maps as they are now (an edit since the last run moves indices)
