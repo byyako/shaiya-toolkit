@@ -7,9 +7,8 @@ use std::path::PathBuf;
 
 pub const CLI_BUDGET: u64 = 6_000_000;
 pub const GUI_BUDGET: u64 = 20_000_000;
-// temporary until the 0.2.0 dry run is measured (WP8b)
-pub const ZIP_BUDGET_ALL_IN_ONE: u64 = 40_000_000;
-pub const ZIP_BUDGET_CLI: u64 = 10_000_000;
+pub const ZIP_BUDGET_ALL_IN_ONE: u64 = 17_000_000;
+pub const ZIP_BUDGET_CLI: u64 = 3_000_000;
 
 /// The zip budget (Windows) for a release asset name: `shaiya` is the command line zip, anything else the all-in-one.
 pub fn zip_budget(asset: &str) -> u64 {

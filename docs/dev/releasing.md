@@ -23,7 +23,7 @@
 
 ## Release assets
 
-`<name>-<version>-<platform>.zip` with `name` either `shaiya-toolkit` (the desktop apps Shaiya Toolkit and Shaiya SVMap Editor, and the `shaiya` command line: the programs `shaiya-toolkit`, `shaiya-svmap-editor` and `shaiya`) or `shaiya` (the command line only), and `platform` in `windows-x86_64`, `linux-x86_64`, `macos-universal`; plus `SHA256SUMS.txt`. Each zip holds a folder named like the zip with the program(s), `README.txt`, `LICENSE.txt` and `THIRD-PARTY-NOTICES.txt`. On macOS each GUI is an app bundle (`io.github.byyako.<tool>`, ad-hoc signed), the CLI a plain universal binary. Zips are deterministic (sorted entries, fixed timestamps from the commit). The workflow signs nothing with keys (there are none); a repository that is public also gets a build provenance attestation.
+`<name>-<version>-<platform>.zip` with `name` either `shaiya-toolkit` (the desktop apps Shaiya Toolkit and Shaiya SVMap Editor, and the `shaiya` command line: the programs `shaiya-toolkit`, `shaiya-svmap-editor` and `shaiya`) or `shaiya` (the command line only, which includes `shaiya svmap`), and `platform` in `windows-x86_64`, `linux-x86_64`, `macos-universal`; plus `SHA256SUMS.txt`. Each zip holds a folder named like the zip with the program(s), `README.txt`, `LICENSE.txt` and `THIRD-PARTY-NOTICES.txt`. On macOS each GUI is an app bundle (`io.github.byyako.<tool>`, ad-hoc signed), the CLI a plain universal binary. Zips are deterministic (sorted entries, fixed timestamps from the commit). The workflow signs nothing with keys (there are none); a repository that is public also gets a build provenance attestation.
 
 The `README.txt` inside each zip carries the same sentence as the repository README: these tools work on your own copy of the game, contain no game files and download none.
 
@@ -31,16 +31,18 @@ The `README.txt` inside each zip carries the same sentence as the repository REA
 
 | Item | Budget |
 |---|---|
-| `shaiya` CLI, release, Windows x86_64 | 6 MB |
-| each GUI program, release, Windows x86_64 | 20 MB |
-| `shaiya-toolkit` zip (app and command line), Windows x86_64 | 8 MB (measured 6.8 MB) |
+| `shaiya.exe` (command line), release, Windows x86_64 | 6 MB (measured 3,563,008 bytes) |
+| `shaiya-toolkit.exe` (GUI), release, Windows x86_64 | 20 MB (measured 14,142,464 bytes) |
+| `shaiya-svmap-editor.exe` (GUI), release, Windows x86_64 | 20 MB (measured 17,981,440 bytes) |
+| `shaiya-toolkit` zip (all three programs), Windows x86_64 | 17,000,000 bytes (measured 14,293,046 bytes) |
+| `shaiya` zip (command line only), Windows x86_64 | 3,000,000 bytes (measured 1,621,392 bytes) |
 | SAH parse of a 48,000-file index | under 150 ms (release) |
 | SAF handling | never loaded whole; buffers of at most 1 MiB |
 | SEED decrypt or encrypt | at least 40 MB/s single thread (release) |
 | SHA-256 of a 2 GB `data.saf` | at least 300 MB/s when the disk allows; cancel takes effect within 250 ms |
 | CI run | under 25 minutes |
 
-`cargo xtask sizes` checks the binary sizes. A missed budget is reported with the number, not silently accepted.
+`cargo xtask sizes` checks the binary sizes; `cargo xtask dist --platform windows-x86_64` checks the zip sizes. The zip budget is the measured Windows size rounded up to the next whole MB, plus 2 MB (`shaiya-toolkit` zip) or 1 MB (`shaiya` zip). A missed budget is reported with the number, not silently accepted.
 
 ## CI
 
