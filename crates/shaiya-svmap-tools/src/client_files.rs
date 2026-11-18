@@ -74,26 +74,57 @@ pub fn lies_in(inner: &Path, outer: &Path) -> bool {
     is_inside(inner, outer)
 }
 
-/// Creation and write times and attributes of a folder: with [`dir_names`], what tells two names of one folder apart from two
-/// folders. Two different folders match only when all of these agree (then the staging folder is refused, the safe side).
+/// The identity of a folder: what tells two names of one folder apart from two folders. Volume serial number and file index on
+/// Windows, device and inode on unix. `None` when it cannot be read (the folders are then not treated as the same).
 fn dir_stamp(p: &Path) -> Option<(u64, u64, u32)> {
     let m = std::fs::metadata(p).ok().filter(|m| m.is_dir())?;
     #[cfg(windows)]
     {
-        use std::os::windows::fs::MetadataExt;
-        Some((m.creation_time(), m.last_write_time(), m.file_attributes()))
+        let _ = m;
+        win_identity(p).map(|(v, i)| (v, i, 0))
     }
     #[cfg(unix)]
     {
         use std::os::unix::fs::MetadataExt;
-        // the real identity of the folder: device and inode (the last field is unused)
         Some((m.dev(), m.ino(), 0))
     }
     #[cfg(not(any(windows, unix)))]
     {
-        let t = |r: std::io::Result<SystemTime>| r.ok().and_then(|t| t.duration_since(SystemTime::UNIX_EPOCH).ok()).map_or(0, |d| d.as_nanos() as u64);
-        Some((t(m.created()), t(m.modified()), 0))
+        let _ = m;
+        None
     }
+}
+
+/// Volume serial number and file index of a folder, from the opened directory handle (`GetFileInformationByHandle`; the std
+/// accessors for them are not stable). Two names of one folder (a junction, a share, a short name) give the same pair.
+#[cfg(windows)]
+#[allow(unsafe_code)]
+fn win_identity(p: &Path) -> Option<(u64, u64)> {
+    use std::os::windows::fs::OpenOptionsExt;
+    use std::os::windows::io::AsRawHandle;
+
+    /// `BY_HANDLE_FILE_INFORMATION`: 13 32-bit fields.
+    #[repr(C)]
+    #[derive(Default)]
+    struct ByHandleFileInformation {
+        attributes: u32,
+        times: [u32; 6],
+        volume_serial: u32,
+        size_high: u32,
+        size_low: u32,
+        links: u32,
+        index_high: u32,
+        index_low: u32,
+    }
+    extern "system" {
+        fn GetFileInformationByHandle(file: *mut core::ffi::c_void, info: *mut ByHandleFileInformation) -> i32;
+    }
+    const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000; // needed to open a directory
+    let f = std::fs::OpenOptions::new().read(true).custom_flags(FILE_FLAG_BACKUP_SEMANTICS).open(p).ok()?;
+    let mut info = ByHandleFileInformation::default();
+    // SAFETY: the handle is open for the whole call (owned by `f`) and `info` is a valid, correctly laid out out-parameter.
+    let ok = unsafe { GetFileInformationByHandle(f.as_raw_handle().cast(), &mut info) };
+    (ok != 0).then(|| (u64::from(info.volume_serial), u64::from(info.index_high) << 32 | u64::from(info.index_low)))
 }
 
 /// The folder's entry names, lower case and sorted (read only when the stamps agree).
