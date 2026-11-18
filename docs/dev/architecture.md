@@ -13,6 +13,9 @@ crates/
                       journals and rollback, client folder recovery, compaction, diff, pack, swap
   shaiya-patch/       psNNNN.patch: build (streaming, deterministic), list, verify, plan, apply with journals; Ed25519 signatures
   shaiya-clientdata/  read-only client readers: archive or folder source, .wld, .dg, .smod, textures, sysmsg, Monster / NpcQuest
+  shaiya-svmap/       the .svmap server map format: model, reader, writer, validation, bit grid, JSON (no GUI, no client data)
+  shaiya-svmap-tools/ the SVMap editor's engine without a GUI: documents with undo, client pairing, checks, spawn report, bulk planner,
+                      Map.ini, new map, install; `batch` holds the entry points of `shaiya svmap`
   shaiya-inspect/     identify a file and describe it (used by `shaiya info` and Shaiya Toolkit)
   shaiya-ui/          the GUI shell (egui / eframe)
   shaiya-cli/         the `shaiya` program (info, archive, patch, sdata, clients, version)
@@ -23,7 +26,7 @@ crates/
 xtask/                development tasks (dist, notices, deps-check, guard, sizes, release-notes, icons)
 ```
 
-Names reserved for later tools: `shaiya-sdata`, `shaiya-sdata-editor`, `shaiya-packetlog`, `shaiya-log-viewer`, `shaiya-svmap`, `shaiya-svmap-editor`, `shaiya-updater`.
+Names reserved for later tools: `shaiya-sdata`, `shaiya-sdata-editor`, `shaiya-packetlog`, `shaiya-log-viewer`, `shaiya-updater`.
 
 ### Modules worth knowing
 
@@ -39,6 +42,7 @@ Names reserved for later tools: `shaiya-sdata`, `shaiya-sdata-editor`, `shaiya-p
 | `shaiya-archive` | `compact`, `swap`, `pack`, `diff`, `extract` | One module each; compaction and swap have their own crash markers |
 | `shaiya-patch` | `sign` | The signature message and key files; the format does not change |
 | `shaiya-seed` | `batch` | Check, decrypt and encrypt over many files, with `--like` |
+| `shaiya-svmap-tools` | `batch`, `episode`, `keys`, `stamp` | The `shaiya svmap` entry points and their report types; notes about a client that is not US EP4.5; the settings enums and path key; the fixed UTC stamp of backup and record names |
 | `shaiya-toolkit` | `archive_view`, `patch_builder`, `apply_tab`, `sign_tab`, `sdata_tab`, `inspect`, `clients` | One module per tab and the client-folder dialogs |
 
 ## Dependency rules
@@ -47,8 +51,10 @@ Names reserved for later tools: `shaiya-sdata`, `shaiya-sdata-editor`, `shaiya-p
 shaiya-core  <-  shaiya-seed
 shaiya-core  <-  shaiya-archive  <-  shaiya-patch
 shaiya-archive + shaiya-seed  <-  shaiya-clientdata
+serde + serde_json + base64  <-  shaiya-svmap
+core + archive + patch + clientdata + svmap  <-  shaiya-svmap-tools
 core + seed + archive + patch  <-  shaiya-inspect
-libraries  <-  shaiya-cli
+libraries (now including svmap and svmap-tools)  <-  shaiya-cli
 shaiya-core + eframe / egui / rfd / serde  <-  shaiya-ui  <-  the GUI programs
 shaiya-testkit: dev-dependency only (std only, depends on no toolkit crate)
 shaiya-build: build-dependency only
@@ -56,7 +62,7 @@ shaiya-build: build-dependency only
 
 1. **Core libraries never depend on `egui`, `eframe`, `rfd` or `clap`, never print, never read environment variables (tests excepted), never start a process.** No crate opens a network connection.
 2. **All long work takes a `&Job`** (`shaiya_core::Job`) so the CLI shows progress and the GUI can cancel.
-3. **One error type**: `shaiya_core::Error` (`Io`, `Format { file, offset, what }`, `Unsupported`, `Refused`, `Cancelled`) with `ErrorKind`. `shaiya-clientdata` keeps its own `Error` (its public API is kept stable; 0.2.0 adds `wld_raw`, `area_txt` and `Npc.gates`) with a conversion from the core error.
+3. **One error type**: `shaiya_core::Error` (`Io`, `Format { file, offset, what }`, `Unsupported`, `Refused`, `Cancelled`) with `ErrorKind`. `shaiya-clientdata` keeps its own `Error` (its public API is kept stable; 0.2.0 adds `wld_raw`, `area_txt` and `Npc.gates`) with a conversion from the core error. Two more exceptions: `shaiya-svmap` keeps its `ReadError` and `JsonError` (it depends on no other toolkit crate), and `shaiya-svmap-tools` keeps `Result<_, String>` inside the modules moved from the editor; only its `batch` module (the entry points of `shaiya svmap`) returns `shaiya_core::Result` with the kinds the exit codes need.
 4. Library crates use caret version requirements; the GUI stack is pinned exactly (egui minor versions break APIs); `Cargo.lock` is committed and CI builds with `--locked`.
 5. `unsafe_code` is denied in the workspace; the only `unsafe` is the Windows console check in `shaiya-cli` (one function, with a comment).
 

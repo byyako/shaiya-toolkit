@@ -1,8 +1,9 @@
 //! The engine of the Shaiya SVMap Editor without any GUI: documents with undo, pairing of server and client records, the file and
-//! cross-file checks, the spawn report, the bulk planner, the Map.ini model, the new-map engine and the staging and install code.
-//! No printing, no environment reads, no process starts.
+//! cross-file checks, the spawn report, the bulk planner, the Map.ini model, the new-map engine and the staging and install code,
+//! plus [`batch`], the entry points of `shaiya svmap`. No printing, no environment reads, no process starts.
 
 pub mod assets;
+pub mod batch;
 pub mod bulk;
 pub mod client_files;
 pub mod client_rules;
@@ -10,6 +11,7 @@ pub mod compare;
 pub mod cross_rules;
 pub mod doc;
 pub mod edit;
+pub mod episode;
 pub mod export;
 pub mod fixes;
 pub mod folderdiff;

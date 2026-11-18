@@ -7,6 +7,8 @@ All notable changes are listed here, newest first. The format follows [Keep a Ch
 ### Libraries
 
 - `shaiya-clientdata`: `wld_raw` (lossless `.wld` model and writer), `area_txt` (line-preserving `world/<id>.txt`), `sdata::Gate` and `Npc.gates` (gatekeeper destinations).
+- New `shaiya-svmap`: the `.svmap` server map format (model, reader, writer, validation, bit grid, JSON).
+- New `shaiya-svmap-tools`: the SVMap editor's engine without a GUI (documents with undo, client pairing, checks, spawn report, bulk planner, Map.ini, new map, install) and the `batch` entry points of `shaiya svmap`.
 
 ### Breaking
 
