@@ -33,7 +33,7 @@ The `README.txt` inside each zip carries the same sentence as the repository REA
 |---|---|
 | `shaiya` CLI, release, Windows x86_64 | 6 MB |
 | each GUI program, release, Windows x86_64 | 20 MB |
-| `shaiya-toolkit` zip (app and command line), Windows x86_64 | 14 MB |
+| `shaiya-toolkit` zip (app and command line), Windows x86_64 | 8 MB (the previous build measured 5.1 MB) |
 | SAH parse of a 48,000-file index | under 150 ms (release) |
 | SAF handling | never loaded whole; buffers of at most 1 MiB |
 | SEED decrypt or encrypt | at least 40 MB/s single thread (release) |
