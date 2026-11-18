@@ -349,6 +349,15 @@ pub fn check_target(target: &Path, g: &Guard, exclusive: bool) -> Result<Option<
     Ok(None)
 }
 
+/// An error text after recovery changed the archive: says what recovery did, and keeps "nothing was changed" accurate.
+fn with_recovery(err: String, recovered: &[String]) -> String {
+    if recovered.is_empty() {
+        return err;
+    }
+    let err = err.replace("Nothing was changed", "Nothing else was changed").replace("nothing was changed", "nothing else was changed");
+    format!("{err} Before that, the editor finished or undid an unfinished earlier change in this folder: {}.", recovered.join("; "))
+}
+
 /// Finishes or undoes a change that an earlier run of a tool left unfinished in the test client, before anything of it is read.
 fn recover(target: &Path) -> Result<Vec<String>, String> {
     shaiya_archive::client::recover(target).map_err(|e| format!("The test client has an unfinished change that could not be finished or undone: {e}. Nothing was changed by the editor."))
@@ -504,11 +513,16 @@ fn roll_back(target: &Path, backup: &Path, sah: SahFp, saf_len: u64) -> (String,
 
 /// Installs the staged files into the test client `target`.
 ///
-/// Order: checks (read source, headerless index, game running), the first-install copy `data.sah.svmap-editor` (never replaced), a
+/// Order: checks (read source, headerless index, game running), recovery of an unfinished earlier change (`shaiya_archive::client::recover`; every baseline below is read after it), reading the record, index and fingerprints, the first-install copy `data.sah.svmap-editor` (never replaced), a
 /// timestamped copy of `data.sah`, `patch::apply`, then a check of the result: the new index parses, every staged file reads back
 /// from `data.saf` byte for byte, no other entry moved, and the old part of `data.saf` is unchanged. A failure puts the old index
 /// back. `data.sah.bak` is overwritten by `patch::apply` on each call, so it is not a backup of this editor.
 pub fn install(out: &Path, target: &Path, g: &Guard, now: SystemTime) -> Result<Installed, String> {
+    let mut recovered: Vec<String> = Vec::new();
+    install_inner(out, target, g, now, &mut recovered).map_err(|e| with_recovery(e, &recovered))
+}
+
+fn install_inner(out: &Path, target: &Path, g: &Guard, now: SystemTime, recovered: &mut Vec<String>) -> Result<Installed, String> {
     let guard = Guard { source: g.source, also: g.also, out: Some(out) };
     let mut notes: Vec<String> = Vec::new();
     notes.extend(check_target(target, &guard, true)?);
@@ -518,7 +532,9 @@ pub fn install(out: &Path, target: &Path, g: &Guard, now: SystemTime) -> Result<
     }
     refuse_programs(&staged)?;
     // Recover first: every baseline below (record, index, fingerprints, data.saf length) is taken after it.
-    notes.extend(recover(target)?);
+    let done = recover(target)?;
+    recovered.extend(done.iter().cloned());
+    notes.extend(done);
     let record = read_record(target)?;
     let (sah_bytes, old_idx) = read_index(target)?;
     let sah_now = sah_fp(&sah_bytes);
@@ -643,9 +659,16 @@ pub struct Uninstalled {
 /// changed since the last install (then restoring would undo someone else's work). Removes the record and the first backup after
 /// the restored index checked out. The timestamped copies stay.
 pub fn uninstall(target: &Path, g: &Guard) -> Result<Uninstalled, String> {
+    let mut recovered: Vec<String> = Vec::new();
+    uninstall_inner(target, g, &mut recovered).map_err(|e| with_recovery(e, &recovered))
+}
+
+fn uninstall_inner(target: &Path, g: &Guard, recovered: &mut Vec<String>) -> Result<Uninstalled, String> {
     let mut notes: Vec<String> = Vec::new();
     notes.extend(check_target(target, &Guard { source: g.source, also: g.also, out: None }, true)?);
-    notes.extend(recover(target)?);
+    let done = recover(target)?;
+    recovered.extend(done.iter().cloned());
+    notes.extend(done);
     let rec = read_record(target)?.ok_or_else(|| format!("{} has no {RECORD}. This editor did not install into it.", target.display()))?;
     let first = target.join(FIRST_BACKUP);
     let first_bytes = fs::read(&first).map_err(|e| format!("{FIRST_BACKUP} cannot be read ({e}). Nothing was changed."))?;
@@ -907,27 +930,65 @@ mod tests {
         assert!(install(&out, &headerless, &g, now).unwrap_err().contains("not an archive index"));
         assert!(install(&test.join("staging"), &test, &g, now).is_err(), "nothing staged there, and a staging folder inside the target is refused");
         assert!(install(&root.join("no-stage"), &test, &g, now).unwrap_err().contains("Nothing is staged"));
-        // the game running: data.saf is open with read sharing only
-        #[cfg(windows)]
-        {
-            use std::os::windows::fs::OpenOptionsExt;
-            let game = OpenOptions::new().read(true).share_mode(1).open(test.join("data.saf")).unwrap();
-            let e = install(&out, &test, &g, now).unwrap_err();
-            assert!(e.contains("Close the game"), "{e}");
-            assert!(uninstall(&test, &g).is_err());
-            drop(game);
-            // game.exe of the test client held open for writing: the game is running
-            fs::write(test.join("game.exe"), b"MZ").unwrap();
-            let exe = OpenOptions::new().read(true).write(true).share_mode(1).open(test.join("game.exe")).unwrap();
-            let e = install(&out, &test, &g, now).unwrap_err();
-            assert!(e.contains("game.exe") && e.contains("Close the game"), "{e}");
-            assert!(uninstall(&test, &g).is_err());
-            drop(exe);
-            fs::remove_file(test.join("game.exe")).unwrap();
-        }
         assert_eq!(before, (sums(&source), sums(&test)), "every refusal left both clients as they were");
         assert!(!test.join(FIRST_BACKUP).exists() && !test.join(RECORD).exists());
         install(&out, &test, &g, now).unwrap();
+    }
+
+    /// With an install record in place (so an Uninstall refusal is the game check and not "no record"), data.saf held open
+    /// with read sharing only, and then game.exe held open for writing: both actions refuse and the client stays as it was.
+    #[cfg(windows)]
+    #[test]
+    fn install_and_uninstall_refuse_while_the_game_runs() {
+        use std::os::windows::fs::OpenOptionsExt;
+        let root = TempDir::new("c6-running");
+        let (source, out, test) = (root.join("source"), root.join("out"), root.join("test"));
+        tiny_client(&source);
+        tiny_client(&test);
+        let none: Vec<PathBuf> = Vec::new();
+        let g = Guard { source: &source, also: &none, out: None };
+        stage(&out, &[("world/2.wld", &[9u8; 50])]);
+        let now = SystemTime::now();
+        install(&out, &test, &g, now).unwrap();
+        assert!(read_record(&test).unwrap().is_some());
+        let before = sums(&test);
+        let files = |d: &Path| {
+            let mut v: Vec<String> = fs::read_dir(d).unwrap().flatten().map(|e| e.file_name().to_string_lossy().into_owned()).collect();
+            v.sort();
+            v
+        };
+        let names = files(&test);
+
+        let game = OpenOptions::new().read(true).share_mode(1).open(test.join("data.saf")).unwrap();
+        let e = install(&out, &test, &g, now).unwrap_err();
+        assert!(e.contains("data.saf cannot be opened for writing") && e.contains("Close the game"), "{e}");
+        let e = uninstall(&test, &g).unwrap_err();
+        assert!(e.contains("data.saf cannot be opened for writing") && e.contains("Close the game"), "{e}");
+        drop(game);
+
+        fs::write(test.join("game.exe"), b"MZ").unwrap();
+        let exe = OpenOptions::new().read(true).write(true).share_mode(1).open(test.join("game.exe")).unwrap();
+        let names_with_exe = files(&test);
+        let e = install(&out, &test, &g, now).unwrap_err();
+        assert!(e.contains("game.exe") && e.contains("Close the game"), "{e}");
+        let e = uninstall(&test, &g).unwrap_err();
+        assert!(e.contains("game.exe") && e.contains("Close the game"), "{e}");
+        drop(exe);
+
+        assert_eq!(sums(&test), before, "every refusal left the archive as it was");
+        assert_eq!(files(&test), names_with_exe, "and no file was added or removed");
+        fs::remove_file(test.join("game.exe")).unwrap();
+        assert_eq!(files(&test), names);
+        // with the game closed Uninstall works again
+        uninstall(&test, &g).unwrap();
+    }
+
+    #[test]
+    fn an_error_after_recovery_says_what_recovery_did() {
+        assert_eq!(with_recovery("x. Nothing was changed.".to_string(), &[]), "x. Nothing was changed.");
+        let e = with_recovery("The backup failed. Nothing was changed.".to_string(), &["finished an interrupted compaction".to_string()]);
+        assert!(e.contains("Nothing else was changed") && e.contains("finished an interrupted compaction"), "{e}");
+        assert!(!e.contains("Nothing was changed"), "{e}");
     }
 
     #[test]

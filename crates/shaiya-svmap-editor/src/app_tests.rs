@@ -3446,12 +3446,7 @@ fn c6_share_window() {
 /// The patch number field: no default, both candidates shown, the higher one suggested, and a typed number kept.
 #[test]
 fn c6_patch_number_field() {
-    use super::c6_ui::{Act, ShareWin};
-    // no client folder: the line says so and nothing is suggested
-    let none = ShareWin { number_text: String::new(), typed: false, hint: Default::default(), has_client: false, staged: Vec::new(), target: None, status: String::new(), confirm: false, msg: Vec::new() };
-    assert_eq!(none.hint_lines(), vec!["Set the client folder to get a patch number".to_string()]);
-    assert_eq!(none.number(), None);
-
+    use super::c6_ui::Act;
     let root = TempDir::new("c6-number");
     let (mut h, client, _maps) = c5_harness(&root);
     let out = root.join("out");
@@ -3502,6 +3497,48 @@ fn c6_patch_number_field() {
     h.app.c6.win.as_mut().unwrap().number_text = "111".to_string();
     h.app.share_act(Act::ExportPatch, Some(dest.clone()));
     assert!(h.app.c6.win.as_ref().unwrap().msg.iter().any(|(bad, t)| *bad && t.contains("already")), "{:?}", h.app.c6.win.as_ref().unwrap().msg);
+}
+
+/// The real pick-and-export path: Version.ini says 108 and the folder picked for the export already holds ps0115.patch, so the
+/// patch written is ps0116 (the suggestion is recomputed with the picked folder before the export). The hint names the file as it is
+/// on disk. A typed number that is taken is refused with a message and nothing is replaced.
+#[test]
+fn c6_export_recomputes_the_number_with_the_picked_folder() {
+    use super::c6_ui::Act;
+    let root = TempDir::new("c6-number-pick");
+    let (mut h, client, _maps) = c5_harness(&root);
+    std::fs::write(client.join("Version.ini"), "[Version]\r\nCurrentVersion=108\r\n").unwrap();
+    let out = root.join("out");
+    std::fs::create_dir_all(out.join("data/world")).unwrap();
+    std::fs::write(out.join("data/world/9.wld"), [3u8; 40]).unwrap();
+    h.size = Vec2::new(1400.0, 1500.0);
+    h.app.open_share();
+    h.frames(3);
+    assert_eq!(h.app.c6.win.as_ref().unwrap().number_text, "109", "before a folder is picked the field shows the Version.ini candidate");
+    let dest = root.join("picked");
+    std::fs::create_dir_all(&dest).unwrap();
+    std::fs::write(dest.join("PS0115.PATCH"), b"x").unwrap();
+    h.app.share_act(Act::ExportPatch, Some(dest.clone()));
+    let msg = h.app.c6.win.as_ref().unwrap().msg.clone();
+    assert!(msg.iter().all(|(bad, _)| !bad), "{msg:?}");
+    assert!(dest.join("ps0116.patch").is_file(), "{:?}", std::fs::read_dir(&dest).unwrap().flatten().map(|e| e.file_name()).collect::<Vec<_>>());
+    assert!(!dest.join("ps0109.patch").exists());
+    // the highest file is named as found
+    std::fs::remove_file(dest.join("ps0116.patch")).unwrap();
+    h.app.share_act(Act::Refresh, None);
+    h.frames(3);
+    assert!(h.text.contains("Highest patch file PS0115.PATCH in picked: next 116"), "{}", h.text);
+    // a typed number that is taken is refused, with the file untouched (same name in lower case, so this holds on any file system)
+    std::fs::write(dest.join("ps0115.patch"), b"x").unwrap();
+    {
+        let w = h.app.c6.win.as_mut().unwrap();
+        w.number_text = "115".to_string();
+        w.typed = true;
+    }
+    h.app.share_act(Act::ExportPatch, Some(dest.clone()));
+    let msg = h.app.c6.win.as_ref().unwrap().msg.clone();
+    assert!(msg.iter().any(|(bad, t)| *bad && t.contains("already in that folder")), "{msg:?}");
+    assert_eq!(std::fs::read(dest.join("ps0115.patch")).unwrap(), b"x");
 }
 
 /// The client chip carries the episode notes: a client without `NpcQuest.SData` names it in the chip text, a complete one shows no

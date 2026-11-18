@@ -24,8 +24,6 @@ pub struct ShareWin {
     /// The user typed in the field: the suggestion no longer overwrites it.
     pub typed: bool,
     pub hint: shaiya_patch::NumberHint,
-    /// A client folder was set when the hint was made.
-    pub has_client: bool,
     pub staged: Vec<Staged>,
     pub target: Option<PathBuf>,
     /// What the chosen folder holds: a line of text.
@@ -42,19 +40,15 @@ impl ShareWin {
     }
 
     /// Takes a new hint; the field follows the suggestion unless the user typed a number.
-    pub fn set_hint(&mut self, hint: shaiya_patch::NumberHint, has_client: bool) {
+    pub fn set_hint(&mut self, hint: shaiya_patch::NumberHint) {
         if !self.typed {
             self.number_text = hint.suggested.map(|n| n.to_string()).unwrap_or_default();
         }
         self.hint = hint;
-        self.has_client = has_client;
     }
 
     /// The lines under the number field: both candidates and the suggestion.
     pub fn hint_lines(&self) -> Vec<String> {
-        if !self.has_client {
-            return vec!["Set the client folder to get a patch number".to_string()];
-        }
         let mut v = Vec::new();
         v.push(match self.hint.from_version_ini {
             Some((seen, next)) => format!("Version.ini CurrentVersion {seen}: next {next}"),
@@ -63,7 +57,7 @@ impl ShareWin {
         v.push(match &self.hint.from_patch_files {
             Some((n, next, dir)) => {
                 let folder = dir.file_name().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
-                format!("Highest patch file {} in {folder}: next {next}", shaiya_patch::patch_name(*n))
+                format!("Highest patch file {} in {folder}: next {next}", self.hint.highest_file_name.clone().unwrap_or_else(|| shaiya_patch::patch_name(*n)))
             }
             None => "Highest patch file: none found".to_string(),
         });
@@ -121,9 +115,9 @@ impl App {
             return;
         }
         let staged = self.settings.client_out.as_deref().map(|o| share::staged_files(Path::new(o)).unwrap_or_default()).unwrap_or_default();
-        let mut win = ShareWin { number_text: String::new(), typed: false, hint: Default::default(), has_client: false, staged, target: None, status: String::new(), confirm: false, msg: Vec::new() };
+        let mut win = ShareWin { number_text: String::new(), typed: false, hint: Default::default(), staged, target: None, status: String::new(), confirm: false, msg: Vec::new() };
         let hint = self.share_number_hint();
-        win.set_hint(hint, self.client_path.is_some());
+        win.set_hint(hint);
         self.c6.win = Some(win);
     }
 
@@ -136,9 +130,8 @@ impl App {
     /// Recomputes the hint (after an export folder was picked or the Refresh button).
     fn share_refresh_hint(&mut self) {
         let hint = self.share_number_hint();
-        let has_client = self.client_path.is_some();
         if let Some(w) = self.c6.win.as_mut() {
-            w.set_hint(hint, has_client);
+            w.set_hint(hint);
         }
     }
 
@@ -189,8 +182,10 @@ impl App {
                         self.c6.win = Some(w);
                         return;
                     };
-                    // picking the export folder counts its patch files for the next number
+                    // Picking the export folder counts its patch files for the next number, before the patch is written: the field
+                    // follows the new suggestion unless the user typed a number (a typed number that is taken is refused by the export).
                     self.c6.last_export = Some(dest.clone());
+                    w.set_hint(shaiya_patch::number_hint(self.client_path.as_deref(), &[dest.as_path()]));
                     let r = if act == Act::ExportPatch {
                         match w.number() {
                             Some(n) => share::export_patch(out, source, &dest, n),

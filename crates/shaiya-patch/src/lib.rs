@@ -144,6 +144,8 @@ pub struct NumberHint {
     pub from_version_ini: Option<(u32, u32)>,
     /// `(highest psNNNN.patch number seen, next, folder of that file)`.
     pub from_patch_files: Option<(u32, u32, PathBuf)>,
+    /// The file name of that highest patch file as found on disk (`PS0120.PATCH`, `ps12.patch`).
+    pub highest_file_name: Option<String>,
     /// The higher of the two `next` values; `None` when there is none or it is outside 1..=9999.
     pub suggested: Option<u32>,
 }
@@ -167,17 +169,21 @@ pub fn number_hint(client: Option<&Path>, patch_dirs: &[&Path]) -> NumberHint {
         dirs.push(c.join("data"));
     }
     dirs.extend(patch_dirs.iter().map(|p| p.to_path_buf()));
-    let mut best: Option<(u32, PathBuf)> = None;
+    let mut best: Option<(u32, PathBuf, String)> = None;
     for d in dirs {
         let Ok(rd) = fs::read_dir(&d) else { continue };
         for e in rd.flatten() {
-            let Some(n) = e.file_name().to_str().and_then(patch_number) else { continue };
-            if best.as_ref().is_none_or(|(b, _)| n > *b) {
-                best = Some((n, d.clone()));
+            let name = e.file_name().to_string_lossy().into_owned();
+            let Some(n) = patch_number(&name) else { continue };
+            if best.as_ref().is_none_or(|(b, _, _)| n > *b) {
+                best = Some((n, d.clone(), name));
             }
         }
     }
-    hint.from_patch_files = best.map(|(n, d)| (n, n.saturating_add(1), d));
+    if let Some((n, d, name)) = best {
+        hint.from_patch_files = Some((n, n.saturating_add(1), d));
+        hint.highest_file_name = Some(name);
+    }
     let next = [hint.from_version_ini.map(|v| v.1), hint.from_patch_files.as_ref().map(|v| v.1)].into_iter().flatten().max();
     hint.suggested = next.filter(|n| (1..=9999).contains(n));
     hint
@@ -1019,6 +1025,7 @@ mod tests {
         fs::write(d.join("notes.patch"), b"x").unwrap();
         let h = number_hint(None, &[&d]);
         assert_eq!(h.suggested, Some(121));
+        assert_eq!(h.highest_file_name.as_deref(), Some("PS0120.PATCH"), "the file as it is named on disk");
         // the suggestion is never the number of an existing patch file
         assert!(!d.join(patch_name(121)).exists());
     }
