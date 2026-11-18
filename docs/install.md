@@ -1,6 +1,6 @@
 # Install
 
-Download from the [releases page](https://github.com/byyako/shaiya-toolkit/releases). No release has been published yet; the first one comes with the archive and patch tools.
+Download from the [releases page](https://github.com/byyako/shaiya-toolkit/releases).
 
 ## Which zip
 

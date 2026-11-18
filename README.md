@@ -17,7 +17,7 @@ The Shaiya Toolkit repository holds command-line and desktop tools for Shaiya ga
 
 ## Download
 
-No release has been published yet. Releases will carry these files (see [docs/install.md](docs/install.md) for how to check them):
+Each release carries these files (see [docs/install.md](docs/install.md) for how to check them):
 
 | Download | Windows | Linux | macOS |
 |---|---|---|---|

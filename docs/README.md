@@ -8,7 +8,7 @@ Command-line and desktop tools for Shaiya game data, built on one tested Rust co
 
 ## Download
 
-No release has been published yet. Releases will carry these files:
+Each release carries these files:
 
 | Download | Windows | Linux | macOS |
 |---|---|---|---|
