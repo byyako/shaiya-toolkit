@@ -16,7 +16,7 @@ You can also start it from a command prompt with a file, a folder or a client: `
 
 ## Verified on and other episodes
 
-The editor was written and checked on one client and two sets of server files: the US EP4.5 client (patch 108), the original EP4.5 server files, and the Afterglow server. Everything else is detected and handled by refusing, warning or a setting. Nothing is assumed silently. The table says what was checked and what the editor does on anything else. The version matrix of the toolkit documentation has the numbers per client.
+The editor was written and checked on one client and two sets of server files: the US EP4.5 client (patch 108), the original EP4.5 server files, and the Afterglow server. There is no detection of the client version. Every file is checked by whether it reads. A map file that does not read is refused. A client table that does not read turns off the checks that need it, with a note. The table says what was checked and what the editor does on anything else. The version matrix of the toolkit documentation has the numbers per client.
 
 | What | Checked on | On anything else |
 |---|---|---|

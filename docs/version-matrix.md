@@ -46,7 +46,7 @@ Reading the table:
 
 ## SVMap Editor and `shaiya svmap`
 
-Shaiya SVMap Editor and `shaiya svmap` were written for and verified on the US EP4.5 client (patch 108), the original EP4.5 server files and the Afterglow server. Everything else is detected and handled by refusing, warning or a parameter. The assumptions:
+Shaiya SVMap Editor and `shaiya svmap` were written for and verified on the US EP4.5 client (patch 108), the original EP4.5 server files and the Afterglow server. There is no detection of the client version. Every file is checked by whether it reads: a map file that does not read is refused, and a client table that does not read turns off the checks that need it, with a note. The table says what was verified and what happens on other clients. The assumptions:
 
 | Assumption | Verified on | On anything else |
 |---|---|---|

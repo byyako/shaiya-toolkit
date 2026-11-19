@@ -64,7 +64,7 @@ Patches use the same `psNNNN.patch` layout. The original updater ignores `remove
 
 ## Which episodes does the SVMap Editor support?
 
-It was written for and verified on the US EP4.5 client (patch 108), the original EP4.5 server files and the Afterglow server. Other episodes are detected and handled by refusing, warning or a setting, never silently. A client table that does not read turns off the rules that need it, with one note on the client chip. The names of the map-name table are the EP4.5 client's, so on another client the info rule map-no-name may be wrong. The table of assumptions is in [the editor guide](tools/svmap-editor.md#verified-on-and-other-episodes) and the [version matrix](version-matrix.md#svmap-editor-and-shaiya-svmap).
+It was written for and verified on the US EP4.5 client (patch 108), the original EP4.5 server files and the Afterglow server. There is no detection of the client version. Every file is checked by whether it reads: a map file that does not read is refused, and a client table that does not read turns off the checks that need it, with a note on the client chip. The names of the map-name table are the EP4.5 client's, so on another client the info rule map-no-name may be wrong. The table of assumptions is in [the editor guide](tools/svmap-editor.md#verified-on-and-other-episodes) and the [version matrix](version-matrix.md#svmap-editor-and-shaiya-svmap).
 
 ## Why does a map open read-only on the client side?
 

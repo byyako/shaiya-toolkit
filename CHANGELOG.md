@@ -16,6 +16,10 @@ All notable changes are listed here, newest first. The format follows [Keep a Ch
 
 - The 3D view's Frame map fits the whole map with its height at the current window shape, so tall small dungeons are no longer cropped. New View menu entries: Top-down 3D view, Level 3D view and 45 degree 3D view.
 
+### Documentation
+
+- The episode claims are exact: there is no detection of the client version; every file is checked by whether it reads (version matrix, FAQ and the SVMap Editor guide).
+
 ### shaiya (CLI)
 
 - `shaiya svmap check --client` (and `spawns`, `bulk`, `wld-check`) refuse a folder that holds no client files without walking it to the end: the look stops after 20,000 entries or 4 folders deep and exits 3.
