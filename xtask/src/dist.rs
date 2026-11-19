@@ -33,11 +33,15 @@ pub fn check_tag(version: &str, ref_type: Option<&str>, ref_name: Option<&str>) 
     Ok(())
 }
 
-pub fn platform_notes(platform: &str) -> &'static str {
-    match platform {
-        "windows-x86_64" => "Windows: the programs are not code signed, so SmartScreen may warn the first time (\"Windows protected your PC\"): choose More info, then Run anyway.",
-        "linux-x86_64" => "Linux: the GUI programs need a desktop with X11 or Wayland and a Vulkan or OpenGL driver. If the file is not executable, run: chmod +x <program>",
-        _ => "macOS: the programs are not notarised (the GUI is untested on macOS until a tester confirms it). If macOS says the developer is unidentified, right-click the app and choose Open, or run: xattr -dr com.apple.quarantine <app>",
+/// The platform paragraph of a README.txt. `has_gui` is whether the zip holds a window program: a command-line-only zip says nothing about
+/// desktops, drivers or apps.
+pub fn platform_notes(platform: &str, has_gui: bool) -> &'static str {
+    match (platform, has_gui) {
+        ("windows-x86_64", _) => "Windows: the programs are not code signed, so SmartScreen may warn the first time (\"Windows protected your PC\"): choose More info, then Run anyway.",
+        ("linux-x86_64", false) => "Linux: if the file is not executable, run: chmod +x shaiya",
+        ("linux-x86_64", true) => "Linux: the GUI programs need a desktop with X11 or Wayland and a Vulkan or OpenGL driver. If the file is not executable, run: chmod +x <program>",
+        (_, false) => "macOS: the program is not notarised. If macOS blocks it, run: xattr -d com.apple.quarantine shaiya",
+        (_, true) => "macOS: the programs are not notarised (the GUI is untested on macOS until a tester confirms it). If macOS says the developer is unidentified, right-click the app and choose Open, or run: xattr -dr com.apple.quarantine <app>",
     }
 }
 
@@ -63,7 +67,7 @@ pub fn readme(title: &str, tools: &[&Tool], platform: &str, version: &str) -> St
     let changes = if editor { "Changes the toolkit's other tools make to a client folder" } else { "Changes to a client folder" };
     let tail = if editor { EDITOR_SENTENCE } else { "Everything else is written only to a path you name." };
     s.push_str(&format!("\nThese tools work on your own copy of the game. The repository and the releases contain no game files, and the tools never download any. {changes} are recorded in a journal so they can usually be rolled back, but not changes made with --no-journal or archive compact --in-place, which keep at most the previous index (data.sah.bak). {tail}\n\n"));
-    s.push_str(platform_notes(platform));
+    s.push_str(platform_notes(platform, tools.iter().any(|t| t.gui)));
     s.push_str("\n\nCheck the download against SHA256SUMS.txt from the release page.\n\nDocumentation: https://github.com/byyako/shaiya-toolkit/tree/main/docs\nLicence: MIT (LICENSE.txt). Third-party components: THIRD-PARTY-NOTICES.txt\nMade by byyako.\n");
     s
 }
@@ -362,7 +366,17 @@ mod tests {
         assert!(r.contains("SmartScreen") && r.contains("shaiya-toolkit.exe"));
         let m = readme(gui.title, &[gui], "macos-universal", "0.1.0");
         assert!(m.contains("xattr -dr com.apple.quarantine") && m.contains("Shaiya Toolkit.app"));
-        assert!(readme("x", &[&TOOLS[0]], "linux-x86_64", "0.1.0").contains("chmod +x"));
+        let cli_linux = readme("x", &[&TOOLS[0]], "linux-x86_64", "0.1.0");
+        assert!(cli_linux.contains("chmod +x shaiya") && !cli_linux.contains("X11") && !cli_linux.contains("GUI"));
+        let cli_mac = readme("x", &[&TOOLS[0]], "macos-universal", "0.1.0");
+        assert!(cli_mac.contains("xattr -d com.apple.quarantine shaiya") && !cli_mac.contains(".app ") && !cli_mac.contains(".app.") && !cli_mac.contains("the app") && !cli_mac.contains("right-click"));
+        let cli_win = readme("x", &[&TOOLS[0]], "windows-x86_64", "0.1.0");
+        assert!(cli_win.contains("SmartScreen"));
+        let all: Vec<&Tool> = TOOLS.iter().collect();
+        let all_linux = readme("x", &all, "linux-x86_64", "0.1.0");
+        assert!(all_linux.contains("X11") && all_linux.contains("chmod +x <program>"));
+        let all_mac = readme("x", &all, "macos-universal", "0.1.0");
+        assert!(all_mac.contains("right-click the app") && all_mac.contains("xattr -dr com.apple.quarantine <app>"));
     }
 
     #[test]

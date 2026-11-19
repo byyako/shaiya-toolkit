@@ -25,6 +25,10 @@ All notable changes are listed here, newest first. The format follows [Keep a Ch
 
 - `shaiya svmap check --client` (and `spawns`, `bulk`, `wld-check`) refuse a folder that holds no client files without walking it to the end: the look stops after 20,000 entries or 4 folders deep and exits 3.
 
+### Release files
+
+- The README.txt of the command-line zip names only what applies to a command-line program: on Linux the `chmod +x` line, on macOS the `xattr -d com.apple.quarantine` line, with no desktop, driver or app wording. The zip with the desktop programs keeps its text.
+
 ## [0.2.0] - 2026-11-18
 
 ### shaiya (CLI)
