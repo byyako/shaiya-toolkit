@@ -4,13 +4,16 @@ All notable changes are listed here, newest first. The format follows [Keep a Ch
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-18
+
 ### shaiya (CLI)
 
 - `shaiya svmap`: `check`, `dump`, `build`, `roundtrip`, `diff`, `wld-check`, `spawns`, `bulk` for server map files and a client's `.wld` files, with the toolkit's exit codes and JSON.
+- `shaiya svmap diff` exits 3 when a path is missing, and an empty `--client` folder exits 3; the server-data checks print notes when the server data is absent.
 
 ### Shaiya SVMap Editor
 
-- New desktop program `shaiya-svmap-editor` (ships in the Shaiya Toolkit zip): edits server map files (`.svmap`) in 2D and 3D over the client's terrain, with every section of the file, checks against the client and server data, paired client `.wld` edits written to a staging folder, placements and terrain, a Map.ini editor, Add a map, unsigned patch export, and Install and Uninstall on a test client. Verified on US EP4.5; other episodes are detected and the checks that depend on EP4.5 data say so. Its settings, log, recovery files and backups live in the `shaiya-svmap-editor` folder of the toolkit data folder. It has no subcommands: the command-line tools are `shaiya svmap`.
+- New desktop program `shaiya-svmap-editor` (ships in the Shaiya Toolkit zip): edits server map files (`.svmap`) in 2D and 3D over the client's terrain, with every section of the file, checks against the client and server data, paired client `.wld` edits written to a staging folder, placements and terrain, a Map.ini editor, Add a map, unsigned patch export, and Install and Uninstall on a test client. Exports refuse the client folder and program targets (`.exe`, `.dll`). Verified on US EP4.5; other episodes are detected and the checks that depend on EP4.5 data say so. Its settings, log, recovery files and backups live in the `shaiya-svmap-editor` folder of the toolkit data folder. It has no subcommands: the command-line tools are `shaiya svmap`.
 
 ### Libraries
 
