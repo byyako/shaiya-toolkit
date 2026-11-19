@@ -4,6 +4,8 @@ All notable changes are listed here, newest first. The format follows [Keep a Ch
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-11-19
+
 ### Shaiya Toolkit
 
 - The command palette closes when you click outside it, as well as on Esc.
