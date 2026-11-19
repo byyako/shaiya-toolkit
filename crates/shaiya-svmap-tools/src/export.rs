@@ -170,8 +170,9 @@ pub fn map_json(m: &Svmap) -> Result<String, String> {
 }
 
 /// Whether an export may write `path`: never a map, client archive or program file (`.svmap`, `.sah`, `.saf`, `.exe`, `.dll`,
-/// whatever the dialog's filter said), never one of the `protected` files (the open tabs' and the folder's maps), and never into,
-/// around or at one of the `client_dirs` (every client folder the editor reads). Err holds the reason.
+/// whatever the dialog's filter said), never one of the `protected` files (the open tabs' and the folder's maps), and never into
+/// or at one of the `client_dirs` (every client folder the editor reads). A file in a folder that holds a client folder is allowed.
+/// Err holds the reason.
 pub fn check_target(path: &std::path::Path, protected: &[&std::path::Path], client_dirs: &[std::path::PathBuf]) -> Result<(), String> {
     // Windows drops trailing dots and spaces from a name, so `game.exe.` and `game.exe ` write game.exe
     let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
@@ -183,8 +184,10 @@ pub fn check_target(path: &std::path::Path, protected: &[&std::path::Path], clie
     let abs = std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf());
     let folder = abs.parent().map(std::path::Path::to_path_buf).unwrap_or_else(|| abs.clone());
     for c in client_dirs {
-        if crate::client_files::lies_in(&abs, c) || crate::client_files::lies_in(&folder, c) || crate::client_files::lies_in(c, &folder) {
-            return Err(format!("{}: that is in or around the client folder {}. An export never writes the client folder; pick another folder.", path.display(), c.display()));
+        // `lies_in` resolves links and compares folder identity, so a path that reaches the client by a junction, a symbolic link or
+        // another name of the folder is caught. A folder that merely holds the client is not refused: a file there is not in it.
+        if crate::client_files::lies_in(&abs, c) || crate::client_files::lies_in(&folder, c) {
+            return Err(format!("{}: that is in the client folder {}. An export never writes the client folder; pick another folder.", path.display(), c.display()));
         }
     }
     let same = |a: &std::path::Path, b: &std::path::Path| match (std::fs::canonicalize(a), std::fs::canonicalize(b)) {
@@ -307,16 +310,18 @@ mod tests {
         assert!(check_target(&dir.join("NOTES.TXT"), &[odd.as_path()], &[]).is_err());
         assert!(check_target(&dir.join("1-monster-areas.csv"), &[map.as_path(), odd.as_path()], &[]).is_ok());
         assert!(check_target(&dir.join("1.json"), &[map.as_path()], &[]).is_ok());
-        // a client folder: a file in it, in a folder inside it, a folder around it, or the folder itself is refused
+        // a client folder: a file in it, in a folder inside it, or the folder itself is refused
         let client = dir.join("client");
         std::fs::create_dir_all(client.join("sub")).unwrap();
         let other = dir.join("elsewhere");
         std::fs::create_dir_all(&other).unwrap();
         let clients = [client.clone()];
-        for bad in [client.join("a.csv"), client.join("sub").join("a.json"), client.join("sub").join("not-yet").join("a.png"), dir.join("a.csv"), client.clone()] {
+        for bad in [client.join("a.csv"), client.join("sub").join("a.json"), client.join("sub").join("not-yet").join("a.png"), client.clone()] {
             assert!(check_target(&bad, &[], &clients).is_err(), "{}", bad.display());
         }
         assert!(check_target(&other.join("a.csv"), &[], &clients).is_ok());
+        // the folder that holds the client is not the client: a file beside it is allowed
+        assert!(check_target(&dir.join("a.csv"), &[], &clients).is_ok());
         #[cfg(windows)]
         {
             // the same folder under another spelling (upper case, forward slashes) is the same folder
@@ -324,6 +329,100 @@ mod tests {
             assert!(check_target(&std::path::PathBuf::from(format!("{s}/a.csv")), &[], &clients).is_err());
         }
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A new empty folder with `root/client/sub` and `root/out`.
+    fn guard_tree(tag: &str) -> (std::path::PathBuf, std::path::PathBuf) {
+        let root = std::env::temp_dir().join(format!("svmap-export-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let client = root.join("client");
+        std::fs::create_dir_all(client.join("sub")).unwrap();
+        std::fs::create_dir_all(root.join("out")).unwrap();
+        (root, client)
+    }
+
+    #[test]
+    fn export_beside_a_client_is_allowed() {
+        let (root, client) = guard_tree("beside");
+        let clients = [client.clone()];
+        assert!(check_target(&root.join("out.csv"), &[], &clients).is_ok());
+        assert!(check_target(&root.join("out").join("out.json"), &[], &clients).is_ok());
+        // a folder that does not exist yet beside the client
+        assert!(check_target(&root.join("new").join("out.png"), &[], &clients).is_ok());
+        // a folder whose name only starts like the client's
+        assert!(check_target(&root.join("client2").join("out.csv"), &[], &clients).is_ok());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn export_into_a_client_is_refused() {
+        let (root, client) = guard_tree("into");
+        let clients = [client.clone()];
+        for bad in [client.join("x.csv"), client.join("sub").join("x.csv"), client.join("a").join("b").join("x.json"), client.join("..").join("client").join("x.csv")] {
+            let e = check_target(&bad, &[], &clients).expect_err(&bad.display().to_string());
+            assert!(e.contains("is in the client folder"), "{e}");
+        }
+        // one refusing client among several is enough
+        let two = [root.join("out"), client.clone()];
+        assert!(check_target(&client.join("x.csv"), &[], &two).is_err());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn export_named_like_the_client_folder_is_refused() {
+        let (root, client) = guard_tree("named");
+        let clients = [client.clone()];
+        assert!(check_target(&client, &[], &clients).is_err());
+        // with a trailing separator, and spelled through `..`
+        assert!(check_target(&root.join("out").join("..").join("client"), &[], &clients).is_err());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// Makes `link` a name for the folder `target`: a junction on Windows (no privilege needed), a symbolic link elsewhere.
+    /// `None` when the platform refuses it.
+    fn make_dir_link(link: &std::path::Path, target: &std::path::Path) -> Option<()> {
+        #[cfg(windows)]
+        {
+            // mklink wants backslashes (TMP may be spelled with forward slashes)
+            let bs = |p: &std::path::Path| p.to_string_lossy().replace('/', "\\");
+            let out = std::process::Command::new("cmd").arg("/C").arg("mklink").arg("/J").arg(bs(link)).arg(bs(target)).output().ok()?;
+            out.status.success().then_some(())
+        }
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(target, link).ok()
+        }
+        #[cfg(not(any(windows, unix)))]
+        {
+            let _ = (link, target);
+            None
+        }
+    }
+
+    #[test]
+    fn export_through_a_junction_or_symlink_into_the_client_is_refused() {
+        let (root, client) = guard_tree("link");
+        let link = root.join("out").join("alias");
+        if make_dir_link(&link, &client).is_none() {
+            eprintln!("skipped: this platform did not allow creating a directory link in the test folder");
+            let _ = std::fs::remove_dir_all(&root);
+            return;
+        }
+        let clients = [client.clone()];
+        for bad in [link.join("x.csv"), link.join("sub").join("x.csv"), link.join("not-yet").join("x.png"), link.clone()] {
+            assert!(check_target(&bad, &[], &clients).is_err(), "{}", bad.display());
+        }
+        // the link itself is the client folder: it is also refused when the client is named through the link
+        let through = [link.clone()];
+        assert!(check_target(&client.join("x.csv"), &[], &through).is_err());
+        // a sibling folder that is not a link stays allowed
+        assert!(check_target(&root.join("out").join("x.csv"), &[], &clients).is_ok());
+        // remove the link first so the cleanup never walks into the client through it
+        #[cfg(windows)]
+        let _ = std::fs::remove_dir(&link);
+        #[cfg(unix)]
+        let _ = std::fs::remove_file(&link);
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]

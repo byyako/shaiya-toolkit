@@ -10,6 +10,10 @@ All notable changes are listed here, newest first. The format follows [Keep a Ch
 - Help > Open log file, Help > Open data folder and Show folder after a build open the file or folder with the system's opener (Explorer, Finder, xdg-open) instead of the web browser.
 - The Tools menu lists Shaiya SVMap Editor, which ships with the toolkit, instead of programs that do not exist.
 
+### Shaiya SVMap Editor
+
+- File > Export may write a file in a folder that holds the client folder (for example the Desktop); a file in or at the client folder stays refused, also through a junction or symbolic link.
+
 ### shaiya (CLI)
 
 - `shaiya svmap check --client` (and `spawns`, `bulk`, `wld-check`) refuse a folder that holds no client files without walking it to the end: the look stops after 20,000 entries or 4 folders deep and exits 3.
