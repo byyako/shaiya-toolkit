@@ -260,6 +260,13 @@ pub struct AddDialog {
 }
 
 impl AddDialog {
+    /// The file-check task for the rows now shown has ended. Whatever its outcome, the dialog is "checked" and `findings` says what is
+    /// known: a check that did not finish (cancelled, failed, crashed) holds the finding that makes "Queue changes" ask first.
+    pub fn finish_check(&mut self, outcome: TaskOutcome<Vec<Finding>>) {
+        self.findings = check_outcome(outcome);
+        self.checked = true;
+    }
+
     /// "Queue changes" pressed. True: queue now. False: nothing yet (the checks are running, or the "Add anyway" question is open
     /// because a file is double-encrypted or fails its checksum).
     pub fn press_queue(&mut self) -> bool {
@@ -288,6 +295,17 @@ fn check_items(items: &[CheckItem], archive: Option<&Archive>) -> Vec<Finding> {
         out.extend(validate::check_path(path, source, copy.as_deref()));
     }
     out
+}
+
+/// What a finished file-check task means: its findings, or, when it did not finish (cancelled, failed, crashed), the one finding that
+/// makes the Toolkit ask. A check that did not run never lets files through as if they were clean.
+pub(crate) fn check_outcome(outcome: TaskOutcome<Vec<Finding>>) -> Vec<Finding> {
+    match outcome {
+        TaskOutcome::Done(f) => f,
+        TaskOutcome::Failed(e) => vec![Finding::incomplete(&e.to_string())],
+        TaskOutcome::Cancelled => vec![Finding::incomplete("cancelled")],
+        TaskOutcome::Panicked(m) => vec![Finding::incomplete(&format!("internal error (a bug): {m}"))],
+    }
 }
 
 /// The text of the "Add anyway" question: the findings that ask, at most six, then what happens.
@@ -409,6 +427,8 @@ pub struct ArchiveView {
     pub add_dialog: Option<AddDialog>,
     /// A replacement file whose checks ask first: the puts to queue and the findings.
     pub replace_ask: Option<(Vec<QueuedPut>, Vec<Finding>)>,
+    /// "Replace with file..." checks running in the background: the put to queue and the task.
+    replace_checks: Vec<(Vec<QueuedPut>, TaskHandle<Vec<Finding>>)>,
     pub check: Option<CheckPanel>,
     pub compare: Option<ComparePanel>,
     extract: Option<ExtractFlow>,
@@ -484,6 +504,7 @@ impl ArchiveView {
             history: History::new(500),
             add_dialog: None,
             replace_ask: None,
+            replace_checks: Vec::new(),
             check: None,
             compare: None,
             extract: None,
@@ -1483,21 +1504,36 @@ impl ArchiveView {
         }
     }
 
-    /// "Replace with file...": checks the file against the entry it replaces, then queues it. A file the checks ask about waits for
-    /// "Add anyway" (see `replace_ask`); other findings are shown in the status bar and the file is queued.
+    /// "Replace with file...": checks the file against the entry it replaces in a background task (an SData file is read and
+    /// decrypted), then queues it. A file the checks ask about waits for "Add anyway" (see `replace_ask`); other findings are shown in
+    /// the status bar and the file is queued. A check that did not finish asks too.
     pub fn replace_with_file(&mut self, row: usize, file: PathBuf, cx: &mut ToolkitCx<'_>) {
         let Some(l) = &self.loaded else { return };
         let path = l.rows[row].path.clone();
         let version = mtime(&file);
-        let findings = check_items(&[(path.clone(), file.clone(), Some(l.rows[row].entry.clone()))], l.archive.as_deref());
-        if validate::any_asks(&findings) {
-            self.replace_ask = Some((vec![(path, file, version)], findings));
-            return;
+        let items = vec![(path.clone(), file.clone(), Some(l.rows[row].entry.clone()))];
+        let archive = l.archive.clone();
+        let h = cx.shell.tasks().spawn(TaskSpec { title: "Checking the files".to_string(), cancellable: false, exclusive: None }, move |_job| Ok(check_items(&items, archive.as_deref())));
+        self.replace_checks.push((vec![(path, file, version)], h));
+    }
+
+    /// Finishes the "Replace with file..." checks that are done: queues the file, or opens the question.
+    fn poll_replace_checks(&mut self, cx: &mut ToolkitCx<'_>) {
+        for (put, mut h) in std::mem::take(&mut self.replace_checks) {
+            let Some(outcome) = h.poll() else {
+                self.replace_checks.push((put, h));
+                continue;
+            };
+            let findings = check_outcome(outcome);
+            if validate::any_asks(&findings) {
+                self.replace_ask = Some((put, findings));
+                continue;
+            }
+            if let Some(first) = findings.first() {
+                cx.shell.status(format!("Queued, with a warning: {}", first.line()));
+            }
+            self.queue_puts(put);
         }
-        if let Some(first) = findings.first() {
-            cx.shell.status(format!("Queued, with a warning: {}", first.line()));
-        }
-        self.queue_puts(vec![(path, file, version)]);
     }
 
     /// What the file checks of the dialog look at: each row's file and the entry the archive already holds at that path.
@@ -2142,6 +2178,7 @@ impl ArchiveView {
 
     fn draw_dialogs(&mut self, ui: &mut egui::Ui, cx: &mut ToolkitCx<'_>, requests: &mut Vec<TabRequest>) {
         let ctx = ui.ctx().clone();
+        self.poll_replace_checks(cx);
         // Replace with a file that looks broken
         if let Some((items, findings)) = self.replace_ask.take() {
             let c = Confirm {
@@ -2166,10 +2203,7 @@ impl ArchiveView {
                     None => d.checking = Some((g, h)),
                     Some(outcome) => {
                         if g == d.check_gen {
-                            if let TaskOutcome::Done(f) = outcome {
-                                d.findings = f;
-                            }
-                            d.checked = true;
+                            d.finish_check(outcome);
                         }
                     }
                 }
@@ -2179,7 +2213,7 @@ impl ArchiveView {
             } else if !d.checked && d.checking.is_none() {
                 let items = self.add_check_items(&d);
                 let archive = self.loaded.as_ref().and_then(|l| l.archive.clone());
-                let h = cx.shell.tasks().spawn(TaskSpec { title: "Checking the files".to_string(), cancellable: true, exclusive: None }, move |_job| Ok(check_items(&items, archive.as_deref())));
+                let h = cx.shell.tasks().spawn(TaskSpec { title: "Checking the files".to_string(), cancellable: false, exclusive: None }, move |_job| Ok(check_items(&items, archive.as_deref())));
                 d.checking = Some((d.check_gen, h));
             }
             egui::Window::new("Add to archive").collapsible(false).default_width(560.0).show(&ctx, |ui| {

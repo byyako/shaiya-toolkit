@@ -384,8 +384,7 @@ impl PatchBuilder {
                 None => self.check = Some((g, h)),
                 Some(outcome) => {
                     if g == self.input_gen {
-                        self.findings = if let TaskOutcome::Done(f) = outcome { f } else { Vec::new() };
-                        self.checked_gen = Some(g);
+                        self.finish_checks(outcome);
                     }
                 }
             }
@@ -396,12 +395,19 @@ impl PatchBuilder {
         let needs_reading = self.input.files.iter().map(|f| f.0.as_str()).chain(self.input.loose.iter().map(|f| f.0.as_str())).any(validate::wants_bytes);
         if needs_reading {
             let input = self.input.clone();
-            let h = cx.shell.tasks().spawn(TaskSpec { title: "Checking the files".to_string(), cancellable: true, exclusive: None }, move |_job| Ok(validate::check_input(&input)));
+            let h = cx.shell.tasks().spawn(TaskSpec { title: "Checking the files".to_string(), cancellable: false, exclusive: None }, move |_job| Ok(validate::check_input(&input)));
             self.check = Some((self.input_gen, h));
         } else {
             self.findings = validate::check_input(&self.input);
             self.checked_gen = Some(self.input_gen);
         }
+    }
+
+    /// The check task for the current contents has ended. A check that did not finish (cancelled, failed, crashed) leaves the finding
+    /// that makes Build ask first, never an empty list.
+    pub fn finish_checks(&mut self, outcome: TaskOutcome<Vec<Finding>>) {
+        self.findings = crate::archive_view::check_outcome(outcome);
+        self.checked_gen = Some(self.input_gen);
     }
 
     /// The file checks of the contents (valid once `checks_done`).

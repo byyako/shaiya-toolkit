@@ -1002,14 +1002,14 @@ fn replace_with_file_asks_about_a_double_encrypted_file_and_otherwise_queues() {
     let plain = src.path().join("plain.bin");
     std::fs::write(&plain, b"plain bytes").unwrap();
     with_cx(&mut w.h, |app, cx| app.archive.replace_with_file(row, plain.clone(), cx));
-    assert_eq!(w.h.app.app.archive.pending.len(), 1);
+    assert!(w.h.wait_until(WAIT, |h| h.app.app.archive.pending.len() == 1), "the check runs in the background, then the file is queued");
     w.h.frames(2);
     assert!(w.h.text().contains("sdata-state-differs"), "{}", w.h.text());
     // double-encrypted: not queued until Add anyway
     let twice = src.path().join("twice.bin");
     std::fs::write(&twice, shaiya_seed::encrypt(&shaiya_seed::encrypt(b"x"))).unwrap();
     with_cx(&mut w.h, |app, cx| app.archive.replace_with_file(row, twice.clone(), cx));
-    assert!(w.h.app.app.archive.replace_ask.is_some());
+    assert!(w.h.wait_until(WAIT, |h| h.app.app.archive.replace_ask.is_some()));
     w.h.frames(3);
     assert!(w.h.text().contains("Add anyway") && w.h.text().contains("sdata-double-encrypted"), "{}", w.h.text());
     w.h.app.shell.inject_answer("toolkit-replace-findings", 1);
@@ -1017,6 +1017,7 @@ fn replace_with_file_asks_about_a_double_encrypted_file_and_otherwise_queues() {
     assert!(w.h.app.app.archive.replace_ask.is_none());
     assert!(matches!(&w.h.app.app.archive.pending[0].kind, shaiya_toolkit::archive_view::PendingKind::Put { source, .. } if source == &plain), "Cancel keeps the earlier put");
     with_cx(&mut w.h, |app, cx| app.archive.replace_with_file(row, twice.clone(), cx));
+    assert!(w.h.wait_until(WAIT, |h| h.app.app.archive.replace_ask.is_some()));
     w.h.frames(3);
     w.h.app.shell.inject_answer("toolkit-replace-findings", 0);
     w.h.frames(3);
@@ -1065,6 +1066,57 @@ fn the_patch_builder_lists_checks_and_asks_before_building_a_broken_file() {
     assert!(w.h.wait_until(WAIT, |h| out_dir.path().join("ps0002.patch").exists() && h.app.app.patch.last_out.as_ref().is_some_and(|p| p.ends_with("ps0002.patch"))), "a warning does not ask");
 }
 
+#[test]
+fn a_check_that_did_not_finish_still_asks_in_the_add_dialog() {
+    use shaiya_ui::TaskOutcome;
+    let mut w = open_world("t7-w4-unfinished-add");
+    let src = TempDir::new("t7-w4-unfinished-add-src");
+    let fine = src.path().join("fine.txt");
+    std::fs::write(&fine, b"fine").unwrap();
+    for (n, outcome) in [TaskOutcome::Cancelled, TaskOutcome::Panicked("boom".into()), TaskOutcome::Failed(shaiya_core::Error::Refused("disk gone".into()))].into_iter().enumerate() {
+        let before = w.h.app.app.archive.pending.len();
+        w.h.app.app.archive.begin_add(vec![fine.clone()]);
+        let arch = &mut w.h.app.app.archive;
+        let d = arch.add_dialog.as_mut().unwrap();
+        d.finish_check(outcome);
+        assert!(d.checked && finding_codes(&d.findings) == ["check-incomplete"], "{n}: {:?}", d.findings);
+        w.h.app.app.archive.press_queue_changes();
+        w.h.frames(3);
+        assert_eq!(w.h.app.app.archive.pending.len(), before, "{n}: nothing is queued before the answer");
+        assert!(w.h.app.app.archive.add_dialog.as_ref().unwrap().asking, "{n}: the question is open");
+        let t = w.h.text();
+        assert!(t.contains("Add anyway") && t.contains("check-incomplete") && t.contains("did not finish"), "{t}");
+        w.h.app.shell.inject_answer("toolkit-add-findings", 1);
+        w.h.frames(3);
+        assert_eq!(w.h.app.app.archive.pending.len(), before, "{n}: Cancel queues nothing");
+        w.h.app.app.archive.add_dialog = None;
+    }
+}
+
+#[test]
+fn a_check_that_did_not_finish_still_asks_before_the_patch_builder_builds() {
+    use shaiya_ui::TaskOutcome;
+    let mut w = open_world("t7-w4-unfinished-patch");
+    let src = TempDir::new("t7-w4-unfinished-patch-src");
+    let files = src.path().join("changed");
+    std::fs::create_dir_all(files.join("data")).unwrap();
+    std::fs::write(files.join("data/ok.txt"), b"fine").unwrap();
+    let out_dir = TempDir::new("t7-w4-unfinished-patch-out");
+    go(&mut w.h, Tab::Patch);
+    w.h.app.app.patch.out_dir = out_dir.path().display().to_string();
+    w.h.drop_files(std::slice::from_ref(&files));
+    assert!(w.h.wait_until(WAIT, |h| h.app.app.patch.checks_done() && h.app.app.patch.rows.len() == 1));
+    assert!(w.h.app.app.patch.findings().is_empty(), "the files are fine");
+    w.h.app.app.patch.finish_checks(TaskOutcome::Cancelled);
+    assert_eq!(finding_codes(w.h.app.app.patch.findings()), ["check-incomplete"]);
+    with_cx(&mut w.h, |app, cx| app.patch.begin_build(&app.keys, cx));
+    w.h.frames(3);
+    assert!(w.h.text().contains("Build anyway") && w.h.text().contains("check-incomplete"), "{}", w.h.text());
+    assert!(!out_dir.path().join("ps0001.patch").exists(), "nothing is built before the answer");
+    w.h.app.shell.inject_answer("toolkit-build-findings", 1);
+    w.h.frames(3);
+    assert!(!out_dir.path().join("ps0001.patch").exists() && w.h.app.app.patch.last_out.is_none(), "Cancel builds nothing");
+}
 
 // ------------------------------------------------------------------------------------------------ T7 W5: Publish for the regular updater
 

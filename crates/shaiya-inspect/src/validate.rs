@@ -19,6 +19,8 @@ pub mod code {
     pub const SDATA_STATE_DIFFERS: &str = "sdata-state-differs";
     pub const TEXTURE_UNREADABLE: &str = "texture-unreadable";
     pub const EMPTY_FILE: &str = "empty-file";
+    /// Not a property of a file: the Toolkit's check did not finish, so the files are unchecked (it asks like a broken file).
+    pub const CHECK_INCOMPLETE: &str = "check-incomplete";
     /// Every code, for tests and documentation.
     pub const ALL: [&str; 5] = [SDATA_DOUBLE_ENCRYPTED, SDATA_CRC_BAD, SDATA_STATE_DIFFERS, TEXTURE_UNREADABLE, EMPTY_FILE];
 }
@@ -32,9 +34,15 @@ pub struct Finding {
 }
 
 impl Finding {
-    /// The two findings the Toolkit asks about once ("Add anyway" / Cancel) before it queues or builds; every other finding only warns.
+    /// The findings the Toolkit asks about once ("Add anyway" / Cancel) before it queues or builds: a double wrapper, a bad checksum, and a check that did not finish; every other finding only warns.
     pub fn asks(&self) -> bool {
-        self.code == code::SDATA_DOUBLE_ENCRYPTED || self.code == code::SDATA_CRC_BAD
+        self.code == code::SDATA_DOUBLE_ENCRYPTED || self.code == code::SDATA_CRC_BAD || self.code == code::CHECK_INCOMPLETE
+    }
+
+    /// The finding that stands in for a check that did not finish (cancelled, failed or crashed): the files are unchecked, so the
+    /// Toolkit asks before it queues or builds them.
+    pub fn incomplete(reason: &str) -> Finding {
+        Finding { path: "(all files)".to_string(), code: code::CHECK_INCOMPLETE, message: format!("the file check did not finish ({reason}); the files were not checked") }
     }
 
     /// `path: message [code]`, the line the CLI prints after `warning: `.
@@ -179,6 +187,15 @@ mod tests {
 
     fn payload() -> Vec<u8> {
         (0..300u32).map(|i| (i * 13 + 5) as u8).collect()
+    }
+
+    #[test]
+    fn an_unfinished_check_asks_and_names_itself() {
+        let f = Finding::incomplete("cancelled");
+        assert!(f.asks() && any_asks(std::slice::from_ref(&f)));
+        assert_eq!(f.code, code::CHECK_INCOMPLETE);
+        assert!(f.line().contains("did not finish") && f.line().contains("[check-incomplete]"), "{}", f.line());
+        assert!(!code::ALL.contains(&code::CHECK_INCOMPLETE), "it is not a finding about a file");
     }
 
     #[test]

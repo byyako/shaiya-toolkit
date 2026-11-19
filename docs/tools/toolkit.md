@@ -54,7 +54,7 @@ With no client or archive open, the Archive tab shows a **Start** page: one line
 
 The "Add to archive" dialog, "Replace with file..." and the Patch builder check each SData, `.dds` and `.tga` file and each empty file before it is queued or built, and list what they find. The checks run in the background; the dialog's **Queue changes** waits for them. They are the same as the command line's ([Checks before files go in](shaiya.md#checks-before-files-go-in)): `sdata-double-encrypted`, `sdata-crc-bad`, `sdata-state-differs`, `texture-unreadable`, `empty-file`.
 
-- Findings only warn. The one exception is a file that is SEED-encrypted twice or whose checksum fails: the dialog asks once, **Add anyway** or **Cancel** (the Patch builder says **Build anyway**). Nothing is queued until you answer, and Cancel leaves the Add dialog open.
+- Findings only warn. The one exception is a file that is SEED-encrypted twice or whose checksum fails: the dialog asks once, **Add anyway** or **Cancel** (the Patch builder says **Build anyway**). Nothing is queued until you answer, and Cancel leaves the Add dialog open. If a check cannot finish (it fails or is stopped), the files count as unchecked and it asks the same way, with a `check-incomplete` line.
 - A plain SData file against an encrypted copy in the client (or the reverse) is shown as `sdata-state-differs` and queued without a question; the Patch builder cannot compare because a patch has no client copy.
 - A texture the toolkit cannot read may still work in the game; the finding only says the toolkit's own reader refused it.
 
