@@ -228,6 +228,7 @@ fn table_json_shape_and_sections() {
     write(&f, &encrypt(&monster_table(&[b"Wolf\0"])));
     let v = json(&sh(&w.data, &["sdata", "table", p(&f), "--json"]));
     assert_eq!((v["layout"].as_str(), v["table"].as_str()), (Some("monster-31"), Some("Monster")));
+    assert_eq!(v["chosen_by"].as_str(), Some("fit"));
     let s = &v["sheets"][0];
     assert_eq!((s["name"].as_str(), s["row_count"].as_u64()), (Some("monsters"), Some(1)));
     assert_eq!(s["columns"][0], serde_json::json!({"name": "id", "kind": "int"}));
@@ -235,6 +236,7 @@ fn table_json_shape_and_sections() {
     // text output names the layout and the columns
     let o = sh(&w.data, &["sdata", "table", p(&f)]);
     assert!(out(&o).contains("layout monster-31 (Monster), names read as cp949") && out(&o).contains("monsters: 1 rows, "), "{}", out(&o));
+    assert!(out(&o).contains("chosen because it reads the whole file") && out(&o).contains("only on the clients listed as verified"), "{}", out(&o));
     // several tables in one file
     let q = w.tmp.path().join("NpcQuest.SData");
     write(&q, &encrypt(&npcquest_table()));

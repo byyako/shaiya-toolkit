@@ -35,7 +35,7 @@ The file is only read.
 
 ## Verified on
 
-`skill-3` was derived from the client's own table loader and checked against the whole file on US EP4.5 (patch 108, 326 entries, 978 records), ru-ep3 (882 records) and ru-ep45 (978). `skill-9` was derived and checked the same way on fr-ep54 (372 entries, 3,348 records) and `skill-15` on phoenix-ep63 (451 entries, 6,765 records). The monster skill table fits the same variant on each of these clients. The numbers are the measured rows of the [version matrix](../version-matrix.md).
+`skill-3` was derived from the client's own table loader and checked against the whole file on US EP4.5 (patch 108, 326 entries, 978 records), ru-ep3 (882 records) and ru-ep45 (978). `skill-9` was derived and checked the same way on fr-ep54 (372 entries, 3,348 records) and `skill-15` on phoenix-ep63 (451 entries, 6,765 records). The monster skill table (`NpcSkill`) was only measured: the same variant reads its file on each of these clients (the `auto` row of the version matrix counts it as a skill table), but its loader was not read and no field meaning is claimed for it. The numbers are the measured rows of the [version matrix](../version-matrix.md).
 
 ## Other episodes
 

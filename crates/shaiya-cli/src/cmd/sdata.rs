@@ -440,7 +440,7 @@ fn table(ctx: &Ctx, a: &TableArgs) -> Result<i32> {
         }
         note(ctx, &format!("{}: {} rows, {} columns -> {}", shown.name, num(shown.rows.len() as u64), shown.columns.len(), out_path.display()));
         if ctx.json {
-            print_json(&json!({"layout": t.layout.variant, "table": t.layout.table.name(), "section": shown.name, "rows": shown.rows.len(), "columns": shown.columns.len(), "out": out_path.display().to_string()}));
+            print_json(&json!({"layout": t.layout.variant, "table": t.layout.table.name(), "chosen_by": "fit", "section": shown.name, "rows": shown.rows.len(), "columns": shown.columns.len(), "out": out_path.display().to_string()}));
         }
         return Ok(0);
     }
@@ -450,6 +450,7 @@ fn table(ctx: &Ctx, a: &TableArgs) -> Result<i32> {
     }
     let mut w = out();
     outln!(w, "{name}: layout {} ({}), names read as {}", t.layout.variant, t.layout.table.name(), shaiya_sdata::encoding_name(enc));
+    outln!(w, "  The layout was {}", shaiya_sdata::FIT_NOTE);
     for s in &t.sheets {
         if sheet.is_some_and(|x| !std::ptr::eq(x, s)) {
             continue;

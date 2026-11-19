@@ -1329,6 +1329,7 @@ fn the_table_view_opens_on_an_encrypted_item_file_and_filters() {
     let t = w.h.text().to_string();
     assert!(t.contains("SData table: Item.SData"), "{t}");
     assert!(t.contains("Layout item-81") && t.contains("Read only"), "{t}");
+    assert!(t.contains("chosen because it reads the whole file") && t.contains("checked against the game's own loader only on the clients listed as verified"), "{t}");
     assert!(t.contains("3 rows") && t.contains("Sword") && t.contains("Shield") && t.contains("Axe"), "{t}");
     assert!(t.contains("bank") && t.contains("req_level") && t.contains("Export CSV...") && t.contains("Copy rows") && t.contains("Filter rows"), "{t}");
     {

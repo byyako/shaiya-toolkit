@@ -345,7 +345,7 @@ impl TableView {
                 export = true;
             }
         });
-        ui.label(RichText::new(format!("Layout {layout}. Read only; the file is not changed.")).color(pal.weak));
+        ui.label(RichText::new(format!("Layout {layout}, {} Read only; the file is not changed.", shaiya_sdata::FIT_NOTE)).color(pal.weak));
         if let Some(i) = new_sheet {
             self.sheet = i;
         }

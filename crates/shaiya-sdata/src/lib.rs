@@ -3,8 +3,8 @@
 //! plaintext to the last byte with plausible counts. [`Hint::Auto`] tries every layout and takes the only one that fits; no fit, or
 //! more than one, is [`NoFit`] and the caller shows the file raw.
 //!
-//! Layout facts were derived from the clients' own loaders and checked on real files; which clients each variant was checked on is
-//! in `docs/version-matrix.md`. Field names are `f<offset>` unless the meaning is known.
+//! Layout facts were derived from the loaders of the clients listed as verified in `docs/version-matrix.md` and checked on real
+//! files; which clients each variant was checked on is in the same file. Field names are `f<offset>` unless the meaning is known.
 
 mod csv;
 mod engine;
@@ -12,6 +12,9 @@ pub mod layout;
 
 pub use csv::{csv, csv_rows, csv_text};
 pub use layout::{ColKind, Column, Layout, TableKind};
+
+/// What every table view says about how its layout was chosen: by fit, not by the client's own loader, except on the verified clients.
+pub const FIT_NOTE: &str = "chosen because it reads the whole file. It was checked against the game's own loader only on the clients listed as verified in the version matrix.";
 
 use shaiya_core::text::Encoding;
 use shaiya_core::Error;
@@ -104,7 +107,7 @@ impl Table {
                 })
             })
             .collect();
-        json!({"layout": self.layout.variant, "table": self.layout.table.name(), "sheets": sheets})
+        json!({"layout": self.layout.variant, "table": self.layout.table.name(), "chosen_by": "fit", "sheets": sheets})
     }
 }
 
