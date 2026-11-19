@@ -284,3 +284,17 @@ fn the_table_hint_names() {
     assert_eq!(shaiya_sdata::encoding_by_name("CP949"), Some(Encoding::Cp949));
     assert_eq!(shaiya_sdata::encoding_name(Encoding::Utf8), "utf-8");
 }
+
+#[test]
+fn implausible_counts_do_not_fit() {
+    // 256 banks: the loader keeps one byte of the bank count, so no Item layout accepts it
+    let mut v = 256u32.to_le_bytes().to_vec();
+    v.extend(std::iter::repeat_n(0u8, 256 * 4));
+    let e = read(&v, Hint::Table(TableKind::Item), Encoding::Cp949).unwrap_err();
+    assert!(e.tried.iter().all(|(_, _, why)| why.contains("not plausible")), "{:?}", e.tried);
+    // a count that cannot fit in the bytes left
+    let mut v = 3u32.to_le_bytes().to_vec();
+    v.extend_from_slice(&[0u8; 8]);
+    let e = read(&v, Hint::Table(TableKind::Monster), Encoding::Cp949).unwrap_err();
+    assert!(e.tried[0].2.contains("does not fit"), "{:?}", e.tried);
+}

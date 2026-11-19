@@ -23,6 +23,7 @@ shaiya-patch = { workspace = true }
 shaiya-seed = { workspace = true }
 shaiya-inspect = { workspace = true }
 shaiya-clientdata = { workspace = true }
+shaiya-sdata = { workspace = true }
 shaiya-ui = { workspace = true }
 egui = { workspace = true }
 serde = { workspace = true }

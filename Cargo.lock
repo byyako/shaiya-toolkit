@@ -2791,6 +2791,7 @@ dependencies = [
  "shaiya-core",
  "shaiya-inspect",
  "shaiya-patch",
+ "shaiya-sdata",
  "shaiya-seed",
  "shaiya-testkit",
  "shaiya-ui",

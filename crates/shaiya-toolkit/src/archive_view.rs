@@ -440,6 +440,8 @@ pub struct ArchiveView {
     saved_new: Option<TaskHandle<EditReport>>,
     want_search_focus: bool,
     want_goto_focus: bool,
+    /// Set by the SData preview's View table button: (the entry's path, the file as stored). The app opens the table window.
+    pub table_request: Option<(String, Vec<u8>)>,
     pub status_line: String,
     /// Set when the last change finished (for tests and the Apply tab to reload its history).
     pub changed_counter: u64,
@@ -515,6 +517,7 @@ impl ArchiveView {
             saved_new: None,
             want_search_focus: false,
             want_goto_focus: false,
+            table_request: None,
             status_line: String::new(),
             changed_counter: 0,
         }
@@ -2146,6 +2149,9 @@ impl ArchiveView {
                     ui.checkbox(&mut self.preview.plain_view, "Show plaintext");
                     if summary.encrypted && ui.button("Decrypt to file...").clicked() {
                         acts.push(Act::DecryptTo(row));
+                    }
+                    if ui.button("View table").on_hover_text("Show the file as rows and columns when a table layout fits it").clicked() {
+                        self.table_request = Some((r.path.to_string(), raw.clone()));
                     }
                 });
                 let bytes = if self.preview.plain_view { plain } else { raw };

@@ -92,6 +92,21 @@ fn run_all(inputs: &Inputs, action: Action, out: Option<&Path>, existing: Existi
     Ok(rows)
 }
 
+/// Reads the bytes of one listed file from the source it came from (the table view's loader).
+fn read_row(inputs: &Inputs, source: &str, name: &str) -> Result<Vec<u8>> {
+    match source {
+        "file" => FolderSource::new(&inputs.files, &Filter::default())?.read(name),
+        "folder" => FolderSource::new(&inputs.dirs, &sdata_filter())?.read(name),
+        _ => {
+            let a = inputs.archive.as_ref().ok_or_else(|| Error::Refused("Open a client with a data.saf first".to_string()))?;
+            ArchiveSource { archive: a, filter: sdata_filter(), include_shadowed: false }.read(name)
+        }
+    }
+}
+
+/// What the View table button asks the app for: the file's name and a loader for its bytes.
+pub type TableRequest = (String, crate::sdata_table::Loader);
+
 struct Request {
     action: Action,
     out: PathBuf,
@@ -116,6 +131,10 @@ pub struct SDataTab {
     pub like_originals: bool,
     pub like_folder: String,
     pub message: Vec<String>,
+    /// The listed row the View table button works on.
+    pub selected: Option<usize>,
+    /// Set by View table (or a double click); the app opens the table window.
+    pub table_request: Option<TableRequest>,
 }
 
 impl Default for SDataTab {
@@ -126,7 +145,7 @@ impl Default for SDataTab {
 
 impl SDataTab {
     pub fn new() -> SDataTab {
-        SDataTab { files: Vec::new(), dirs: Vec::new(), from_client: false, rows: Vec::new(), list: None, list_stamp: String::new(), listing_error: None, flow: Flow::Idle, like_originals: false, like_folder: String::new(), message: Vec::new() }
+        SDataTab { files: Vec::new(), dirs: Vec::new(), from_client: false, rows: Vec::new(), list: None, list_stamp: String::new(), listing_error: None, flow: Flow::Idle, like_originals: false, like_folder: String::new(), message: Vec::new(), selected: None, table_request: None }
     }
 
     pub fn add_paths(&mut self, paths: Vec<PathBuf>) {
@@ -144,7 +163,22 @@ impl SDataTab {
         self.dirs.clear();
         self.from_client = false;
         self.rows.clear();
+        self.selected = None;
         self.list_stamp.clear();
+    }
+
+    /// Selects a listed row (the one View table opens).
+    pub fn select(&mut self, row: usize) {
+        self.selected = (row < self.rows.len()).then_some(row);
+    }
+
+    /// Asks for the table view of the selected row. False when no row is selected.
+    pub fn view_selected(&mut self, archive: &ArchiveView) -> bool {
+        let Some(r) = self.selected.and_then(|i| self.rows.get(i)) else { return false };
+        let (inputs, source, name) = (self.inputs(archive), r.source.clone(), r.item.name.clone());
+        let title = name.clone();
+        self.table_request = Some((title, Box::new(move |_| read_row(&inputs, &source, &name))));
+        true
     }
 
     pub fn is_busy(&self) -> bool {
@@ -288,6 +322,7 @@ impl SDataTab {
         let mut client = false;
         let mut clear = false;
         let mut act: Option<Action> = None;
+        let mut view = false;
         ui.horizontal_wrapped(|ui| {
             if ui.button("Add files...").clicked() {
                 add_files = true;
@@ -320,6 +355,9 @@ impl SDataTab {
             if ui.add_enabled(ready, egui::Button::new("Encrypt to folder...")).clicked() {
                 act = Some(Action::Encrypt);
             }
+            if ui.add_enabled(self.selected.is_some() && !self.is_busy(), egui::Button::new("View table")).on_hover_text("Select a file in the list first. Shows Item, Skill, Monster and NpcQuest files as a table; read only").clicked() {
+                view = true;
+            }
             ui.checkbox(&mut self.like_originals, "Match the originals' headers");
             if self.like_originals {
                 ui.label("originals from");
@@ -342,9 +380,15 @@ impl SDataTab {
                 }
                 ui.end_row();
             }
-            for r in &self.rows {
+            for (n, r) in self.rows.iter().enumerate() {
                 let i = &r.item;
-                ui.label(&i.name);
+                let resp = ui.selectable_label(self.selected == Some(n), &i.name);
+                if resp.clicked() {
+                    self.selected = Some(n);
+                }
+                if resp.double_clicked() {
+                    view = true;
+                }
                 ui.label(&r.source);
                 let encrypted = i.crc.is_some();
                 if i.status == Status::Failed {
@@ -365,6 +409,9 @@ impl SDataTab {
                 ui.end_row();
             }
         });
+        if view {
+            self.view_selected(archive);
+        }
         if add_files {
             let f = cx.shell.pick_files("sdata-files", &[("SData files", &["sdata"]), ("All files", &["*"])]);
             self.add_paths(f);

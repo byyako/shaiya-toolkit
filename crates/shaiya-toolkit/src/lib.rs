@@ -12,6 +12,7 @@ pub mod patch_builder;
 pub mod preview;
 pub mod publish_form;
 pub mod sdata_tab;
+pub mod sdata_table;
 pub mod sign_tab;
 pub mod start;
 
@@ -24,6 +25,7 @@ use inspect::InspectTab;
 use keys::KeyForm;
 use patch_builder::{PatchBuilder, PatchRequest};
 use sdata_tab::SDataTab;
+use sdata_table::TableView as SDataTableView;
 use sign_tab::{Section, SignTab};
 use serde::{Deserialize, Serialize};
 use shaiya_ui::{AppInfo, Command, Confirm, Cx, Menu, ToolApp};
@@ -148,6 +150,8 @@ pub struct ToolkitApp {
     ini_stamp: Option<(PathBuf, u64)>,
     folder_prompt: Option<FolderPrompt>,
     was_focused: bool,
+    /// The SData table window, when one is open.
+    pub table: Option<SDataTableView>,
 }
 
 type ToolkitCx<'a> = Cx<'a, ToolkitSettings>;
@@ -226,6 +230,11 @@ impl ToolkitApp {
             cur.current_version = v;
             self.ini_stamp = Some(stamp);
         }
+    }
+
+    /// Opens the SData table window for a file (read on a worker thread). A window that is already open is replaced.
+    pub fn open_table(&mut self, title: String, input: sdata_table::Input, cx: &mut ToolkitCx<'_>) {
+        self.table = Some(SDataTableView::open(title, input, cx));
     }
 
     /// What a Start page button does.
@@ -505,6 +514,7 @@ impl ToolApp for ToolkitApp {
             ini_stamp: None,
             folder_prompt: None,
             was_focused: true,
+            table: None,
         };
         app.archive.show_shadowed = cx.settings.show_shadowed;
         // the last used client opens at start, as a task; a client whose folder is gone is not opened
@@ -565,6 +575,17 @@ impl ToolApp for ToolkitApp {
             }
         }
         self.folder_prompt_ui(cx);
+        if let Some((title, bytes)) = self.archive.table_request.take() {
+            self.open_table(title, sdata_table::Input::Bytes(bytes), cx);
+        }
+        if let Some((title, loader)) = self.sdata.table_request.take() {
+            self.open_table(title, sdata_table::Input::Load(loader), cx);
+        }
+        if let Some(t) = &mut self.table {
+            if !t.ui(&ctx, cx) {
+                self.table = None;
+            }
+        }
         self.handle_requests(requests, cx);
         self.handle_patch_requests(patch_requests, cx);
     }

@@ -65,6 +65,13 @@ pub fn start_jobs() -> Vec<StartJob> {
             button: "Open Apply & history",
             action: StartAction::Go(Tab::Apply),
         },
+        StartJob {
+            key: "sdata-tables",
+            title: "Look at SData tables",
+            line: "Open Item, Skill, Monster and NpcQuest files as tables you can filter and export as CSV. Read only.",
+            button: "Open SData",
+            action: StartAction::Go(Tab::SData),
+        },
     ]
 }
 

@@ -748,17 +748,20 @@ fn the_start_page_lists_the_jobs_and_its_buttons_open_the_right_place() {
     let t = h.text().to_string();
     assert!(t.contains("Start") && t.contains("Choose a client folder in the toolbar"), "{t}");
     assert!(t.contains("These tools work on your own copy of the game"), "the own-copy statement stays: {t}");
-    // later work packages add their rows here (Look at SData tables)
+    // later work packages add their rows here
     let keys: Vec<&str> = shaiya_toolkit::start::start_jobs().iter().map(|j| j.key).collect();
-    assert_eq!(keys, ["add-client", "change-files", "make-patch", "publish-patch", "apply-patches"]);
+    assert_eq!(keys, ["add-client", "change-files", "make-patch", "publish-patch", "apply-patches", "sdata-tables"]);
     for j in shaiya_toolkit::start::start_jobs() {
         assert!(t.contains(j.title) && t.contains(j.button), "{} is drawn: {t}", j.key);
     }
-    assert!(!t.contains("SData tables"), "rows of jobs that have not shipped are absent: {t}");
     with_cx(&mut h, |app, cx| app.run_start(shaiya_toolkit::start::StartAction::Go(Tab::Patch), cx));
     assert_eq!(h.app.app.tab, Tab::Patch);
     with_cx(&mut h, |app, cx| app.run_start(shaiya_toolkit::start::StartAction::Go(Tab::Apply), cx));
     assert_eq!(h.app.app.tab, Tab::Apply);
+    assert!(t.contains("Look at SData tables"), "{t}");
+    h.frames(1);
+    with_cx(&mut h, |app, cx| app.run_start(shaiya_toolkit::start::StartAction::Go(Tab::SData), cx));
+    assert_eq!(h.app.app.tab, Tab::SData);
 }
 
 #[test]
@@ -1277,4 +1280,138 @@ fn the_patch_builder_leaves_out_files_that_are_already_the_same_in_the_client() 
     w.h.frames(3);
     assert_eq!(w.h.app.app.patch.input().files.len(), 3);
     assert!(skipped(&w.h).is_empty());
+}
+
+// ------------------------------------------------------------------------------------------------ T7 W7: SData table view
+
+fn put_u32(v: &mut Vec<u8>, n: u32) {
+    v.extend_from_slice(&n.to_le_bytes());
+}
+
+type Rec<'a> = (&'a [u8], &'a [u8], u8);
+
+/// An Item table: two banks, three records (name, description, 81-byte block of the first byte = seed).
+fn item_table() -> Vec<u8> {
+    let mut v = Vec::new();
+    put_u32(&mut v, 2);
+    let banks: [&[Rec]; 2] = [&[(b"Sword", b"A sharp sword", 1), (b"Shield", b"Round", 2)], &[(b"Axe", b"Heavy axe", 3)]];
+    for bank in banks {
+        put_u32(&mut v, bank.len() as u32);
+        for (name, desc, seed) in bank {
+            put_u32(&mut v, name.len() as u32);
+            v.extend_from_slice(name);
+            put_u32(&mut v, desc.len() as u32);
+            v.extend_from_slice(desc);
+            v.extend((0..81).map(|i| seed + i as u8));
+        }
+    }
+    v
+}
+
+fn open_table_of(w: &mut World, name: &str, bytes: &[u8]) {
+    go(&mut w.h, Tab::SData);
+    let src = TempDir::new(&format!("t7w7-{name}"));
+    std::fs::write(src.path().join(name), bytes).unwrap();
+    w.h.drop_files(&[src.path().to_path_buf()]);
+    assert!(w.h.wait_until(WAIT, |h| h.app.app.sdata.row_count() == 1), "the file is listed");
+    w.h.frames(2);
+    with_cx(&mut w.h, |app, _| app.sdata.select(0));
+    with_cx(&mut w.h, |app, _| assert!(app.sdata.view_selected(&app.archive)));
+    w.h.frames(2);
+    assert!(w.h.wait_until(WAIT, |h| h.app.app.table.as_ref().is_some_and(|t| !t.is_loading())), "the table is read");
+    w.h.frames(2);
+}
+
+#[test]
+fn the_table_view_opens_on_an_encrypted_item_file_and_filters() {
+    let mut w = open_world("t7w7-table");
+    open_table_of(&mut w, "Item.SData", &shaiya_seed::encrypt(&item_table()));
+    let t = w.h.text().to_string();
+    assert!(t.contains("SData table: Item.SData"), "{t}");
+    assert!(t.contains("Layout item-81") && t.contains("Read only"), "{t}");
+    assert!(t.contains("3 rows") && t.contains("Sword") && t.contains("Shield") && t.contains("Axe"), "{t}");
+    assert!(t.contains("bank") && t.contains("req_level") && t.contains("Export CSV...") && t.contains("Copy rows") && t.contains("Filter rows"), "{t}");
+    {
+        let v = w.h.app.app.table.as_ref().unwrap();
+        assert!(v.is_table() && (v.row_count(), v.shown_count()) == (3, 3));
+    }
+    // the filter: words are ANDed, any case
+    with_cx(&mut w.h, |app, _| app.table.as_mut().unwrap().set_filter("AXE"));
+    w.h.frames(2);
+    let t = w.h.text().to_string();
+    assert!(t.contains("1 of 3 rows") && t.contains("Axe") && !t.contains("Sword") && !t.contains("Shield"), "{t}");
+    with_cx(&mut w.h, |app, _| app.table.as_mut().unwrap().set_filter("sword sharp"));
+    assert_eq!(w.h.app.app.table.as_ref().unwrap().shown_count(), 1);
+    with_cx(&mut w.h, |app, _| app.table.as_mut().unwrap().set_filter("sword heavy"));
+    assert_eq!(w.h.app.app.table.as_ref().unwrap().shown_count(), 0);
+    with_cx(&mut w.h, |app, _| app.table.as_mut().unwrap().set_filter(""));
+    w.h.frames(2);
+    assert_eq!(w.h.app.app.table.as_ref().unwrap().shown_count(), 3);
+    // Copy rows: header and rows, tab separated; Export CSV: the shown rows
+    with_cx(&mut w.h, |app, _| app.table.as_mut().unwrap().set_filter("shield"));
+    let tsv = w.h.app.app.table.as_ref().unwrap().rows_tsv();
+    let lines: Vec<&str> = tsv.lines().collect();
+    assert_eq!(lines.len(), 2, "{tsv}");
+    assert!(lines[0].starts_with("bank\tname\tdescription\ttype\t") && lines[1].starts_with("0\tShield\tRound\t2\t"), "{tsv}");
+    let out = TempDir::new("t7w7-csv");
+    let csv = out.path().join("items.csv");
+    assert_eq!(w.h.app.app.table.as_ref().unwrap().export_csv(&csv).unwrap(), 1);
+    let text = std::fs::read_to_string(&csv).unwrap();
+    assert!(text.starts_with('\u{feff}') && text.contains("\r\n") && text.contains("0,Shield,Round,2,"), "{text}");
+    // closing the window
+    w.h.app.app.table = None;
+    w.h.frames(2);
+    assert!(!w.h.text().contains("SData table:"));
+}
+
+#[test]
+fn a_file_no_layout_fits_is_shown_as_hex_with_the_sentence() {
+    let mut w = open_world("t7w7-hex");
+    let plain = b"This is only text, so no table layout can read it.".to_vec();
+    open_table_of(&mut w, "Other.SData", &shaiya_seed::encrypt(&plain));
+    let t = w.h.text().to_string();
+    assert!(t.contains(&format!("No table layout fits this file ({} bytes); shown as hex", plain.len())), "{t}");
+    assert!(t.contains("00000000  54 68 69 73"), "the hex rows show the plaintext: {t}");
+    let v = w.h.app.app.table.as_ref().unwrap();
+    assert!(!v.is_table() && v.raw_message().is_some());
+}
+
+#[test]
+fn a_changed_code_page_reads_the_names_again() {
+    let mut w = open_world("t7w7-cp");
+    let mut table = item_table();
+    // the first record's name "Sword" becomes two cp949 bytes of one Korean syllable (same length keeps the layout intact)
+    let at = table.windows(5).position(|x| x == b"Sword").unwrap();
+    table[at..at + 5].copy_from_slice(&[0xB0, 0xCB, b'x', b'y', b'z']);
+    open_table_of(&mut w, "Item.SData", &table);
+    let hangul = shaiya_core::text::Encoding::Cp949.decode(&[0xB0, 0xCB]).0;
+    assert!(w.h.app.app.table.as_ref().unwrap().rows_tsv().contains(&format!("{hangul}xyz")));
+    with_cx(&mut w.h, |app, cx| app.table.as_mut().unwrap().set_encoding(shaiya_core::text::Encoding::Cp1252, cx));
+    assert!(w.h.wait_until(WAIT, |h| h.app.app.table.as_ref().is_some_and(|t| !t.is_loading())));
+    let tsv = w.h.app.app.table.as_ref().unwrap().rows_tsv();
+    assert!(tsv.contains("\u{B0}\u{CB}xyz") && !tsv.contains(&hangul), "{tsv}");
+}
+
+#[test]
+fn the_archive_preview_has_a_view_table_button_and_the_table_opens_from_the_client() {
+    let mut w = open_world("t7w7-archive");
+    with_cx(&mut w.h, |app, cx| app.archive.select_path("Item/Item.SData", cx));
+    assert!(preview_ready(&mut w.h));
+    w.h.frames(2);
+    assert!(w.h.text().contains("View table"), "{}", w.h.text());
+    // what the button does: it hands the file to the app, which opens the window (the fixture's Item.SData is not a table)
+    let raw = shaiya_seed::encrypt(&item_table());
+    w.h.app.app.archive.table_request = Some(("Item/Item.SData".to_string(), raw));
+    w.h.frames(2);
+    assert!(w.h.app.app.archive.table_request.is_none());
+    assert!(w.h.wait_until(WAIT, |h| h.app.app.table.as_ref().is_some_and(|t| t.is_table())));
+    // the SData tab lists the client's files and reads one from the archive
+    go(&mut w.h, Tab::SData);
+    w.h.app.app.sdata.from_client = true;
+    assert!(w.h.wait_until(WAIT, |h| h.app.app.sdata.row_count() == 1));
+    with_cx(&mut w.h, |app, _| app.sdata.select(0));
+    with_cx(&mut w.h, |app, _| assert!(app.sdata.view_selected(&app.archive)));
+    w.h.frames(2);
+    assert!(w.h.wait_until(WAIT, |h| h.app.app.table.as_ref().is_some_and(|t| !t.is_loading() && !t.is_table())), "the fixture's Item.SData is no table: hex");
+    assert!(w.h.app.app.table.as_ref().unwrap().raw_message().unwrap().contains("No table layout fits this file (21 bytes); shown as hex"));
 }
