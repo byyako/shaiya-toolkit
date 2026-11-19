@@ -13,6 +13,8 @@ pub enum StartAction {
     OpenArchive,
     /// Switch to a tab.
     Go(Tab),
+    /// The Patch builder with its "Publish for the regular updater" section open.
+    Publish,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -48,6 +50,13 @@ pub fn start_jobs() -> Vec<StartJob> {
             line: "Pack changed files, or the differences between two archives, into a .patch file.",
             button: "Open Patch builder",
             action: StartAction::Go(Tab::Patch),
+        },
+        StartJob {
+            key: "publish-patch",
+            title: "Publish a patch",
+            line: "Copy patches into a server folder and raise PatchFileVersion in UpdateVersion.ini, for the original updater.",
+            button: "Open Publish",
+            action: StartAction::Publish,
         },
         StartJob {
             key: "apply-patches",

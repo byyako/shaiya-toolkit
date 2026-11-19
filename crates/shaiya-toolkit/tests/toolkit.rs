@@ -748,13 +748,13 @@ fn the_start_page_lists_the_jobs_and_its_buttons_open_the_right_place() {
     let t = h.text().to_string();
     assert!(t.contains("Start") && t.contains("Choose a client folder in the toolbar"), "{t}");
     assert!(t.contains("These tools work on your own copy of the game"), "the own-copy statement stays: {t}");
-    // later work packages add their rows here (Publish a patch, Look at SData tables)
+    // later work packages add their rows here (Look at SData tables)
     let keys: Vec<&str> = shaiya_toolkit::start::start_jobs().iter().map(|j| j.key).collect();
-    assert_eq!(keys, ["add-client", "change-files", "make-patch", "apply-patches"]);
+    assert_eq!(keys, ["add-client", "change-files", "make-patch", "publish-patch", "apply-patches"]);
     for j in shaiya_toolkit::start::start_jobs() {
         assert!(t.contains(j.title) && t.contains(j.button), "{} is drawn: {t}", j.key);
     }
-    assert!(!t.contains("Publish a patch") && !t.contains("SData tables"), "rows of jobs that have not shipped are absent: {t}");
+    assert!(!t.contains("SData tables"), "rows of jobs that have not shipped are absent: {t}");
     with_cx(&mut h, |app, cx| app.run_start(shaiya_toolkit::start::StartAction::Go(Tab::Patch), cx));
     assert_eq!(h.app.app.tab, Tab::Patch);
     with_cx(&mut h, |app, cx| app.run_start(shaiya_toolkit::start::StartAction::Go(Tab::Apply), cx));
@@ -1063,4 +1063,126 @@ fn the_patch_builder_lists_checks_and_asks_before_building_a_broken_file() {
     w.h.app.app.patch.out_name = "ps0002.patch".into();
     with_cx(&mut w.h, |app, cx| app.patch.begin_build(&app.keys, cx));
     assert!(w.h.wait_until(WAIT, |h| out_dir.path().join("ps0002.patch").exists() && h.app.app.patch.last_out.as_ref().is_some_and(|p| p.ends_with("ps0002.patch"))), "a warning does not ask");
+}
+
+
+// ------------------------------------------------------------------------------------------------ T7 W5: Publish for the regular updater
+
+/// `ps<number>.patch` in a new folder, holding one archive file with `content`.
+fn publish_patch(base: &std::path::Path, number: u32, name: &str, content: &[u8]) -> PathBuf {
+    let files = base.join(format!("files-{number}"));
+    std::fs::create_dir_all(files.join("data")).unwrap();
+    std::fs::write(files.join("data").join(name), content).unwrap();
+    let out = base.join(format!("ps{number:04}.patch"));
+    shaiya_patch::build(Some(&files), None, None, &out).unwrap();
+    out
+}
+
+fn plan_form(w: &mut World, patches: Vec<PathBuf>, dest: &std::path::Path) {
+    let f = &mut w.h.app.app.patch.publish;
+    f.patches = patches;
+    f.dest = dest.display().to_string();
+    f.check_version = "3".into();
+    with_cx(&mut w.h, |app, cx| {
+        let dirs = shaiya_toolkit::publish_form::client_dirs(cx);
+        app.patch.publish.request_plan(dirs, cx)
+    });
+}
+
+#[test]
+fn the_start_page_publish_button_opens_the_section_in_the_patch_builder() {
+    let mut h = Harness::<ToolkitApp>::bare();
+    h.frames(3);
+    assert!(h.text().contains("Publish a patch") && h.text().contains("Open Publish"), "{}", h.text());
+    with_cx(&mut h, |app, cx| app.run_start(shaiya_toolkit::start::StartAction::Publish, cx));
+    h.frames(3);
+    assert_eq!(h.app.app.tab, Tab::Patch);
+    let t = h.text().to_string();
+    assert!(t.contains("Publish for the regular updater") && t.contains("Add patches...") && t.contains("Check the plan"), "the section is open: {t}");
+}
+
+#[test]
+fn publishing_shows_the_plan_asks_with_four_rows_and_writes_after_the_answer() {
+    let mut w = open_world("t7-publish");
+    let src = TempDir::new("t7-publish-src");
+    let server = TempDir::new("t7-publish-server");
+    let dest = server.path().join("web");
+    let patch = publish_patch(src.path(), 110, "notes.txt", b"hello");
+    go(&mut w.h, Tab::Patch);
+    w.h.app.app.patch.publish.open();
+    plan_form(&mut w, vec![patch.clone()], &dest);
+    assert!(w.h.wait_until(WAIT, |h| h.app.app.patch.publish.plan().is_some()), "the plan is made");
+    w.h.frames(2);
+    let t = w.h.text().to_string();
+    assert!(t.contains("ps0110.patch") && t.contains("new") && t.contains("PatchFileVersion new file -> 110"), "{t}");
+    assert!(!dest.exists(), "planning writes nothing");
+    // Publish asks; Cancel writes nothing
+    w.h.app.app.patch.publish.begin_publish();
+    w.h.frames(3);
+    let t = w.h.text().to_string();
+    for label in ["Changes", "Writes", "Undo", "Game"] {
+        assert!(t.contains(label), "the {label} row: {t}");
+    }
+    assert!(t.contains("copies 1 file") && t.contains("creates UpdateVersion.ini with CheckVersion 3") && t.contains("no undo"), "{t}");
+    w.h.app.shell.inject_answer("toolkit-publish", 1);
+    w.h.frames(3);
+    assert!(!dest.exists(), "Cancel wrote nothing");
+    // Publish writes the patch and the ini and reads them back
+    w.h.app.app.patch.publish.begin_publish();
+    w.h.frames(3);
+    w.h.app.shell.inject_answer("toolkit-publish", 0);
+    assert!(w.h.wait_until(WAIT, |h| !h.app.app.patch.publish.result.is_empty()), "the publish finishes");
+    assert_eq!(std::fs::read(dest.join("Shaiya/patch/ps0110.patch")).unwrap(), std::fs::read(&patch).unwrap());
+    assert_eq!(std::fs::read(dest.join("Shaiya/UpdateVersion.ini")).unwrap(), b"[Version]\r\nCheckVersion=3\r\nUpdaterVersion=1\r\nPatchFileVersion=110\r\n");
+    assert!(w.h.app.app.patch.publish.result[0].contains("read back"), "{:?}", w.h.app.app.patch.publish.result);
+    // the client folder was not touched: no Shaiya folder, no extra file
+    assert!(!w.client_dir().join("Shaiya").exists());
+}
+
+#[test]
+fn publishing_into_a_saved_client_is_refused_in_the_plan() {
+    let mut w = open_world("t7-publish-client");
+    let src = TempDir::new("t7-publish-client-src");
+    let patch = publish_patch(src.path(), 1, "a.txt", b"a");
+    let inside = w.client_dir().join("web");
+    go(&mut w.h, Tab::Patch);
+    w.h.app.app.patch.publish.open();
+    plan_form(&mut w, vec![patch], &inside);
+    assert!(w.h.wait_until(WAIT, |h| h.app.app.patch.publish.refusal().is_some()), "the plan is refused");
+    w.h.frames(2);
+    assert!(w.h.app.app.patch.publish.refusal().unwrap().contains("client folder"));
+    assert!(w.h.text().contains("Refused:"), "{}", w.h.text());
+    assert!(w.h.app.app.patch.publish.publish_blocked().is_some());
+    w.h.app.app.patch.publish.begin_publish();
+    w.h.frames(3);
+    assert!(!inside.exists(), "nothing was created in the client folder");
+}
+
+#[test]
+fn a_double_encrypted_file_in_a_patch_asks_once_before_publishing() {
+    let mut w = open_world("t7-publish-asks");
+    let src = TempDir::new("t7-publish-asks-src");
+    let server = TempDir::new("t7-publish-asks-server");
+    let dest = server.path().join("web");
+    let patch = publish_patch(src.path(), 7, "Twice.SData", &shaiya_seed::encrypt(&shaiya_seed::encrypt(b"table table table")));
+    go(&mut w.h, Tab::Patch);
+    w.h.app.app.patch.publish.open();
+    plan_form(&mut w, vec![patch], &dest);
+    assert!(w.h.wait_until(WAIT, |h| h.app.app.patch.publish.plan().is_some()));
+    assert_eq!(finding_codes(&w.h.app.app.patch.publish.plan().unwrap().findings), ["sdata-double-encrypted"]);
+    w.h.app.app.patch.publish.begin_publish();
+    w.h.frames(3);
+    assert!(w.h.text().contains("Publish anyway") && w.h.text().contains("sdata-double-encrypted"), "{}", w.h.text());
+    w.h.app.shell.inject_answer("toolkit-publish-findings", 1);
+    w.h.frames(3);
+    assert!(!dest.exists(), "Cancel at the question wrote nothing");
+    // Publish anyway leads to the confirmation, which still has to be answered
+    w.h.app.app.patch.publish.begin_publish();
+    w.h.frames(3);
+    w.h.app.shell.inject_answer("toolkit-publish-findings", 0);
+    w.h.frames(3);
+    assert!(w.h.text().contains("Publish for the regular updater") && !dest.exists(), "{}", w.h.text());
+    w.h.app.shell.inject_answer("toolkit-publish", 0);
+    assert!(w.h.wait_until(WAIT, |h| !h.app.app.patch.publish.result.is_empty()));
+    assert!(dest.join("Shaiya/patch/ps0007.patch").is_file());
 }

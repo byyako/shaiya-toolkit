@@ -92,7 +92,20 @@ To test several patches in order, give them all to one command: `shaiya patch ap
 
 ## 6. Publish
 
-Upload `psNNNN.patch` (and `psNNNN.patch.sig` if you use signatures) to your patch server the way your updater expects, and raise the server's version number so it hands out the new patch. This toolkit does not upload anything and has no network code. Keep the exact files you published; if you need to prove which bytes went out, `shaiya info --hash ps0110.patch` prints the SHA-256.
+For the original updater a patch is published by two things on the web server: the file `Shaiya/patch/psNNNN.patch` and a higher `PatchFileVersion` in `Shaiya/UpdateVersion.ini` ([the files](../formats/version-ini.md)). `shaiya patch publish` prepares both in a folder, which you then upload the way you always do. The toolkit has no network code and uploads nothing.
+
+```
+shaiya patch publish ps0110.patch --to server-files --check-version 3 --dry-run
+shaiya patch publish ps0110.patch --to server-files --check-version 3
+```
+
+- The first line shows the plan and writes nothing. The second copies `ps0110.patch` to `server-files/Shaiya/patch/`, raises `PatchFileVersion` in `server-files/Shaiya/UpdateVersion.ini` (a new file gets `CheckVersion`, `UpdaterVersion` 1 and the number) and reads every written file back. `--layout flat` puts the ini and the patches in the folder itself; `--updater-version N` sets `UpdaterVersion`.
+- With an existing `UpdateVersion.ini` in the folder, `--check-version` can be left out: the file's value is kept. A different value is refused unless you add `--new-check-version`, because every player's updater then tells them to reinstall the game.
+- Give several patches in one go (`ps0110.patch ps0111.patch`); they are published in number order. A number that leaves a gap after `PatchFileVersion` is refused, and so is a different file under a name that is already in the folder: a published patch is never replaced, ship the fix as the next number. Publishing the same file again changes nothing.
+- A destination that is a client folder (a saved client, or a folder with `data.sah` and `data.saf` in or above it) is refused: this writes into a server folder only.
+- Shaiya Toolkit does the same in the Patch builder, section **Publish for the regular updater** (also the Start page's **Publish a patch**): add the patches (or **Use the patch just built**), choose the server folder, **Check the plan**, then **Publish**. The confirmation shows the Changes, Writes, Undo and Game rows; there is no undo, and the Undo row names the ini values you would set back by hand.
+
+Keep the exact files you published; if you need to prove which bytes went out, `shaiya info --hash ps0110.patch` prints the SHA-256. Players on the original updater ignore `remove.txt`, so a patch that only removes files does nothing for them (`publish` warns).
 
 ## Common problems
 

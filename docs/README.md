@@ -39,6 +39,7 @@ US, RU, FR, CN, Phoenix, KR episode 8 and Fawkes v68. What works on which client
 | [version-matrix.md](version-matrix.md) | What parses on which client |
 | [formats/archive.md](formats/archive.md) | `data.sah` / `data.saf`: layout, names, hashing, shadowing, free list, versions 0 and 1, offsets past 4 GiB, compaction |
 | [formats/patch.md](formats/patch.md) | `psNNNN.patch`: ZIP layout, `remove.txt`, loose files and their name rules, deterministic builds, journaled apply, signatures |
+| [formats/version-ini.md](formats/version-ini.md) | `Version.ini` (client) and `UpdateVersion.ini` (patch server): keys, folder layout, what the original updater does, what `patch publish` writes |
 | [formats/sdata-wrapper.md](formats/sdata-wrapper.md) | The SEED wrapper of SData files, CRC, plain files |
 | [formats/svmap.md](formats/svmap.md) | SVMap (`.svmap`): size, blocked bit grid, sections A and B, monster areas, NPCs, portals, bind areas, regions, and the JSON form |
 | [formats/wld.md](formats/wld.md) | World (`.wld`): terrain, placements, sounds, portals, areas, zone groups, the two counts that must be exact |

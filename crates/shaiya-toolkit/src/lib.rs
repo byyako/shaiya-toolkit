@@ -10,6 +10,7 @@ pub mod inspect;
 pub mod keys;
 pub mod patch_builder;
 pub mod preview;
+pub mod publish_form;
 pub mod sdata_tab;
 pub mod sign_tab;
 pub mod start;
@@ -240,6 +241,10 @@ impl ToolkitApp {
                 }
             }
             StartAction::Go(tab) => self.set_tab(tab, cx),
+            StartAction::Publish => {
+                self.patch.publish.open();
+                self.set_tab(Tab::Patch, cx);
+            }
         }
     }
 

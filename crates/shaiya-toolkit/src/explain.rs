@@ -9,6 +9,7 @@ use shaiya_archive::edit::EditReport;
 use shaiya_archive::journal::{self, Journal};
 use shaiya_core::time::human_size;
 use shaiya_inspect::counted;
+use shaiya_patch::publish::{FileState, PublishPlan};
 use shaiya_patch::Plan;
 use std::path::Path;
 
@@ -194,6 +195,53 @@ pub fn swap_rows(files: &ClientFiles, other: &Path) -> Rows {
     rows(changes, writes, undo, game_text(cfg!(windows)))
 }
 
+/// "Publish": `plan` is the plan [`shaiya_patch::publish::publish`] writes (one object feeds both). Publishing writes into a server
+/// folder, never into a client, and makes no backup of the ini: the Undo row says what it was.
+pub fn publish_rows(plan: &PublishPlan) -> Rows {
+    let new: Vec<_> = plan.copies().collect();
+    let new_bytes: u64 = new.iter().map(|f| f.size).sum();
+    let already = plan.items.iter().filter(|i| i.patch.state == FileState::AlreadyPublished).count();
+    let ini_name = name_of(&plan.ini_path);
+    let mut changes = if new.is_empty() { "no file to copy".to_string() } else { format!("copies {} ({})", counted(new.len() as u64, "file", "files"), human_size(new_bytes)) };
+    if already > 0 {
+        changes.push_str(&format!("; {} already there, left alone", counted(already as u64, "patch", "patches")));
+    }
+    match (&plan.ini_before, plan.ini_changed) {
+        (None, _) => changes.push_str(&format!(
+            "; creates {ini_name} with CheckVersion {}, UpdaterVersion {}, PatchFileVersion {}",
+            plan.check_version, plan.updater_version, plan.patch_file_version_after
+        )),
+        (Some(_), true) => changes.push_str(&format!(
+            "; {ini_name}: PatchFileVersion {} -> {}",
+            plan.patch_file_version_before.unwrap_or(0),
+            plan.patch_file_version_after
+        )),
+        (Some(_), false) => changes.push_str(&format!("; {ini_name} stays as it is")),
+    }
+    if plan.check_version_changed {
+        changes.push_str(&format!("; CheckVersion becomes {}: every player is told to reinstall the game", plan.check_version));
+    }
+    if plan.updater_version_changed {
+        changes.push_str(&format!("; UpdaterVersion becomes {}", plan.updater_version));
+    }
+    let rel = |p: &Path| p.strip_prefix(&plan.dir).unwrap_or(p).display().to_string();
+    let mut targets: Vec<String> = new.iter().map(|f| rel(&f.target)).collect();
+    if plan.ini_changed {
+        targets.push(format!("{} ({})", rel(&plan.ini_path), if plan.ini_before.is_some() { "replaced" } else { "new" }));
+    }
+    let writes = format!("in {}: {}; each copy is compared with its original after writing", plan.dir.display(), if targets.is_empty() { "nothing".to_string() } else { listed(&targets) });
+    let undo = match (&plan.ini_before, plan.ini_changed) {
+        (Some(v), true) => format!(
+            "no undo of its own, and no backup: the old {ini_name} had CheckVersion {}, PatchFileVersion {}; delete the copied files and set the ini back by hand. Players who already fetched a patch keep it",
+            v.check_version.unwrap_or(0),
+            v.patch_file_version.unwrap_or(0)
+        ),
+        (None, true) => format!("no undo of its own: delete the copied files and {ini_name} by hand. Players who already fetched a patch keep it"),
+        _ => "no undo needed for the ini; delete the copied files by hand to take them back. Players who already fetched a patch keep it".to_string(),
+    };
+    rows(changes, writes, undo, "not involved: this writes into a server folder, never into a client folder".to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -321,6 +369,37 @@ mod tests {
         assert!(text(&r, "Writes").contains("loses 1, 2"));
         assert!(text(&r, "Undo").starts_with("no undo"));
         assert!(text(&prune_rows(&[], 5), "Writes").starts_with("nothing in"));
+    }
+
+    #[test]
+    fn publish_rows_describe_the_plan_that_is_written() {
+        use shaiya_core::Job;
+        use shaiya_patch::publish::{plan_publish, PublishOptions};
+        let d = TempDir::new("explain-publish");
+        let files = d.path().join("files");
+        std::fs::create_dir_all(&files).unwrap();
+        std::fs::write(files.join("a.txt"), b"hello").unwrap();
+        let patch = d.path().join("ps0110.patch");
+        shaiya_patch::build(Some(&files), None, None, &patch).unwrap();
+        let dest = d.path().join("server");
+        std::fs::create_dir_all(dest.join("Shaiya")).unwrap();
+        std::fs::write(dest.join("Shaiya/UpdateVersion.ini"), b"[Version]\r\nCheckVersion=3\r\nUpdaterVersion=1\r\nPatchFileVersion=109\r\n").unwrap();
+        let plan = plan_publish(std::slice::from_ref(&patch), &dest, &PublishOptions::default(), &Job::silent()).unwrap();
+        let r = publish_rows(&plan);
+        assert_eq!(labels(&r), ["Changes", "Writes", "Undo", "Game"]);
+        let c = text(&r, "Changes");
+        assert!(c.contains("copies 1 file") && c.contains("PatchFileVersion 109 -> 110") && !c.contains("reinstall"), "{c}");
+        let w = text(&r, "Writes");
+        assert!(w.contains("ps0110.patch") && w.contains("UpdateVersion.ini (replaced)"), "{w}");
+        let u = text(&r, "Undo");
+        assert!(u.contains("no backup") && u.contains("PatchFileVersion 109"), "{u}");
+        assert!(text(&r, "Game").contains("never into a client"));
+        // a new ini, and a changed CheckVersion
+        let fresh = plan_publish(std::slice::from_ref(&patch), &d.path().join("fresh"), &PublishOptions { check_version: Some(3), ..Default::default() }, &Job::silent()).unwrap();
+        assert!(text(&publish_rows(&fresh), "Changes").contains("creates UpdateVersion.ini with CheckVersion 3, UpdaterVersion 1, PatchFileVersion 110"));
+        let o = PublishOptions { check_version: Some(4), new_check_version: true, ..Default::default() };
+        let changed = plan_publish(&[patch], &dest, &o, &Job::silent()).unwrap();
+        assert!(text(&publish_rows(&changed), "Changes").contains("every player is told to reinstall the game"));
     }
 
     #[test]

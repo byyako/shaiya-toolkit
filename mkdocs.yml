@@ -76,6 +76,7 @@ nav:
   - Formats:
       - Archive: formats/archive.md
       - Patch: formats/patch.md
+      - Version.ini and UpdateVersion.ini: formats/version-ini.md
       - SData wrapper: formats/sdata-wrapper.md
       - SVMap (.svmap): formats/svmap.md
       - World (.wld): formats/wld.md

@@ -9,7 +9,7 @@ The Shaiya Toolkit repository holds command-line and desktop tools for Shaiya ga
 | Tool | What it does | CLI command | GUI program | Status |
 |---|---|---|---|---|
 | File inspector | Identify a Shaiya file (SAH index, SAF data, SData, patch, game.exe) and show what it is; SHA-256 | `shaiya info` | Shaiya Toolkit (`shaiya-toolkit`) | available |
-| Archive & patches | Browse, extract and edit `data.sah`/`data.saf` with a journal you can roll back; build, sign, verify, apply and roll back `psNNNN.patch`; compare, compact, pack and swap archives | `shaiya archive`, `shaiya patch`, `shaiya clients` | Shaiya Toolkit | available |
+| Archive & patches | Browse, extract and edit `data.sah`/`data.saf` with a journal you can roll back; build, sign, verify, apply and roll back `psNNNN.patch`, publish them for the original updater (`UpdateVersion.ini`); compare, compact, pack and swap archives | `shaiya archive`, `shaiya patch`, `shaiya clients` | Shaiya Toolkit | available |
 | SData container | Describe, check, decrypt and encrypt SData files (the SEED wrapper), byte-identical round trips | `shaiya sdata` | Shaiya Toolkit (SData tab) | available |
 | SData schemas and editor | Read and edit the client's SData tables for each episode | (planned) | Shaiya SData Editor | planned |
 | Packet log decoder | Decode game packet logs | `shaiya log` | Shaiya Log Viewer | planned |

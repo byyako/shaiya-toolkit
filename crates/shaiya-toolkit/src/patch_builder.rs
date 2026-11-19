@@ -5,6 +5,7 @@
 use crate::archive_view::ArchiveView;
 use crate::clients::ClientInfo;
 use crate::keys::KeyForm;
+use crate::publish_form::PublishForm;
 use crate::ToolkitSettings;
 use egui::RichText;
 use shaiya_archive::Archive;
@@ -80,6 +81,8 @@ pub struct PatchBuilder {
     pub secret_path: String,
     pub check_version: String,
     flow: BuildFlow,
+    /// "Publish for the regular updater".
+    pub publish: PublishForm,
     pub result: Vec<String>,
     pub last_out: Option<PathBuf>,
     diff: Option<TaskHandle<(String, BuildInput)>>,
@@ -137,6 +140,7 @@ impl PatchBuilder {
             secret_path: String::new(),
             check_version: String::new(),
             flow: BuildFlow::Idle,
+            publish: PublishForm::new(),
             result: Vec::new(),
             last_out: None,
             diff: None,
@@ -428,6 +432,7 @@ impl PatchBuilder {
     }
 
     pub fn tick(&mut self, cx: &mut ToolkitCx<'_>) {
+        self.publish.tick(cx);
         self.run_checks(cx);
         if let Some(h) = &mut self.diff {
             match h.poll() {
@@ -701,6 +706,8 @@ impl PatchBuilder {
                     }
                 });
             }
+            ui.add_space(6.0);
+            self.publish.ui(ui, cx, self.last_out.as_ref());
         });
         // keyboard: Ctrl+Enter builds
         if !ui.ctx().egui_wants_keyboard_input() && ui.ctx().input(|i| i.modifiers.command && i.key_pressed(egui::Key::Enter)) {
