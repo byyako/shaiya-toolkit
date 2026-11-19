@@ -3,6 +3,7 @@
 
 use crate::archive_view::ArchiveView;
 use crate::clients::ClientInfo;
+use crate::explain::{self, Rows};
 use crate::keys::KeyForm;
 use crate::ToolkitSettings;
 use egui::RichText;
@@ -84,6 +85,8 @@ pub struct ApplyTab {
     pub result: Vec<String>,
     pub keep: usize,
     pub changed_counter: u64,
+    /// The Changes / Writes / Undo / Game rows of the open confirmation, made once when it was asked for from the same plan the write uses.
+    confirm_rows: Rows,
 }
 
 impl Default for ApplyTab {
@@ -111,6 +114,7 @@ impl ApplyTab {
             result: Vec::new(),
             keep: 10,
             changed_counter: 0,
+            confirm_rows: Vec::new(),
         }
     }
 
@@ -297,16 +301,6 @@ impl ApplyTab {
     fn confirm_text(&self, req: &ApplyReq) -> String {
         let names: Vec<String> = req.patches.iter().map(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()).collect();
         let list = if names.len() <= 3 { names.join(" and ") } else { format!("{} patches", names.len()) };
-        let (mut a, mut r, mut d, mut l, mut bytes) = (0, 0, 0, 0, 0u64);
-        if let Some(plans) = self.plans() {
-            for p in plans {
-                a += p.added.len();
-                r += p.replaced.len();
-                d += p.removed.len();
-                l += p.loose.len();
-                bytes += p.bytes;
-            }
-        }
         let sigs = if !req.key_set {
             "not used (unsigned patches)"
         } else if req.key.is_some() && self.patches.iter().all(|r| matches!(&r.verify, Verify::Done(v) if v.signature == SigStatus::Valid)) {
@@ -314,14 +308,7 @@ impl ApplyTab {
         } else {
             "NOT CHECKED"
         };
-        let last = if cfg!(windows) { "The game must be closed." } else { "Make sure the game is not running from this folder; this cannot be checked on this system." };
-        format!(
-            "Apply {list} to {}? It adds {a}, replaces {r} and removes {} and writes {}; {} will be appended to data.saf. Signatures: {sigs}. Backups go to shaiya-toolkit-backups\\...; you can roll back each patch. {last}",
-            req.name,
-            shaiya_inspect::counted(d as u64, "archive file", "archive files"),
-            shaiya_inspect::counted(l as u64, "loose file", "loose files"),
-            human_size(bytes)
-        )
+        format!("Apply {list} to {}? Signatures: {sigs}.", req.name)
     }
 
     /// "Apply N patches...": the confirmation, then the exclusive apply.
@@ -330,6 +317,10 @@ impl ApplyTab {
         if self.apply_blocked(client).is_some() {
             return;
         }
+        self.confirm_rows = match (ClientFiles::locate(&c.dir), self.plans()) {
+            (Ok(files), Some(plans)) => explain::patch_rows(plans, &files),
+            _ => Vec::new(),
+        };
         let req = ApplyReq { patches: self.patches.iter().map(|r| r.path.clone()).collect(), dir: c.dir.clone(), name: c.name.clone(), key: if self.require { keys.verify_key() } else { None }, key_set: keys.verify_key().is_some(), done: Vec::new() };
         self.flow = Flow::Confirm(req);
     }
@@ -373,25 +364,20 @@ impl ApplyTab {
             return;
         }
         let Some(j) = self.newest_rollback() else { return };
-        let (dir, name) = (j.dir.clone(), c.name.clone());
-        let text = {
-            let restored = j.loose.iter().filter(|l| l.existed).count();
-            let deleted = j.loose.iter().filter(|l| !l.existed).count();
-            format!(
-                "Roll back {} (applied {})? The index is restored, data.saf is cut back to {}, {} restored and {deleted} deleted.",
-                j.label,
-                local_time(&j.created_utc),
-                shaiya_inspect::counted(j.saf_len_before, "byte", "bytes"),
-                shaiya_inspect::counted((restored) as u64, "loose file", "loose files")
-            )
+        let dir = j.dir.clone();
+        let text = format!("Roll back {} (applied {})?", j.label, local_time(&j.created_utc));
+        self.confirm_rows = match ClientFiles::locate(&c.dir) {
+            Ok(files) => explain::rollback_rows(j, &files),
+            Err(_) => Vec::new(),
         };
-        let _ = name;
         self.flow = Flow::RollConfirm(text, dir, c.dir.display().to_string());
     }
 
     pub fn request_prune(&mut self, client: Option<&ClientInfo>) {
         if let Some(c) = client {
             if !self.is_busy() {
+                let all: Vec<Journal> = self.history.iter().map(|(j, _)| j.clone()).collect();
+                self.confirm_rows = explain::prune_rows(&all, self.keep);
                 self.flow = Flow::PruneConfirm(c.dir.clone(), self.keep);
             }
         }
@@ -402,7 +388,7 @@ impl ApplyTab {
             Flow::Idle => {}
             Flow::Confirm(req) => {
                 let n = req.patches.len();
-                let c = Confirm { title: "Apply patches".into(), text: self.confirm_text(&req), buttons: vec![format!("Apply {n} patch{}", if n == 1 { "" } else { "es" }), "Cancel".into()], danger: Some(0) };
+                let c = Confirm { title: "Apply patches".into(), text: self.confirm_text(&req), buttons: vec![format!("Apply {n} patch{}", if n == 1 { "" } else { "es" }), "Cancel".into()], danger: Some(0), details: self.confirm_rows.clone() };
                 match cx.shell.confirm("toolkit-apply-patches", &c) {
                     None => self.flow = Flow::Confirm(req),
                     Some(0) => {
@@ -468,6 +454,7 @@ impl ApplyTab {
                     text: format!("{}'s data.saf is open in another program (is the game running?). Close it and press Retry.", req.name),
                     buttons: vec!["Retry".into(), "Cancel".into()],
                     danger: None,
+                    ..Default::default()
                 };
                 match cx.shell.confirm("toolkit-in-use", &c) {
                     None => self.flow = Flow::InUse(req),
@@ -476,7 +463,7 @@ impl ApplyTab {
                 }
             }
             Flow::RollConfirm(text, dir, dir_text) => {
-                let c = Confirm { title: "Roll back".into(), text: text.clone(), buttons: vec!["Roll back".into(), "Cancel".into()], danger: Some(0) };
+                let c = Confirm { title: "Roll back".into(), text: text.clone(), buttons: vec!["Roll back".into(), "Cancel".into()], danger: Some(0), details: self.confirm_rows.clone() };
                 match cx.shell.confirm("toolkit-rollback", &c) {
                     None => self.flow = Flow::RollConfirm(text, dir, dir_text),
                     Some(0) => {
@@ -518,7 +505,7 @@ impl ApplyTab {
                 Some(_) => archive.reopen(cx),
             },
             Flow::PruneConfirm(dir, keep) => {
-                let c = Confirm { title: "Prune history".into(), text: format!("Delete the backups of all but the newest {}? Those changes can then no longer be rolled back.", shaiya_inspect::counted((keep) as u64, "change", "changes")), buttons: vec!["Prune".into(), "Cancel".into()], danger: Some(0) };
+                let c = Confirm { title: "Prune history".into(), text: format!("Delete the backups of all but the newest {}? Those changes can then no longer be rolled back.", shaiya_inspect::counted((keep) as u64, "change", "changes")), buttons: vec!["Prune".into(), "Cancel".into()], danger: Some(0), details: self.confirm_rows.clone() };
                 match cx.shell.confirm("toolkit-prune", &c) {
                     None => self.flow = Flow::PruneConfirm(dir, keep),
                     Some(0) => {

@@ -1,6 +1,7 @@
 //! The Archive tab: a client's (or any) archive as a folder tree, a searchable table and a preview, with queued edits (pending changes)
 //! that are applied to the client folder only after a confirmation, through the same crash-safe procedure as the command line.
 
+use crate::explain::{self, Rows};
 use crate::preview::{self, PreviewData};
 use crate::ToolkitSettings;
 use egui::{Color32, RichText};
@@ -357,6 +358,8 @@ pub struct ArchiveView {
     pub compare: Option<ComparePanel>,
     extract: Option<ExtractFlow>,
     apply: ApplyFlow,
+    /// The Changes / Writes / Undo / Game rows of the open confirmation (made once, when it was asked for, from the plan the write uses).
+    confirm_rows: Rows,
     discard_asked: bool,
     reload_asked: bool,
     saved_new: Option<TaskHandle<EditReport>>,
@@ -429,6 +432,7 @@ impl ArchiveView {
             compare: None,
             extract: None,
             apply: ApplyFlow::Idle,
+            confirm_rows: Vec::new(),
             discard_asked: false,
             reload_asked: false,
             saved_new: None,
@@ -685,6 +689,7 @@ impl ArchiveView {
                     text: format!("{} already exist in {}.", shaiya_inspect::counted((n) as u64, "file", "files"), req.out.display()),
                     buttons: vec!["Skip existing".into(), "Overwrite".into(), "Cancel".into()],
                     danger: Some(1),
+                    ..Default::default()
                 };
                 match cx.shell.confirm("extract-existing", &c) {
                     None => self.extract = Some(ExtractFlow::Confirm(req, n)),
@@ -751,7 +756,7 @@ impl ArchiveView {
             ApplyFlow::Idle => {}
             ApplyFlow::Confirm(ex) => {
                 let (title, text, button) = self.confirm_text(&ex, cx);
-                let c = Confirm { title, text, buttons: vec![button, "Cancel".into()], danger: Some(0) };
+                let c = Confirm { title, text, buttons: vec![button, "Cancel".into()], danger: Some(0), details: self.confirm_rows.clone() };
                 match cx.shell.confirm("toolkit-exclusive", &c) {
                     None => self.apply = ApplyFlow::Confirm(ex),
                     Some(0) => self.begin_closing(ex),
@@ -813,6 +818,7 @@ impl ArchiveView {
                     text: format!("{name}'s data.saf is open in another program (is the game running?). Close it and press Retry."),
                     buttons: vec!["Retry".into(), "Cancel".into()],
                     danger: None,
+                    ..Default::default()
                 };
                 match cx.shell.confirm("toolkit-in-use", &c) {
                     None => self.apply = ApplyFlow::InUse(ex),
@@ -834,38 +840,36 @@ impl ArchiveView {
     fn confirm_text(&self, ex: &Excl, cx: &ToolkitCx<'_>) -> (String, String, String) {
         let name = self.source_label().unwrap_or_default();
         let dir = self.client_dir().map(|d| d.display().to_string()).unwrap_or_default();
-        let last = if cfg!(windows) { "The game must be closed." } else { "Make sure the game is not running from this folder; this cannot be checked on this system." };
         let _ = cx;
         match ex {
-            Excl::Apply(plan, n) => {
-                let bytes: u64 = plan.puts.iter().map(|p| p.source.len().unwrap_or(0)).sum();
-                (
-                    "Apply changes".into(),
-                    format!(
-                        "Apply {} to {name} ({dir})? {} will be appended to data.saf. A backup of the index (and of files it overwrites) goes to shaiya-toolkit-backups\\...; Apply & history can roll it back. {last}",
-                        shaiya_inspect::counted(*n as u64, "change", "changes"),
-                        human_size(bytes)
-                    ),
-                    format!("Apply {}", shaiya_inspect::counted(*n as u64, "change", "changes")),
-                )
-            }
-            Excl::Compact => {
-                let live = self.loaded.as_ref().map(|l| l.saf_len.unwrap_or(0).saturating_sub(l.dead.unwrap_or(0))).unwrap_or(0);
-                let shadowed = self.loaded.as_ref().map(|l| l.rows.iter().filter(|r| r.shadowed).count()).unwrap_or(0);
-                let later = self.client_dir().and_then(|d| journal::list(d, &d.join(journal::DEFAULT_DIR)).ok()).map(|l| l.iter().filter(|(j, _)| j.state == journal::State::Applied).count()).unwrap_or(0);
-                (
-                    "Compact".into(),
-                    format!(
-                        "Compact data.saf of {name}? It rewrites {} (needs about {} free on that drive) and drops {} and the free list. {} no longer be rolled back afterwards, and compacting makes no journal, so it cannot be undone itself.",
-                        human_size(live),
-                        human_size(live + (256 << 20)),
-                        shaiya_inspect::counted((shadowed) as u64, "shadowed entry", "shadowed entries"),
-                        if later == 1 { "1 earlier change can".to_string() } else { format!("{} earlier changes can", later) }
-                    ),
-                    "Compact".into(),
-                )
-            }
+            Excl::Apply(_, n) => (
+                "Apply changes".into(),
+                format!("Apply {} to {name} ({dir})?", shaiya_inspect::counted(*n as u64, "change", "changes")),
+                format!("Apply {}", shaiya_inspect::counted(*n as u64, "change", "changes")),
+            ),
+            Excl::Compact => ("Compact".into(), format!("Compact data.saf of {name}?"), "Compact".into()),
         }
+    }
+
+    /// The rows of the apply confirmation: `edit::preview` of the very plan that is applied, read against the client's current index.
+    fn apply_rows_for(&self, plan: &EditPlan) -> Rows {
+        let Some(dir) = self.client_dir() else { return Vec::new() };
+        let Ok(files) = ClientFiles::locate(dir) else { return Vec::new() };
+        match Archive::open_index(&files.sah).and_then(|(_, index)| edit::preview(&index, plan)) {
+            Ok(report) => explain::apply_rows(&report, &files),
+            Err(e) => vec![("Changes".into(), format!("cannot be counted: {e}")), ("Game".into(), explain::game_text(cfg!(windows)))],
+        }
+    }
+
+    /// The rows of the compact confirmation.
+    fn compact_rows_for(&self) -> Rows {
+        let Some(dir) = self.client_dir() else { return Vec::new() };
+        let Ok(files) = ClientFiles::locate(dir) else { return Vec::new() };
+        let size = self.loaded.as_ref().and_then(|l| l.saf_len).unwrap_or(0);
+        let live = self.loaded.as_ref().map(|l| l.saf_len.unwrap_or(0).saturating_sub(l.dead.unwrap_or(0))).unwrap_or(0);
+        let shadowed = self.loaded.as_ref().map(|l| l.rows.iter().filter(|r| r.shadowed).count()).unwrap_or(0);
+        let later = journal::list(dir, &dir.join(journal::DEFAULT_DIR)).map(|l| l.iter().filter(|(j, _)| j.state == journal::State::Applied).count()).unwrap_or(0);
+        explain::compact_rows(size, live, shadowed, later, &files)
     }
 
     /// Cancels every task that reads the archive and hands out the app's handle on `data.saf`, so a write (apply, compact, swap, patch
@@ -1040,6 +1044,7 @@ impl ArchiveView {
         let plan = self.pending_plan("archive edit");
         let n = self.pending.len();
         let _ = cx;
+        self.confirm_rows = self.apply_rows_for(&plan);
         self.apply = ApplyFlow::Confirm(Excl::Apply(plan, n));
     }
 
@@ -1047,6 +1052,7 @@ impl ArchiveView {
         if self.client_dir().is_none() || !matches!(self.apply, ApplyFlow::Idle) {
             return;
         }
+        self.confirm_rows = self.compact_rows_for();
         self.apply = ApplyFlow::Confirm(Excl::Compact);
     }
 
@@ -1573,7 +1579,11 @@ impl ArchiveView {
             } else if let Some(e) = &self.open_error {
                 ui.label(RichText::new(format!("Cannot open this archive: {e}")).color(pal.error));
             } else {
-                cx.shell.empty_state(ui, "Choose a client folder in the toolbar, or drop a client folder, data.sah or patch here. Nothing is written until you apply changes.");
+                let mut chosen = None;
+                cx.shell.empty_state_with(ui, "Choose a client folder in the toolbar, or drop a client folder, data.sah or patch here. Nothing is written until you apply changes.", |ui| chosen = crate::start::draw(ui));
+                if let Some(a) = chosen {
+                    requests.push(TabRequest::Start(a));
+                }
             }
             self.draw_dialogs(ui, cx, &mut requests);
             return requests;
@@ -2185,7 +2195,7 @@ impl ArchiveView {
         }
         // F5 with pending changes
         if self.reload_asked {
-            let c = Confirm { title: "Reload the archive".into(), text: format!("Reload the archive and discard {}?", shaiya_inspect::counted((self.pending.len()) as u64, "pending change", "pending changes")), buttons: vec!["Reload".into(), "Keep".into()], danger: Some(0) };
+            let c = Confirm { title: "Reload the archive".into(), text: format!("Reload the archive and discard {}?", shaiya_inspect::counted((self.pending.len()) as u64, "pending change", "pending changes")), buttons: vec!["Reload".into(), "Keep".into()], danger: Some(0), ..Default::default() };
             match cx.shell.confirm("toolkit-reload", &c) {
                 None => {}
                 Some(0) => {
@@ -2199,7 +2209,7 @@ impl ArchiveView {
         }
         // the discard question
         if self.discard_asked {
-            let c = Confirm { title: "Discard pending changes".into(), text: format!("Discard {}?", shaiya_inspect::counted((self.pending.len()) as u64, "pending change", "pending changes")), buttons: vec!["Discard".into(), "Keep".into()], danger: Some(0) };
+            let c = Confirm { title: "Discard pending changes".into(), text: format!("Discard {}?", shaiya_inspect::counted((self.pending.len()) as u64, "pending change", "pending changes")), buttons: vec!["Discard".into(), "Keep".into()], danger: Some(0), ..Default::default() };
             match cx.shell.confirm("toolkit-discard", &c) {
                 None => {}
                 Some(0) => {
@@ -2413,6 +2423,8 @@ enum MenuChoice {
 pub enum TabRequest {
     PatchFromPending,
     PatchFromDiff(PathBuf),
+    /// A button of the Start page.
+    Start(crate::start::StartAction),
 }
 
 fn hex_view(ui: &mut egui::Ui, bytes: &[u8], base: u64) {

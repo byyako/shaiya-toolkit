@@ -3,6 +3,7 @@
 //! `shaiya_core::config::update_clients`, so another program's changes are kept.
 
 use crate::archive_view::ArchiveView;
+use crate::explain::{self, Rows};
 use crate::ToolkitSettings;
 use egui::RichText;
 use shaiya_archive::client::{read_version_ini, ClientFiles};
@@ -197,11 +198,13 @@ pub struct ClientsUi {
     statuses: Vec<(String, ClientStatus)>,
     edit: Option<EditClient>,
     swap: SwapFlow,
+    /// The Changes / Writes / Undo / Game rows of the open swap confirmation (made when the swap was asked for).
+    swap_rows: Rows,
 }
 
 impl Default for ClientsUi {
     fn default() -> Self {
-        ClientsUi { add: None, manage: false, statuses: Vec::new(), edit: None, swap: SwapFlow::Idle }
+        ClientsUi { add: None, manage: false, statuses: Vec::new(), edit: None, swap: SwapFlow::Idle, swap_rows: Vec::new() }
     }
 }
 
@@ -226,13 +229,21 @@ impl ClientsUi {
 
     /// Starts "Use another archive pair" for a saved client (the test entry point; the dialog's button calls it too).
     pub fn begin_swap(&mut self, client: &str, dir: PathBuf, other: PathBuf) {
-        self.swap = SwapFlow::Confirm { client: client.to_string(), dir, other };
+        self.ask_swap(client.to_string(), dir, other);
+    }
+
+    fn ask_swap(&mut self, client: String, dir: PathBuf, other: PathBuf) {
+        self.swap_rows = match ClientFiles::locate(&dir) {
+            Ok(files) => explain::swap_rows(&files, &other),
+            Err(_) => Vec::new(),
+        };
+        self.swap = SwapFlow::Confirm { client, dir, other };
     }
 
     /// The text of the swap confirmation (prompt 6 of 7.8).
     fn swap_text(client: &str, other: &Path) -> String {
         let pair = other.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| other.display().to_string());
-        format!("Put {pair} in place of {client}'s data.sah/data.saf? The current pair is kept as data.<stamp>.sah/saf in the same folder.")
+        format!("Put {pair} in place of {client}'s data.sah/data.saf?")
     }
 
     /// Draws the Add and Manage dialogs and advances the swap. Returns what the frame must do.
@@ -381,10 +392,10 @@ impl ClientsUi {
                 if path == dir {
                     let other = cx.shell.pick_file("swap", &[("SAH index", &["sah"])]).or_else(|| cx.shell.pick_folder("swap"));
                     if let Some(o) = other {
-                        self.swap = SwapFlow::Confirm { client: n, dir, other: o };
+                        self.ask_swap(n, dir, o);
                     }
                 } else {
-                    self.swap = SwapFlow::Confirm { client: n, dir, other: path };
+                    self.ask_swap(n, dir, path);
                 }
             }
         }
@@ -431,7 +442,7 @@ impl ClientsUi {
             SwapFlow::Idle => {}
             SwapFlow::Done { client, dir, kept } => self.swap = SwapFlow::Done { client, dir, kept },
             SwapFlow::Confirm { client, dir, other } => {
-                let c = Confirm { title: "Swap archives".into(), text: Self::swap_text(&client, &other), buttons: vec!["Swap archives".into(), "Cancel".into()], danger: None };
+                let c = Confirm { title: "Swap archives".into(), text: Self::swap_text(&client, &other), buttons: vec!["Swap archives".into(), "Cancel".into()], danger: None, details: self.swap_rows.clone() };
                 match cx.shell.confirm("toolkit-swap", &c) {
                     None => self.swap = SwapFlow::Confirm { client, dir, other },
                     Some(0) => {

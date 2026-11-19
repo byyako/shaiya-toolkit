@@ -5,15 +5,18 @@
 pub mod apply_tab;
 pub mod archive_view;
 pub mod clients;
+pub mod explain;
 pub mod inspect;
 pub mod keys;
 pub mod patch_builder;
 pub mod preview;
 pub mod sdata_tab;
 pub mod sign_tab;
+pub mod start;
 
 use apply_tab::ApplyTab;
 use archive_view::{ArchiveView, OpenSource, TabRequest};
+use start::StartAction;
 use clients::{ClientInfo, ClientsAction, ClientsUi};
 use egui::{Key, Modifiers, RichText};
 use inspect::InspectTab;
@@ -224,6 +227,22 @@ impl ToolkitApp {
         }
     }
 
+    /// What a Start page button does.
+    pub fn run_start(&mut self, action: StartAction, cx: &mut ToolkitCx<'_>) {
+        match action {
+            StartAction::AddClient => {
+                let picked = cx.shell.pick_folder("client");
+                self.clients.open_add(picked.as_deref());
+            }
+            StartAction::OpenArchive => {
+                if let Some(p) = cx.shell.pick_file("open-archive", &[("SAH index", &["sah"])]) {
+                    self.open_archive_file(p, cx);
+                }
+            }
+            StartAction::Go(tab) => self.set_tab(tab, cx),
+        }
+    }
+
     fn handle_requests(&mut self, requests: Vec<TabRequest>, cx: &mut ToolkitCx<'_>) {
         for r in requests {
             match r {
@@ -232,6 +251,7 @@ impl ToolkitApp {
                     self.patch.prefill_signing(&self.keys);
                     self.set_tab(Tab::Patch, cx);
                 }
+                TabRequest::Start(action) => self.run_start(action, cx),
                 TabRequest::PatchFromDiff(other) => {
                     // old = the other archive, new = the open one
                     self.patch.from_diff(other, None, &self.archive, cx);
@@ -301,6 +321,7 @@ impl ToolkitApp {
             text: format!("{} holds a data.sah. What should Shaiya Toolkit do with it?", dir.display()),
             buttons: vec!["Open this client".into(), second.into(), "Cancel".into()],
             danger: None,
+                    ..Default::default()
         };
         match cx.shell.confirm("toolkit-drop-folder", &c) {
             None => {}

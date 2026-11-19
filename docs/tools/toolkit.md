@@ -13,9 +13,13 @@ shaiya-toolkit [FILES...] [--data-dir DIR] [--no-settings] [--smoke [REPORT_FILE
 The toolbar picker lists your saved client folders (the same list as `shaiya clients list`, so a client added in one program shows up in the other) and remembers the last one used.
 
 - **File > Add client folder...** (also on the picker) asks for a folder holding `data.sah` and a name. You can also drop a folder on the window and choose "Open this client".
-- **File > Manage client folders...** shows each client with its status, SAH version, file count and `Version.ini` CheckVersion and CurrentVersion; rename, edit the note, remove from the list (files untouched), or **Use another archive pair...** which swaps a different `data.sah`/`data.saf` in (the current pair is kept as `data.<stamp>.sah/saf`; there is a "swap back").
+- **File > Manage client folders...** shows each client with its status, SAH version, file count and `Version.ini` CheckVersion and CurrentVersion; rename, edit the note, remove from the list (files untouched), or **Use another archive pair...** which swaps a different `data.sah`/`data.saf` in (the current pair is kept as `data.<UTC stamp>.sah/saf`; there is a "swap back").
 - **Open other archive...** opens any `.sah` (for example a stock `data.orig.sah`) read-only; changes to it can only be saved as a new archive.
 - Shaiya Toolkit never scans your disks for clients. When a client opens, it finishes or discards the leftovers of an interrupted change and says so in the Activity panel.
+
+## The Start page
+
+With no client or archive open, the Archive tab shows a **Start** page: one line for each job and a button that opens the right place. **Add client folder...** asks for a folder and a name; **Open other archive...** opens any `data.sah` read-only; **Open Patch builder** and **Open Apply & history** switch to those tabs. The page goes away as soon as an archive opens.
 
 ## The six tabs
 
@@ -44,15 +48,23 @@ The toolbar picker lists your saved client folders (the same list as `shaiya cli
 
 ## Confirmations and prompts
 
-Buttons say what they do and the risky one is marked.
+Buttons say what they do and the risky one is marked. Every confirmation that changes a client folder shows the same four rows under its text:
+
+| Row | What it says |
+|---|---|
+| **Changes** | The counts, taken from the plan that is applied (added, replaced, removed, loose files; for Compact the size before and after; for Roll back what is restored). |
+| **Writes** | Each file or folder that changes, with sizes: `data.sah`, `data.saf` (how much is appended), the journal folder, loose files. |
+| **Undo** | How to get back: "Apply & history > Roll back", or "no undo" (Compact makes no journal; Prune deletes journals; a rollback has none of its own). |
+| **Game** | "must be closed (checked)" on Windows; elsewhere "cannot be checked on this system". |
 
 | When | Text and buttons |
 |---|---|
-| Apply pending changes | "Apply N changes to NAME (folder)? X will be appended to data.saf. A backup of the index (and of files it overwrites) goes to shaiya-toolkit-backups\...; Apply & history can roll it back. The game must be closed." **Apply N changes** / Cancel. On Linux and macOS the last sentence says the game cannot be checked. |
-| Apply patches | Counts, "Signatures: not used (unsigned patches)" when the client has no public key, "valid" when every patch verifies, "NOT CHECKED" when a key is set but the patches are not verified, where backups go. **Apply N patches** / Cancel. An invalid signature with "Require" on disables the button and says why. |
-| Compact | "...rewrites X (needs about Y free)... N earlier changes can no longer be rolled back afterwards, and compacting makes no journal, so it cannot be undone itself." **Compact** / Cancel. |
-| Roll back | What will be restored (index, `data.saf` length, loose files). **Roll back** / Cancel. |
-| Swap archives | "Put PAIR in place of NAME's data.sah/data.saf? The current pair is kept as data.<stamp>.sah/saf." **Swap archives** / Cancel. |
+| Apply pending changes | "Apply N changes to NAME (folder)?" and the four rows. **Apply N changes** / Cancel. |
+| Apply patches | "Apply PATCHES to NAME? Signatures: ..." where the signature state is "not used (unsigned patches)" when the client has no public key, "valid" when every patch verifies, "NOT CHECKED" when a key is set but the patches are not verified; then the four rows (one journal per patch). **Apply N patches** / Cancel. An invalid signature with "Require" on disables the button and says why. |
+| Compact | "Compact data.saf of NAME?" and the four rows; Undo says "no undo: compacting makes no journal" and how many earlier changes can then no longer be rolled back. **Compact** / Cancel. |
+| Roll back | "Roll back LABEL (applied TIME)?" and the four rows (index restored, `data.saf` cut back, loose files restored and deleted, the journal id). **Roll back** / Cancel. |
+| Prune | Which journals are deleted and that those changes can then no longer be rolled back. **Prune** / Cancel. |
+| Swap archives | "Put PAIR in place of NAME's data.sah/data.saf?" and the four rows (the current pair is renamed to `data.<UTC stamp>.sah/.saf`). **Swap archives** / Cancel. |
 | Existing outputs | Skip existing / Overwrite / Cancel (extract, SData); Overwrite / Cancel (patch); Replace signature / Cancel. |
 | Discard, reload with pending changes | Discard / Keep; reload asks first. |
 | **The game or another program has the files** | "NAME's data.saf is open in another program (is the game running?). Close it and press Retry." **Retry** / Cancel. Nothing has been changed; close the program and press Retry. (Windows only; elsewhere the toolkit cannot tell.) |

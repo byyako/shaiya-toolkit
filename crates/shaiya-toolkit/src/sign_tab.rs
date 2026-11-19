@@ -282,6 +282,7 @@ impl SignTab {
                     text: format!("{} already exist{}. Replace {}? A published patch number must never be signed again with another key or CheckVersion.", names.join(", "), if names.len() == 1 { "s" } else { "" }, if names.len() == 1 { "it" } else { "them" }),
                     buttons: vec!["Replace signature".into(), "Cancel".into()],
                     danger: Some(0),
+                    ..Default::default()
                 };
                 match cx.shell.confirm("toolkit-sign-exists", &c) {
                     None => self.sign_flow = SignFlow::Confirm(existing),

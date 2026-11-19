@@ -224,9 +224,10 @@ fn errors_show_in_a_banner_with_details_and_confirmations_wait_for_an_answer() {
     let details = h.app.shell.banner_details().unwrap();
     assert!(details.contains("offset: 40") && details.contains("file: Item.SData") && details.contains("Dummy Tool 9.9.9"), "{details}");
     // confirm: shown until answered
-    h.app.app.ask = Some(Confirm { title: "Overwrite file?".into(), text: "It exists.".into(), buttons: vec!["Overwrite".into(), "Cancel".into()], danger: Some(0) });
+    h.app.app.ask = Some(Confirm { title: "Overwrite file?".into(), text: "It exists.".into(), buttons: vec!["Overwrite".into(), "Cancel".into()], danger: Some(0), details: vec![("Changes".into(), "replaces 1 file".into()), ("Undo".into(), "no undo".into())] });
     h.frames(3);
     assert!(h.text().contains("Overwrite file?") && h.text().contains("Overwrite") && !h.text().contains("OK"), "{}", h.text());
+    assert!(h.text().contains("Changes") && h.text().contains("replaces 1 file") && h.text().contains("Undo") && h.text().contains("no undo"), "the detail rows are drawn: {}", h.text());
     assert_eq!(h.app.app.answer, None);
     h.app.shell.inject_answer("ow", 1);
     h.frames(2);

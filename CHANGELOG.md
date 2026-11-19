@@ -9,8 +9,12 @@ All notable changes are listed here, newest first. The format follows [Keep a Ch
 - Patches are unsigned by default in the wording: the Patch builder keeps signing in a closed section "Signing (only for an updater that checks signatures)", a build says "unsigned", and Sign & verify starts with "Optional. The original updater does not check signatures."
 - Apply & history says "Signatures: not used (unsigned patches)" when the client has no public key; "NOT CHECKED" now means a key is set but the patches were not verified.
 
+- With no client or archive open, the Archive tab shows a Start page: one line for each job (add a client folder, change files, make a patch, apply patches) with a button that opens the right place.
+- Every confirmation that changes a client folder (apply changes, apply patches, compact, roll back, prune, swap archives) shows four rows under its text: Changes, Writes, Undo and Game, computed from the plan that is applied.
+
 ### Documentation
 
+- The toolkit page describes the Start page and the four confirmation rows; the undo-and-recovery guide points to them.
 - The make-a-patch guide section 4 is now "Optional: sign it" (the anchor changed to `#4-optional-sign-it`) and the patch format page says signatures are optional.
 
 ## [0.2.1] - 2026-11-19

@@ -17,6 +17,8 @@ Archive edits (`archive add|replace|remove --in-place`, Shaiya Toolkit "Apply to
 
 If anything fails or you cancel before step 6, `data.saf` is cut back to its old length and nothing else has changed.
 
+Shaiya Toolkit shows what a change will do before it does it: every confirmation that changes a client folder lists **Changes**, **Writes**, **Undo** and **Game** (see [the toolkit page](../tools/toolkit.md#confirmations-and-prompts)). The **Undo** row says whether the change can be rolled back and how, or "no undo".
+
 ## What is kept, and where
 
 | Item | Where | Made by | Notes |

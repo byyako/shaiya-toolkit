@@ -24,13 +24,15 @@ const STATUS_SECS: u64 = 6;
 const ACTIVITY_LINES: usize = 500;
 
 /// A modal question. Buttons are verbs ("Overwrite", "Cancel"), never "OK".
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct Confirm {
     pub title: String,
     pub text: String,
     pub buttons: Vec<String>,
     /// Index of the button that does something destructive (drawn in the error colour).
     pub danger: Option<usize>,
+    /// Labelled rows drawn under the text as a two-column grid (for example Changes, Writes, Undo, Game).
+    pub details: Vec<(String, String)>,
 }
 
 struct Banner {
@@ -345,24 +347,32 @@ impl Shell {
     /// The empty-state block: a hint line, the "your own copy" statement and the recent files. Tools that draw their own empty state may
     /// call it for the recent list.
     pub fn empty_state(&mut self, ui: &mut egui::Ui, hint: &str) {
+        self.empty_state_with(ui, hint, |_| {});
+    }
+
+    /// Like [`Shell::empty_state`], with `between` drawn after the "your own copy" statement and before the recent files (a Start page).
+    pub fn empty_state_with(&mut self, ui: &mut egui::Ui, hint: &str, between: impl FnOnce(&mut egui::Ui)) {
         let pal = theme::pal_ui(ui);
-        ui.vertical_centered(|ui| {
-            ui.add_space((ui.available_height() * 0.18).max(8.0));
-            ui.label(RichText::new(hint).size(16.0));
-            ui.add_space(8.0);
-            ui.label(RichText::new(YOUR_OWN_COPY).color(pal.weak));
-            ui.add_space(16.0);
-            let recent: Vec<(String, bool)> = self.settings.recent_sorted().iter().map(|r| (r.path.clone(), r.pinned)).collect();
-            if !recent.is_empty() {
-                ui.label(RichText::new("Recent").strong());
-                for (path, pinned) in recent.iter().take(8) {
-                    let name = Path::new(path).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| path.clone());
-                    let label = if *pinned { format!("pinned: {name}") } else { name };
-                    if ui.link(label).on_hover_text(path).clicked() {
-                        self.pending_open.push(PathBuf::from(path));
+        egui::ScrollArea::vertical().auto_shrink([false, false]).id_salt("shaiya-empty-state").show(ui, |ui| {
+            ui.vertical_centered(|ui| {
+                ui.add_space((ui.available_height() * 0.08).max(8.0));
+                ui.label(RichText::new(hint).size(16.0));
+                ui.add_space(8.0);
+                ui.label(RichText::new(YOUR_OWN_COPY).color(pal.weak));
+                ui.add_space(16.0);
+                between(ui);
+                let recent: Vec<(String, bool)> = self.settings.recent_sorted().iter().map(|r| (r.path.clone(), r.pinned)).collect();
+                if !recent.is_empty() {
+                    ui.label(RichText::new("Recent").strong());
+                    for (path, pinned) in recent.iter().take(8) {
+                        let name = Path::new(path).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| path.clone());
+                        let label = if *pinned { format!("pinned: {name}") } else { name };
+                        if ui.link(label).on_hover_text(path).clicked() {
+                            self.pending_open.push(PathBuf::from(path));
+                        }
                     }
                 }
-            }
+            });
         });
     }
 }
@@ -1268,6 +1278,16 @@ impl<A: ToolApp> ShellApp<A> {
             egui::Modal::new(egui::Id::unique(("shaiya-confirm", id))).show(ctx, |ui| {
                 ui.heading(&c.title);
                 ui.label(&c.text);
+                if !c.details.is_empty() {
+                    ui.add_space(6.0);
+                    egui::Grid::new(("shaiya-confirm-details", id)).num_columns(2).spacing([12.0, 4.0]).show(ui, |ui| {
+                        for (label, text) in &c.details {
+                            ui.label(RichText::new(label).strong());
+                            ui.add(egui::Label::new(text).wrap());
+                            ui.end_row();
+                        }
+                    });
+                }
                 ui.add_space(8.0);
                 ui.horizontal(|ui| {
                     for (i, b) in c.buttons.iter().enumerate() {

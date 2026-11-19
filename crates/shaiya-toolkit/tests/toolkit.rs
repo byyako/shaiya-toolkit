@@ -348,6 +348,14 @@ fn dropping_files_queues_changes_and_apply_writes_them_with_a_journal() {
     with_cx(&mut w.h, |app, cx| app.archive.request_apply(cx));
     w.h.frames(3);
     assert!(w.h.text().contains("Apply 2 changes"), "the confirm names the count: {}", w.h.text());
+    let t = w.h.text().to_string();
+    for label in ["Changes", "Writes", "Undo", "Game"] {
+        assert!(t.contains(label), "the {label} row: {t}");
+    }
+    assert!(t.contains("added 1, replaced 1, removed 0"), "the counts come from the plan: {t}");
+    assert!(t.contains("Apply & history > Roll back") && t.contains("shaiya-toolkit-backups"), "{t}");
+    assert!(t.contains(if cfg!(windows) { "must be closed (checked)" } else { "cannot be checked on this system" }), "{t}");
+    assert!(shaiya_archive::journal::list(w.client.path(), &w.client.path().join("shaiya-toolkit-backups")).map(|l| l.is_empty()).unwrap_or(true), "nothing is written before the answer");
     w.h.app.shell.inject_answer("toolkit-exclusive", 0);
     assert!(w.h.wait_until(WAIT, |h| h.app.app.archive.changed_counter == 1 && h.app.app.archive.is_open()), "applied and reloaded");
     w.h.frames(3);
@@ -356,6 +364,9 @@ fn dropping_files_queues_changes_and_apply_writes_them_with_a_journal() {
     assert!(w.h.app.app.archive.find_row("Item/t1.txt").is_some());
     let backups = w.client_dir().join("shaiya-toolkit-backups");
     assert!(std::fs::read_dir(&backups).map(|r| r.count()).unwrap_or(0) >= 1, "a journal folder exists");
+    let journals = shaiya_archive::journal::list(w.client.path(), &backups).unwrap();
+    assert_eq!(journals.len(), 1, "the journal the Undo row promised exists, one per apply");
+    assert!(matches!(journals[0].1, shaiya_archive::journal::Rollback::Possible));
     let arch = shaiya_archive::Archive::open(w.client.path()).unwrap();
     assert_eq!(arch.read("Item/Item.SData").unwrap(), b"replacement");
 }
@@ -502,6 +513,12 @@ fn apply_and_history_plan_apply_list_and_roll_back() {
     with_cx(&mut w.h, |app, _| app.apply.request_apply(app.current.as_ref(), &app.keys));
     w.h.frames(3);
     assert!(w.h.text().contains("Apply ps0001.patch to US test") && w.h.text().contains("Signatures: not used (unsigned patches)"), "{}", w.h.text());
+    let t = w.h.text().to_string();
+    for label in ["Changes", "Writes", "Undo", "Game"] {
+        assert!(t.contains(label), "the {label} row: {t}");
+    }
+    assert!(t.contains("added 1, replaced 1, removed 0, 1 loose file written"), "the counts are the plan's: {t}");
+    assert!(t.contains("notice.txt") && t.contains("one journal per patch"), "{t}");
     w.h.app.shell.inject_answer("toolkit-apply-patches", 0);
     assert!(w.h.wait_until(WAIT, |h| h.app.app.apply.history().len() == 1 && h.app.app.archive.is_open() && h.app.app.archive.changed_counter >= 1), "applied; the history lists it");
     w.h.frames(3);
@@ -518,6 +535,9 @@ fn apply_and_history_plan_apply_list_and_roll_back() {
     with_cx(&mut w.h, |app, _| app.apply.request_rollback(app.current.as_ref()));
     w.h.frames(3);
     assert!(w.h.text().contains("Roll back ps0001.patch") && w.h.text().contains("1 deleted"), "{}", w.h.text());
+    let jid = w.h.app.app.apply.history()[0].0.id.clone();
+    let t = w.h.text().to_string();
+    assert!(t.contains("Writes") && t.contains("Undo") && t.contains("Game") && t.contains(&jid) && t.contains("no undo of its own"), "the rows name the journal: {t}");
     w.h.app.shell.inject_answer("toolkit-rollback", 0);
     assert!(
         w.h.wait_until(WAIT, |h| matches!(h.app.app.apply.history().first().map(|(j, _)| j.state.clone()), Some(shaiya_archive::journal::State::RolledBack { .. })) && h.app.app.archive.is_open()),
@@ -717,4 +737,75 @@ fn the_apply_confirmation_says_not_checked_only_when_a_key_is_set_and_require_is
     w.h.app.shell.inject_answer("toolkit-apply-patches", 1);
     w.h.frames(3);
     assert!(w.h.app.app.apply.history().is_empty(), "Cancel applied nothing");
+}
+
+// ------------------------------------------------------------------------------------------------ T7 W2: Start page and explained confirmations
+
+#[test]
+fn the_start_page_lists_the_jobs_and_its_buttons_open_the_right_place() {
+    let mut h = Harness::<ToolkitApp>::bare();
+    h.frames(3);
+    let t = h.text().to_string();
+    assert!(t.contains("Start") && t.contains("Choose a client folder in the toolbar"), "{t}");
+    assert!(t.contains("These tools work on your own copy of the game"), "the own-copy statement stays: {t}");
+    // later work packages add their rows here (Publish a patch, Look at SData tables)
+    let keys: Vec<&str> = shaiya_toolkit::start::start_jobs().iter().map(|j| j.key).collect();
+    assert_eq!(keys, ["add-client", "change-files", "make-patch", "apply-patches"]);
+    for j in shaiya_toolkit::start::start_jobs() {
+        assert!(t.contains(j.title) && t.contains(j.button), "{} is drawn: {t}", j.key);
+    }
+    assert!(!t.contains("Publish a patch") && !t.contains("SData tables"), "rows of jobs that have not shipped are absent: {t}");
+    with_cx(&mut h, |app, cx| app.run_start(shaiya_toolkit::start::StartAction::Go(Tab::Patch), cx));
+    assert_eq!(h.app.app.tab, Tab::Patch);
+    with_cx(&mut h, |app, cx| app.run_start(shaiya_toolkit::start::StartAction::Go(Tab::Apply), cx));
+    assert_eq!(h.app.app.tab, Tab::Apply);
+}
+
+#[test]
+fn the_start_page_is_gone_once_a_client_is_open() {
+    let w = open_world("t7-start-gone");
+    assert!(!w.h.text().contains("Apply patches to a test client"), "{}", w.h.text());
+}
+
+#[test]
+fn compact_says_there_is_no_undo() {
+    let mut w = open_world("t7-compact-rows");
+    w.h.app.app.archive.request_compact();
+    w.h.frames(3);
+    let t = w.h.text().to_string();
+    assert!(t.contains("Compact data.saf of US test"), "{t}");
+    for label in ["Changes", "Writes", "Undo", "Game"] {
+        assert!(t.contains(label), "the {label} row: {t}");
+    }
+    assert!(t.contains("no undo: compacting makes no journal") && t.contains("0 earlier changes"), "{t}");
+    let before = std::fs::read(w.client.path().join("data.saf")).unwrap();
+    w.h.app.shell.inject_answer("toolkit-exclusive", 1);
+    w.h.frames(3);
+    assert_eq!(std::fs::read(w.client.path().join("data.saf")).unwrap(), before, "Cancel changed nothing");
+}
+
+#[test]
+fn prune_and_swap_show_the_four_rows() {
+    let mut w = open_world("t7-prune-swap");
+    go(&mut w.h, Tab::Apply);
+    with_cx(&mut w.h, |app, _| app.apply.request_prune(app.current.as_ref()));
+    w.h.frames(3);
+    let t = w.h.text().to_string();
+    assert!(t.contains("Prune history") && t.contains("0 journals deleted, the newest 0 kept") && t.contains("no undo"), "{t}");
+    w.h.app.shell.inject_answer("toolkit-prune", 1);
+    w.h.frames(3);
+    // swap: another pair in a second folder
+    let other = TempDir::new("t7-prune-swap-other");
+    SahBuilder::new(0).file(b"x.txt", b"x").write_to(other.path());
+    let dir = w.client_dir();
+    w.h.app.app.clients.begin_swap("US test", dir, other.path().to_path_buf());
+    w.h.frames(3);
+    let t = w.h.text().to_string();
+    assert!(t.contains("Swap archives") && t.contains("data.<UTC stamp>") && t.contains("no journal"), "{t}");
+    for label in ["Changes", "Writes", "Undo", "Game"] {
+        assert!(t.contains(label), "the {label} row: {t}");
+    }
+    w.h.app.shell.inject_answer("toolkit-swap", 1);
+    w.h.frames(3);
+    assert!(!w.h.text().contains("Swap archives"), "Cancel closes it");
 }

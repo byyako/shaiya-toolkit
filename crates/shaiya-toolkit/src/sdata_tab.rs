@@ -241,6 +241,7 @@ impl SDataTab {
                     text: format!("{} already exist in {}.", shaiya_inspect::counted((req.clashes) as u64, "file", "files"), req.out.display()),
                     buttons: vec!["Skip existing".into(), "Overwrite".into(), "Cancel".into()],
                     danger: Some(1),
+                    ..Default::default()
                 };
                 match cx.shell.confirm("toolkit-sdata-exists", &c) {
                     None => self.flow = Flow::Confirm(req),

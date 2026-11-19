@@ -375,7 +375,7 @@ impl PatchBuilder {
         match std::mem::replace(&mut self.flow, BuildFlow::Idle) {
             BuildFlow::Idle => {}
             BuildFlow::Confirm(out) => {
-                let c = Confirm { title: "Overwrite the patch".into(), text: format!("{} already exists.", out.display()), buttons: vec!["Overwrite".into(), "Cancel".into()], danger: Some(0) };
+                let c = Confirm { title: "Overwrite the patch".into(), text: format!("{} already exists.", out.display()), buttons: vec!["Overwrite".into(), "Cancel".into()], danger: Some(0), ..Default::default() };
                 match cx.shell.confirm("toolkit-build-exists", &c) {
                     None => self.flow = BuildFlow::Confirm(out),
                     Some(0) => self.start_build(out, Existing::Overwrite, cx),
