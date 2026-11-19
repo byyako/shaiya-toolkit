@@ -32,27 +32,15 @@ The toolbar picker lists your saved client folders (the same list as `shaiya cli
   - **Discard** drops the queue (asks first). Quitting with a non-empty queue asks too; "Save all" never writes a client by itself.
 - **Check** (and **Deep check**) reports problems, warnings and info grouped by code, with clickable paths; Copy report and Save report. **Compare...** diffs against another archive (added, removed, different, unknown) and can "Make patch from differences". **Compact...** rewrites `data.saf` without unused space; the confirmation says how many earlier changes can then no longer be rolled back.
 
-![The Archive tab: folder tree, file table and preview](../assets/screenshots/toolkit-archive.png)
-
 **Patch builder.** Three sources, or the differences of two archives, or the pending changes: a folder of archive files (paths inside it become archive paths), a folder of loose files (copied into the client folder, for example `game.exe`), and a removal list. The contents table shows what each entry does to the selected client (new, replaces, not present, overwrites) and a problems column; Build is disabled while a name is invalid. Output name (suggested as the next `psNNNN.patch` from the client's `Version.ini`), timestamp, optional signing with a secret key file and CheckVersion. Warnings match the CLI (the original updater only fetches `psNNNN.patch`; `remove.txt` needs the toolkit or a replacement updater). After a build: Show folder, Apply to a client..., Verify.
-
-![The Patch builder: sources, contents table and output name](../assets/screenshots/toolkit-patch-builder.png)
 
 **Apply & history.** Add patches (drop or Add...; drag to reorder), see for each its structure check and signature state, set a public key and CheckVersion (stored per client; "Require a valid signature" turns on with a key), read the plan (added, replaced, removed, missing, loose files, bytes to append), and **Apply N patches...**. The lower half is the history of journals for this client with the rollback state and the reason when blocked; **Roll back...** undoes the newest possible one; **Prune...** keeps only the newest N.
 
-![Apply & history: patch list, plan and the journal history with Roll back](../assets/screenshots/toolkit-apply-history.png)
-
 **Sign & verify.** Generate a key pair (secret first; existing files are refused, never overwritten), sign patches or an updater executable (`.sig` next to each file; an existing one asks "Replace signature"), and verify signatures against a public key, optionally against a client (is the patch applied?). Shaiya Toolkit never stores key contents; the secret key's *path* is remembered only if you tick "Remember where my secret key is".
-
-![Sign & verify: key pair, signing and verification results](../assets/screenshots/toolkit-sign-verify.png)
 
 **SData.** Drop SData files or folders, or add all SData of the open client. The table shows encrypted or plain, checksum state and plaintext size. Decrypt to folder..., Encrypt to folder... (with "Match the originals' headers", which is what makes an unchanged file come out byte-identical) and Check. Outputs always go to a folder you choose; in-place conversion is a CLI feature.
 
-![The SData tab: files with encryption and checksum state](../assets/screenshots/toolkit-sdata.png)
-
 **Inspect.** The file inspector: open or drop files, see what each is (SAH index, SAF data, SData encrypted or plain, patch, signature, `game.exe` build) with Name, Kind, Size and Details, the same text `shaiya info` prints. SHA-256 per row or for the selection runs in the background with progress in Activity and can be cancelled. Copy as text / Copy as JSON put the selected rows on the clipboard, handy for bug reports (never attach game files to a report; hashes are enough).
-
-![The Inspect tab: file kinds, sizes and details](../assets/screenshots/toolkit-inspect.png)
 
 ## Confirmations and prompts
 

@@ -59,8 +59,6 @@ Remove files: `shaiya archive remove "@mymod" test/junk.eft --in-place` (or `--l
 
 Loose files, the ones that live next to `game.exe` rather than inside the archive, are not part of `data.saf`. To change them, put them in a patch (`--loose`) and apply it; the toolkit saves the original in the journal first. See [make a patch](make-a-patch.md).
 
-![Pending changes in the Archive tab, waiting for Apply to client](../assets/screenshots/toolkit-pending-changes.png)
-
 ## Or make a patch instead
 
 When other people need the same change, or you want one file that bundles several edits, build a patch from your folder and apply it. A patch is also the easiest way to hand a modification to a friend:

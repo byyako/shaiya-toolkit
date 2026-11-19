@@ -19,6 +19,7 @@ All notable changes are listed here, newest first. The format follows [Keep a Ch
 ### Documentation
 
 - The episode claims are exact: there is no detection of the client version; every file is checked by whether it reads (version matrix, FAQ and the SVMap Editor guide).
+- The guides no longer link seven screenshots of the Shaiya Toolkit and one of the Placements tool that are not published; a test in `cargo xtask` keeps every picture in the README and `docs/` pointing at a file in the repository.
 
 ### shaiya (CLI)
 

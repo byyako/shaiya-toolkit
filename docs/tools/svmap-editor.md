@@ -795,8 +795,6 @@ The staging folder is not the game's folder. Getting the staged files into the g
 
 The Placements tool edits the buildings, shapes, trees and dungeon pieces of the client map. It needs the client folder and a map tab with an editable client map (the chain row in the Inspector says so). Press **8**, or pick **Placements** in the tool strip. These objects exist only in the client map. The server map never changes.
 
-![Placements: a selected building with its turned footprint, the Models window and the Inspector](../assets/screenshots/svmap-editor/c3-placements.png)
-
 ### Select, move and turn
 
 Click a placement to select it. Shift adds or removes one. Alt takes the next one under the cursor. Drag a placement to move it. The preview shows where it will land, and the release is one undo step. On a field the height follows the terrain: a placement keeps its offset from the ground. Press **R** to turn the selection by 15 degrees, **Shift+R** by -15. Esc cancels a drag, then clears the selection.

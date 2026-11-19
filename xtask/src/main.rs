@@ -2,6 +2,8 @@
 
 mod deps;
 mod dist;
+#[cfg(test)]
+mod docs_images;
 mod guard;
 mod icons;
 mod meta;
