@@ -47,7 +47,7 @@ pub enum Cmd {
     ///
     /// The folder is DIR/Shaiya/UpdateVersion.ini with the patches in DIR/Shaiya/patch/ (--layout shaiya), or all in DIR (--layout flat).
     /// Nothing is published when a name is not psNNNN.patch, a number is missing, a different file with the same name is already
-    /// there, CheckVersion differs from the existing ini's, or DIR is a client folder. --dry-run shows the plan and writes nothing.
+    /// there, CheckVersion differs from the existing ini's, or DIR (or a folder it would write into) is a client folder. --dry-run shows the plan and writes nothing.
     /// Exit 0 done (or nothing to do), 3 bad input, 4 refused.
     ///
     /// Example: shaiya patch publish ps0110.patch --to server-files --check-version 3

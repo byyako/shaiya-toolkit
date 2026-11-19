@@ -2,7 +2,7 @@
 //! patches built by `shaiya_patch::build`.
 
 use shaiya_core::{Error, Job};
-use shaiya_patch::publish::{plan_publish, publish, FileState, Layout, PublishOptions, INI_NAME};
+use shaiya_patch::publish::{plan_publish, publish, publish_with, FileState, Layout, PublishOptions, INI_NAME};
 use shaiya_testkit::{SahBuilder, TempDir};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -203,6 +203,93 @@ fn a_client_folder_is_never_a_destination() {
     let o = PublishOptions { check_version: Some(3), client_dirs: vec![saved.clone()], ..Default::default() };
     let m = refused(plan_publish(&[p], &saved.join("out"), &o, &Job::silent()));
     assert!(m.contains("client folder"), "{m}");
+}
+
+#[test]
+fn a_client_below_the_destination_is_never_written_into() {
+    let t = TempDir::new("pub-client-below");
+    let p = make(t.path(), 109, "a");
+    // DIR/Shaiya is a client: the default layout would write DIR/Shaiya/UpdateVersion.ini and DIR/Shaiya/patch/ into it
+    let dir = t.path().join("server");
+    let client = dir.join("Shaiya");
+    fs::create_dir_all(&client).unwrap();
+    SahBuilder::new(0).file(b"a/b.txt", b"hi").write_to(&client);
+    let before = fs::read_dir(&client).unwrap().count();
+    let m = refused(plan_publish(std::slice::from_ref(&p), &dir, &opts(Some(3)), &Job::silent()));
+    assert!(m.contains("client folder") && m.contains("Shaiya"), "{m}");
+    assert_eq!(fs::read_dir(&client).unwrap().count(), before, "nothing was created in the client");
+    // the flat layout writes into DIR itself, which is not a client
+    let flat = PublishOptions { layout: Layout::Flat, check_version: Some(3), ..Default::default() };
+    assert!(plan_publish(std::slice::from_ref(&p), &dir, &flat, &Job::silent()).is_ok());
+
+    // the patch folder DIR/Shaiya/patch is a client, DIR/Shaiya is not
+    let dir2 = t.path().join("server2");
+    let inner = dir2.join("Shaiya").join("patch");
+    fs::create_dir_all(&inner).unwrap();
+    SahBuilder::new(0).file(b"a/b.txt", b"hi").write_to(&inner);
+    let m = refused(plan_publish(std::slice::from_ref(&p), &dir2, &opts(Some(3)), &Job::silent()));
+    assert!(m.contains("client folder"), "{m}");
+    assert!(!dir2.join("Shaiya").join(INI_NAME).exists());
+
+    // a saved client (no archive files in it) in DIR/Shaiya
+    let dir3 = t.path().join("server3");
+    let saved = dir3.join("Shaiya");
+    fs::create_dir_all(&saved).unwrap();
+    let o = PublishOptions { check_version: Some(3), client_dirs: vec![saved.clone()], ..Default::default() };
+    let m = refused(plan_publish(&[p], &dir3, &o, &Job::silent()));
+    assert!(m.contains("client folder"), "{m}");
+    assert_eq!(fs::read_dir(&saved).unwrap().count(), 0);
+}
+
+#[test]
+fn an_ini_changed_during_the_copies_is_not_overwritten_and_the_copied_files_are_named() {
+    let t = TempDir::new("pub-window");
+    let out = t.path().join("server");
+    fs::create_dir_all(out.join("Shaiya")).unwrap();
+    let ini = out.join("Shaiya").join(INI_NAME);
+    fs::write(&ini, b"[Version]\r\nCheckVersion=3\r\nUpdaterVersion=1\r\nPatchFileVersion=109\r\n").unwrap();
+    let p = make(t.path(), 110, "a");
+    let plan = plan_publish(std::slice::from_ref(&p), &out, &opts(None), &Job::silent()).unwrap();
+    let theirs: &[u8] = b"[Version]\r\nCheckVersion=3\r\nUpdaterVersion=1\r\nPatchFileVersion=115\r\n";
+    let m = refused(publish_with(&plan, &Job::silent(), &mut || fs::write(&ini, theirs).unwrap()));
+    assert!(m.contains("changed since the plan"), "{m}");
+    assert!(m.contains("already copied") && m.contains("ps0110.patch") && m.contains("was not changed"), "{m}");
+    assert_eq!(fs::read(&ini).unwrap(), theirs, "the other change was not overwritten");
+    assert!(out.join("Shaiya/patch/ps0110.patch").is_file(), "the copied file stays");
+    // a new plan finds the copy as already published
+    fs::write(&ini, b"[Version]\r\nCheckVersion=3\r\nUpdaterVersion=1\r\nPatchFileVersion=109\r\n").unwrap();
+    let again = plan_publish(&[p], &out, &opts(None), &Job::silent()).unwrap();
+    assert_eq!(again.items[0].patch.state, FileState::AlreadyPublished);
+    publish(&again, &Job::silent()).unwrap();
+    assert!(String::from_utf8(ini_of(&out)).unwrap().contains("PatchFileVersion=110"));
+}
+
+#[test]
+fn a_target_that_appears_during_the_copies_is_refused_and_the_earlier_copies_are_named() {
+    let t = TempDir::new("pub-appears");
+    let out = t.path().join("server");
+    let (a, b) = (make(t.path(), 1, "a"), make(t.path(), 2, "a"));
+    let plan = plan_publish(&[a, b], &out, &opts(Some(1)), &Job::silent()).unwrap();
+    // ps0002.patch shows up between the plan and its copy
+    fs::create_dir_all(out.join("Shaiya/patch")).unwrap();
+    fs::write(out.join("Shaiya/patch/ps0002.patch"), b"someone else's").unwrap();
+    let m = refused(publish(&plan, &Job::silent()));
+    assert!(m.contains("appeared") && m.contains("already copied") && m.contains("ps0001.patch") && m.contains("was not changed"), "{m}");
+    assert_eq!(fs::read(out.join("Shaiya/patch/ps0002.patch")).unwrap(), b"someone else's");
+    assert!(!out.join("Shaiya").join(INI_NAME).exists(), "no ini was written");
+}
+
+#[test]
+fn bytes_that_are_not_ascii_in_an_existing_ini_stay_as_they_are() {
+    let t = TempDir::new("pub-cp949");
+    let out = t.path().join("server");
+    fs::create_dir_all(out.join("Shaiya")).unwrap();
+    let before: &[u8] = b"; \xBC\xAD\xB9\xF6\r\n[Version]\r\nCheckVersion=3\r\nUpdaterVersion=1\r\nPatchFileVersion=109\r\nNote=\xC7\xD1\xB1\xDB\r\n";
+    fs::write(out.join("Shaiya").join(INI_NAME), before).unwrap();
+    let p = make(t.path(), 110, "a");
+    publish(&plan_publish(&[p], &out, &opts(None), &Job::silent()).unwrap(), &Job::silent()).unwrap();
+    let expected: &[u8] = b"; \xBC\xAD\xB9\xF6\r\n[Version]\r\nCheckVersion=3\r\nUpdaterVersion=1\r\nPatchFileVersion=110\r\nNote=\xC7\xD1\xB1\xDB\r\n";
+    assert_eq!(ini_of(&out), expected);
 }
 
 #[test]

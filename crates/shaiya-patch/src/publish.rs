@@ -8,8 +8,13 @@
 //! Folder layouts: [`Layout::Shaiya`] is `DIR/Shaiya/UpdateVersion.ini` with `DIR/Shaiya/patch/psNNNN.patch` (the original US EP4.5
 //! updater's); [`Layout::Flat`] puts the ini and the patches in `DIR` itself.
 //!
-//! The ini is edited line by line: lines that do not need to change stay byte for byte, a new key goes after the last line of
-//! `[Version]`, and new lines end with CRLF (an existing file's last line ending is used when it has one).
+//! The ini is edited line by line: lines that do not need to change stay byte for byte (bytes that are not ASCII, such as code page
+//! 949 text in a comment, included), a new key goes after the last line of `[Version]` and takes that line's ending (CRLF when that
+//! line has none), a `[Version]` section added at the end of a file without one is CRLF, and a new file is ASCII with CRLF.
+//!
+//! The patch files are copied one by one before the ini is written. A publish that stops after some were copied says which, and that
+//! the ini was not changed ([`Error::Refused`]); the copied files stay (a patch the ini does not name yet is harmless, and publishing
+//! again finds them as already published).
 
 use crate::{open_zip, patch_name, patch_number, signature_path, verify};
 use shaiya_archive::client::ClientFiles;
@@ -409,8 +414,9 @@ fn absolute(p: &Path) -> PathBuf {
     base
 }
 
-/// A client folder the destination is at or inside, if any: one of `clients`, or any folder from `dir` upwards that holds `data.sah` and
-/// `data.saf`.
+/// A client folder that `dir` is at or inside, if any: one of `clients`, or any folder from `dir` upwards that holds `data.sah` and
+/// `data.saf`. [`plan_publish`] asks it for every folder it will write into (the destination, the folder of the ini and the patch
+/// folder), because with [`Layout::Shaiya`] those are below the destination and the destination itself may be above a client.
 fn client_around(dir: &Path, clients: &[PathBuf]) -> Option<PathBuf> {
     let d = absolute(dir);
     for c in clients {
@@ -509,6 +515,17 @@ pub fn plan_publish(patches: &[PathBuf], dir: &Path, opts: &PublishOptions, job:
             (pd, sh)
         }
     };
+    // the folders actually written into: below `dir` with the Shaiya layout, so a client in `dir/Shaiya` (or `dir/Shaiya/patch`) is found here
+    for written in [&ini_dir, &patch_dir] {
+        if let Some(c) = client_around(written, &opts.client_dirs) {
+            return Err(Error::Refused(format!(
+                "publishing into {} would write into {}, which is a client folder or inside one ({}); publish into a separate server folder, never into a client",
+                dir.display(),
+                written.display(),
+                c.display()
+            )));
+        }
+    }
     let ini_existing = child_ci(&ini_dir, INI_NAME).filter(|p| p.is_file());
     let ini_path = ini_existing.clone().unwrap_or_else(|| ini_dir.join(INI_NAME));
     let ini_bytes_before = match &ini_existing {
@@ -661,6 +678,8 @@ pub fn plan_publish(patches: &[PathBuf], dir: &Path, opts: &PublishOptions, job:
 
 // ------------------------------------------------------------------------------------------------ write
 
+/// Copies `f.source` to `f.target` through a temporary file and puts it in place without replacing anything. Returns once the file is
+/// at its target; [`verify_copy`] reads it back.
 fn copy_checked(f: &PlanFile, job: &Job) -> Result<()> {
     if let Some(parent) = f.target.parent() {
         fs::create_dir_all(parent).map_err(|e| Error::io(parent, e))?;
@@ -679,51 +698,119 @@ fn copy_checked(f: &PlanFile, job: &Job) -> Result<()> {
         if to_hex(&sha256_file(&stage, job)?) != f.sha256 {
             return Err(Error::Refused(format!("the copy of {name} does not match the original; nothing was published")));
         }
-        if f.target.exists() {
-            return Err(Error::Refused(format!("{} appeared while copying; nothing is replaced", f.target.display())));
-        }
-        fs::rename(&stage, &f.target).map_err(|e| Error::io(&f.target, e))
+        place_without_replacing(&stage, &f.target)
     })();
     if result.is_err() {
         let _ = fs::remove_file(&stage);
     }
-    result?;
+    result
+}
+
+/// Moves `stage` to `target` so that a file already at `target` is never replaced. A hard link fails when the target exists (atomic on
+/// every system and file system that allows links), then the stage name is removed. Where links are not available (some network and
+/// FAT-type file systems) it falls back to checking that the target is absent and renaming; `std::fs::rename` replaces an existing file
+/// on Windows and Unix, so on that fallback a file that appears between the check and the rename can still be overwritten. The window
+/// is a few microseconds and the folder is the author's own server folder; it cannot be closed with `std` alone.
+fn place_without_replacing(stage: &Path, target: &Path) -> Result<()> {
+    match fs::hard_link(stage, target) {
+        Ok(()) => {
+            let _ = fs::remove_file(stage);
+            Ok(())
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists || target.exists() => {
+            Err(Error::Refused(format!("{} appeared while copying; nothing is replaced", target.display())))
+        }
+        Err(_) => {
+            if target.exists() {
+                return Err(Error::Refused(format!("{} appeared while copying; nothing is replaced", target.display())));
+            }
+            fs::rename(stage, target).map_err(|e| Error::io(target, e))
+        }
+    }
+}
+
+/// Reads a copied file back and compares it with the plan.
+fn verify_copy(f: &PlanFile, job: &Job) -> Result<()> {
     if to_hex(&sha256_file(&f.target, job)?) != f.sha256 {
         return Err(Error::Refused(format!("{} was read back and does not match the original", f.target.display())));
     }
     Ok(())
 }
 
-/// Writes what `plan` says: the patch files (and their `.sig`) first, each through a temporary file in the destination, compared by
-/// SHA-256 and renamed into place, then the ini (atomic replace), then reads the ini back and compares its three numbers. Nothing in
-/// the destination is replaced except the ini; refuses when the ini changed since the plan.
-pub fn publish(plan: &PublishPlan, job: &Job) -> Result<PublishReport> {
-    let now = match &plan.ini_bytes_before {
-        Some(_) => fs::read(&plan.ini_path).ok(),
+/// The ini is still what the plan was made against (`before`: `None` = no file).
+fn ensure_ini_unchanged(path: &Path, before: &Option<Vec<u8>>) -> Result<()> {
+    let now = match before {
+        Some(_) => fs::read(path).ok(),
         None => None,
     };
-    if now != plan.ini_bytes_before || (plan.ini_bytes_before.is_none() && plan.ini_path.exists()) {
-        return Err(Error::Refused(format!("{} changed since the plan was made; plan again", plan.ini_path.display())));
+    if now != *before || (before.is_none() && path.exists()) {
+        return Err(Error::Refused(format!("{} changed since the plan was made; plan again", path.display())));
     }
+    Ok(())
+}
+
+/// Adds to a failure after some patch files were copied which files they are and that the ini is untouched. The kind stays the same
+/// except [`Error::Cancelled`], which becomes a refusal so that the message can carry the list.
+fn after_copies(e: Error, copied: &[PathBuf], ini: &Path) -> Error {
+    if copied.is_empty() {
+        return e;
+    }
+    let list = copied.iter().map(|p| p.display().to_string()).collect::<Vec<_>>().join(", ");
+    let note = format!(
+        "already copied before it stopped: {list}. {} was not changed, so no player is pointed at them yet; publishing again finds them as already published",
+        ini.display()
+    );
+    match e {
+        Error::Refused(m) => Error::Refused(format!("{m}. {note}")),
+        Error::Cancelled => Error::Refused(format!("cancelled; {note}")),
+        Error::Io { path, source } => Error::Io { path, source: std::io::Error::new(source.kind(), format!("{source}. {note}")) },
+        Error::Format { file, offset, what } => Error::Format { file, offset, what: format!("{what}. {note}") },
+        Error::Unsupported(m) => Error::Unsupported(format!("{m}. {note}")),
+    }
+}
+
+/// Writes what `plan` says: the patch files (and their `.sig`) first, each through a temporary file in the destination, compared by
+/// SHA-256 and put in place without replacing anything, then the ini (atomic replace, after reading it once more and comparing it with
+/// what the plan saw), then reads the ini back and compares its three numbers. Nothing in the destination is replaced except the ini;
+/// refuses when the ini changed since the plan. A stop after some patches were copied names them and says the ini was not changed.
+pub fn publish(plan: &PublishPlan, job: &Job) -> Result<PublishReport> {
+    publish_with(plan, job, &mut || {})
+}
+
+/// [`publish`] with `before_ini`, called once after the patch files are copied and before the ini is checked and written: the place
+/// where a change made by someone else during long copies is caught again. Tests use it to make that change.
+#[doc(hidden)]
+pub fn publish_with(plan: &PublishPlan, job: &Job, before_ini: &mut dyn FnMut()) -> Result<PublishReport> {
+    ensure_ini_unchanged(&plan.ini_path, &plan.ini_bytes_before)?;
     let mut rep = PublishReport { patch_file_version: plan.patch_file_version_after, ..Default::default() };
-    for item in &plan.items {
-        for f in std::iter::once(&item.patch).chain(item.signature.as_ref()) {
-            job.check()?;
-            match f.state {
-                FileState::New => {
-                    copy_checked(f, job)?;
-                    rep.copied.push(f.target.clone());
+    let copies = (|| -> Result<()> {
+        for item in &plan.items {
+            for f in std::iter::once(&item.patch).chain(item.signature.as_ref()) {
+                job.check()?;
+                match f.state {
+                    FileState::New => {
+                        copy_checked(f, job)?;
+                        rep.copied.push(f.target.clone());
+                        verify_copy(f, job)?;
+                    }
+                    FileState::AlreadyPublished => rep.already_published.push(f.target.clone()),
                 }
-                FileState::AlreadyPublished => rep.already_published.push(f.target.clone()),
             }
         }
-    }
-    if plan.ini_changed {
-        job.check()?;
-        if let Some(parent) = plan.ini_path.parent() {
-            fs::create_dir_all(parent).map_err(|e| Error::io(parent, e))?;
+        before_ini();
+        if plan.ini_changed {
+            job.check()?;
+            // the copies may have taken long: look at the ini again right before replacing it
+            ensure_ini_unchanged(&plan.ini_path, &plan.ini_bytes_before)?;
         }
-        write_atomic(&plan.ini_path, &plan.ini_text)?;
+        Ok(())
+    })();
+    copies.map_err(|e| after_copies(e, &rep.copied, &plan.ini_path))?;
+    if plan.ini_changed {
+        if let Some(parent) = plan.ini_path.parent() {
+            fs::create_dir_all(parent).map_err(|e| after_copies(Error::io(parent, e), &rep.copied, &plan.ini_path))?;
+        }
+        write_atomic(&plan.ini_path, &plan.ini_text).map_err(|e| after_copies(e, &rep.copied, &plan.ini_path))?;
         let back = fs::read(&plan.ini_path).map_err(|e| Error::io(&plan.ini_path, e))?;
         let v = parse_update_ini(&back)?;
         if back != plan.ini_text || v.patch_file_version != Some(plan.patch_file_version_after) || v.check_version != Some(plan.check_version) || v.updater_version != Some(plan.updater_version) {
@@ -762,11 +849,52 @@ mod tests {
     }
 
     #[test]
+    fn bytes_that_are_not_ascii_stay_untouched() {
+        // code page 949 text in a comment and in an unrelated value, a BOM, an LF/CRLF mix: only the changed value differs
+        let src = b"\xEF\xBB\xBF; \xBC\xAD\xB9\xF6 \xC7\xD1\xB1\xDB\r\n[Version]\r\nCheckVersion=3\r\nName=\xC7\xD1\xB1\xDB\nPatchFileVersion=9\r\n";
+        let out = set_update_ini_keys(src, &[("PatchFileVersion", 10)]).unwrap();
+        assert_eq!(out, b"\xEF\xBB\xBF; \xBC\xAD\xB9\xF6 \xC7\xD1\xB1\xDB\r\n[Version]\r\nCheckVersion=3\r\nName=\xC7\xD1\xB1\xDB\nPatchFileVersion=10\r\n".to_vec());
+        assert_eq!(parse_update_ini(src).unwrap().patch_file_version, Some(9));
+    }
+
+    #[test]
+    fn the_ini_check_notices_a_change_and_a_new_file() {
+        let t = shaiya_testkit::TempDir::new("ini-check");
+        let p = t.path().join(INI_NAME);
+        assert!(ensure_ini_unchanged(&p, &None).is_ok());
+        fs::write(&p, b"a").unwrap();
+        assert!(ensure_ini_unchanged(&p, &None).is_err(), "a file that appeared");
+        assert!(ensure_ini_unchanged(&p, &Some(b"a".to_vec())).is_ok());
+        assert!(ensure_ini_unchanged(&p, &Some(b"b".to_vec())).is_err(), "a changed file");
+        fs::remove_file(&p).unwrap();
+        assert!(ensure_ini_unchanged(&p, &Some(b"a".to_vec())).is_err(), "a file that went");
+    }
+
+    #[test]
+    fn a_target_that_is_there_is_never_replaced() {
+        let t = shaiya_testkit::TempDir::new("place");
+        let (stage, target) = (t.path().join(".stage"), t.path().join("ps0001.patch"));
+        fs::write(&stage, b"new").unwrap();
+        fs::write(&target, b"old").unwrap();
+        match place_without_replacing(&stage, &target) {
+            Err(Error::Refused(m)) => assert!(m.contains("appeared"), "{m}"),
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(fs::read(&target).unwrap(), b"old");
+        fs::remove_file(&target).unwrap();
+        place_without_replacing(&stage, &target).unwrap();
+        assert_eq!(fs::read(&target).unwrap(), b"new");
+        assert!(!stage.exists(), "the stage name is gone");
+    }
+
+    #[test]
     fn a_missing_key_goes_after_the_last_line_of_the_section() {
         let src = b"[Version]\r\nCheckVersion=3\r\nPatchFileVersion=9\r\n\r\n[Tail]\r\nx=y\r\n";
         let out = set_update_ini_keys(src, &[("UpdaterVersion", 1)]).unwrap();
         assert_eq!(out, b"[Version]\r\nCheckVersion=3\r\nPatchFileVersion=9\r\nUpdaterVersion=1\r\n\r\n[Tail]\r\nx=y\r\n".to_vec());
-        // LF files get LF; a last line without terminator is closed first
+        // a new key takes the ending of the line it follows (LF here); a last line without a terminator is closed with CRLF first
+        let out = set_update_ini_keys(b"[Version]\nCheckVersion=3\nPatchFileVersion=9\n", &[("UpdaterVersion", 2)]).unwrap();
+        assert_eq!(out, b"[Version]\nCheckVersion=3\nPatchFileVersion=9\nUpdaterVersion=2\n".to_vec());
         let out = set_update_ini_keys(b"[Version]\nCheckVersion=3\nPatchFileVersion=9", &[("UpdaterVersion", 2)]).unwrap();
         assert_eq!(out, b"[Version]\nCheckVersion=3\nPatchFileVersion=9\r\nUpdaterVersion=2\r\n".to_vec());
         let out = set_update_ini_keys(b"x=1\r\n", &[("CheckVersion", 3)]).unwrap();

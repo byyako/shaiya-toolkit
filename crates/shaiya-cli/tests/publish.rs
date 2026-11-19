@@ -93,6 +93,16 @@ fn a_gap_a_changed_check_version_and_a_client_destination_are_refused_with_exit_
     assert!(err(&o).contains("client folder"), "{}", err(&o));
     assert!(!inside.exists());
 
+    // a client in DIR/Shaiya: the default layout would write into it
+    let parent = w.tmp.path().join("parent");
+    let nested = parent.join("Shaiya");
+    std::fs::create_dir_all(&nested).unwrap();
+    shaiya_testkit::SahBuilder::new(0).file(b"a/b.txt", b"hi").write_to(&nested);
+    let o = sh(&w.data, &["patch", "publish", p(&next), "--to", p(&parent), "--check-version", "3"]);
+    assert_eq!(code(&o), 4, "{}", err(&o));
+    assert!(err(&o).contains("client folder"), "{}", err(&o));
+    assert!(!nested.join("UpdateVersion.ini").exists() && !nested.join("patch").exists());
+
     // the flag allows the change on purpose
     let o = sh(&w.data, &["patch", "publish", p(&next), "--to", p(&dest), "--check-version", "4", "--new-check-version"]);
     assert_eq!(code(&o), 0, "{}", err(&o));
