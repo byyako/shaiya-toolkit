@@ -96,7 +96,7 @@ Buttons say what they do and the risky one is marked.
 
 ## The shell
 
-Menus: File, Edit, View, Tools, Help. **Edit > Preferences** (Ctrl+,): theme (dark, light, system), UI scale, autosave and backup counts, the font used for Korean and Chinese names, whether extracted files keep the archive's pack time, and the Inspect column widths. **Help > About** shows the version, the git revision and the third-party notices; **Help > Open log file** and **Open data folder** show the toolkit's own files in your file manager.
+Menus: File, Edit, View, Tools, Help. **Tools** lists the command palette and the other toolkit programs that ship (Shaiya SVMap Editor); a program that is not in the folder next to the running one is shown as not installed. **Edit > Preferences** (Ctrl+,): theme (dark, light, system), UI scale, autosave and backup counts, the font used for Korean and Chinese names, whether extracted files keep the archive's pack time, and the Inspect column widths. **Help > About** shows the version, the git revision and the third-party notices; **Help > Open log file** and **Open data folder** show the toolkit's own files in your file manager.
 
 **Help > Support the project** opens the author's donation page in your default browser. It happens only when you click it; Shaiya Toolkit makes no network connection of its own, and nothing is sent.
 

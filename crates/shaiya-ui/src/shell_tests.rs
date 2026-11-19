@@ -257,3 +257,27 @@ fn quit_with_running_tasks_asks_first() {
 fn siblings_that_are_not_installed_are_not_found() {
     assert_eq!(crate::sibling_path("shaiya-surely-not-installed"), None);
 }
+
+#[test]
+fn gui_programs_are_the_shipped_ones() {
+    assert_eq!(crate::GUI_PROGRAMS, &[("shaiya-toolkit", "Shaiya Toolkit"), ("shaiya-svmap-editor", "Shaiya SVMap Editor")]);
+}
+
+#[test]
+fn a_sibling_next_to_the_program_is_found() {
+    use crate::settings::Os;
+    let dir = std::env::temp_dir().join(format!("shaiya-ui-sibling-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let name = if cfg!(windows) { "shaiya-svmap-editor.exe" } else { "shaiya-svmap-editor" };
+    assert_eq!(crate::shell::sibling_in(&dir, "shaiya-svmap-editor", Os::CURRENT), None);
+    std::fs::write(dir.join(name), b"x").unwrap();
+    assert_eq!(crate::shell::sibling_in(&dir, "shaiya-svmap-editor", Os::CURRENT), Some(dir.join(name)));
+    // macOS: the sibling bundle next to the running one
+    let bundle = dir.join("shaiya-svmap-editor.app").join("Contents").join("MacOS");
+    std::fs::create_dir_all(&bundle).unwrap();
+    std::fs::write(bundle.join("shaiya-svmap-editor"), b"x").unwrap();
+    let running = dir.join("shaiya-toolkit.app").join("Contents").join("MacOS");
+    assert_eq!(crate::shell::sibling_in(&running, "shaiya-svmap-editor", Os::Mac), Some(bundle.join("shaiya-svmap-editor")));
+    let _ = std::fs::remove_dir_all(&dir);
+}

@@ -45,7 +45,7 @@ Optional methods: `menu` (extra items in File, Edit, View, Tools, Help), `comman
 | Colours | `cx.shell.pal()`: `text`, `weak`, `link`, `ok`, `error`, `warning`, `info`, ... (never write colour literals) |
 | Autosave and backups | `cx.shell.recovery()` and `cx.shell.backups()` (`None` with `--no-settings`) |
 | The "my client folders" list | `cx.shell.shared().clients` |
-| Another toolkit program | `cx.shell.launch_sibling("shaiya-sdata-editor", &[path.into()])` |
+| Another toolkit program | `cx.shell.launch_sibling("shaiya-svmap-editor", &[path.into()])` |
 | Show a folder or open a web page | `ui.ctx().open_url(egui::OpenUrl::new_tab(url))`, only from a click; the operating system opens it. Never open anything on start-up or in the background |
 
 ## Undo

@@ -36,6 +36,12 @@ pub const YOUR_OWN_COPY: &str = "These tools work on your own copy of the game. 
 
 pub const RELEASES_URL: &str = "https://github.com/byyako/shaiya-toolkit/releases";
 
+/// The toolkit programs with a window, as `(binary name, title)`. The Tools menu lists them; an xtask test keeps this equal to the GUI
+/// entries of `TOOLS`.
+// GUI_PROGRAMS begin
+pub const GUI_PROGRAMS: &[(&str, &str)] = &[("shaiya-toolkit", "Shaiya Toolkit"), ("shaiya-svmap-editor", "Shaiya SVMap Editor")];
+// GUI_PROGRAMS end
+
 #[derive(Clone, Copy)]
 pub struct AppInfo {
     /// `"shaiya-toolkit"`: settings folder, log file, window class.

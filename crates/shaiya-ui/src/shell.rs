@@ -359,7 +359,7 @@ pub fn sibling_path(tool_id: &str) -> Option<PathBuf> {
     sibling_in(&dir, tool_id, Os::CURRENT)
 }
 
-fn sibling_in(dir: &Path, tool_id: &str, os: Os) -> Option<PathBuf> {
+pub(crate) fn sibling_in(dir: &Path, tool_id: &str, os: Os) -> Option<PathBuf> {
     let candidates: Vec<PathBuf> = match os {
         Os::Windows => vec![dir.join(format!("{tool_id}.exe"))],
         Os::Linux => vec![dir.join(tool_id)],
@@ -371,13 +371,6 @@ fn sibling_in(dir: &Path, tool_id: &str, os: Os) -> Option<PathBuf> {
     };
     candidates.into_iter().find(|p| p.is_file())
 }
-
-/// The other toolkit GUIs the Tools menu lists.
-const SIBLINGS: [(&str, &str); 3] = [
-    ("shaiya-toolkit", "Shaiya Toolkit"),
-    ("shaiya-sdata-editor", "Shaiya SData Editor"),
-    ("shaiya-log-viewer", "Shaiya Log Viewer"),
-];
 
 enum Quit {
     None,
@@ -964,7 +957,7 @@ impl<A: ToolApp> ShellApp<A> {
                     app.menu(Menu::Tools, ui, &mut cx);
                 }
                 ui.separator();
-                for (id, name) in SIBLINGS {
+                for &(id, name) in crate::GUI_PROGRAMS {
                     if id == self.shell.info.id {
                         continue;
                     }
