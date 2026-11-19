@@ -117,8 +117,8 @@ pub fn patch_rows(plans: &[Plan], files: &ClientFiles) -> Rows {
     rows(changes, writes, undo, game_text(cfg!(windows)))
 }
 
-/// "Compact data.saf". `size` and `live` come from `compact::usage`; `shadowed` counts the shadowed entries; `journals` the changes
-/// that can still be rolled back before compacting.
+/// "Compact data.saf". `size` and `live` are the sizes the Archive tab loaded with the index (not read again when the confirmation
+/// opens); `shadowed` counts the shadowed entries; `journals` the changes that can still be rolled back before compacting.
 pub fn compact_rows(size: u64, live: u64, shadowed: usize, journals: usize, files: &ClientFiles) -> Rows {
     let changes = format!(
         "{} shrinks from {} to about {} (unused {}); drops {} and the free list",

@@ -335,7 +335,7 @@ impl ToolkitApp {
             text: format!("{} holds a data.sah. What should Shaiya Toolkit do with it?", dir.display()),
             buttons: vec!["Open this client".into(), second.into(), "Cancel".into()],
             danger: None,
-                    ..Default::default()
+            ..Default::default()
         };
         match cx.shell.confirm("toolkit-drop-folder", &c) {
             None => {}

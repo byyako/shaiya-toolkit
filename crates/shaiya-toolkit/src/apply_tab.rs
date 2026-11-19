@@ -85,7 +85,7 @@ pub struct ApplyTab {
     pub result: Vec<String>,
     pub keep: usize,
     pub changed_counter: u64,
-    /// The Changes / Writes / Undo / Game rows of the open confirmation, made once when it was asked for from the same plan the write uses.
+    /// The Changes / Writes / Undo / Game rows of the open confirmation, made once when it was asked for, from the dry-run plan the Apply tab shows (the write itself, `apply_with`, plans again when it runs).
     confirm_rows: Rows,
 }
 
