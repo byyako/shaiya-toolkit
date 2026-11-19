@@ -156,12 +156,6 @@ fn ext_of(p: &Path) -> String {
     p.extension().map(|e| e.to_string_lossy().to_ascii_lowercase()).unwrap_or_default()
 }
 
-/// A `file:` URL of a folder, for "Show folder" (the same mechanism as Help > Open data folder).
-pub fn file_url(p: &Path) -> String {
-    let s = p.display().to_string().replace('\\', "/").replace(' ', "%20");
-    if s.starts_with('/') { format!("file://{s}") } else { format!("file:///{s}") }
-}
-
 impl ToolkitApp {
     // ---------------------------------------------------------------------------------------- client handling
 

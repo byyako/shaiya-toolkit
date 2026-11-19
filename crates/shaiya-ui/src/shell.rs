@@ -67,6 +67,7 @@ pub struct Shell {
     cjk_hint: bool,
     cjk_hint_shown: bool,
     dialogs: bool,
+    opener: fn(&Path) -> Result<(), String>,
     quit_requested: bool,
 }
 
@@ -131,6 +132,19 @@ impl Shell {
             self.confirms.push((id.to_string(), c.clone()));
         }
         None
+    }
+
+    /// Opens a file or folder with the system opener; a failure goes to the status bar.
+    fn reveal(&mut self, path: &Path) {
+        if let Err(e) = (self.opener)(path) {
+            self.status(e);
+        }
+    }
+
+    /// Replaces the system opener (tests record the path instead of starting a process).
+    #[cfg(test)]
+    pub(crate) fn set_opener(&mut self, f: fn(&Path) -> Result<(), String>) {
+        self.opener = f;
     }
 
     /// Enables or disables native file dialogs (off in the headless harness, where they would block).
@@ -319,8 +333,8 @@ impl Shell {
         &self.activity
     }
 
-    /// Starts another toolkit program from the same folder (or the sibling `.app` on macOS) with these arguments. The only process this
-    /// code ever starts.
+    /// Starts another toolkit program from the same folder (or the sibling `.app` on macOS) with these arguments. Besides the system's
+    /// file opener (`reveal`), the only process the shell starts.
     pub fn launch_sibling(&mut self, tool_id: &str, args: &[std::ffi::OsString]) -> Result<(), String> {
         let path = sibling_path(tool_id).ok_or_else(|| format!("{tool_id} is not installed next to this program; get it from {RELEASES_URL}"))?;
         let mut cmd = std::process::Command::new(&path);
@@ -490,6 +504,7 @@ impl<A: ToolApp> ShellApp<A> {
             cjk_hint: false,
             cjk_hint_shown: false,
             dialogs: true,
+            opener: crate::reveal::open_path,
             quit_requested: false,
         };
         let mut tool_settings = file.tool;
@@ -624,7 +639,7 @@ impl<A: ToolApp> ShellApp<A> {
         v
     }
 
-    fn run_action(&mut self, a: Action, ctx: &egui::Context) {
+    fn run_action(&mut self, a: Action) {
         match a {
             Action::OpenDialog => {
                 let filters = self.shell.info.open_filters;
@@ -670,13 +685,13 @@ impl<A: ToolApp> ShellApp<A> {
             Action::Help => self.help_open = true,
             Action::About => self.about_open = true,
             Action::OpenLog => {
-                if let Some(p) = &self.shell.paths {
-                    ctx.open_url(egui::OpenUrl::new_tab(file_url(&p.log_file())));
+                if let Some(p) = self.shell.paths.as_ref().map(Paths::log_file) {
+                    self.shell.reveal(&p);
                 }
             }
             Action::OpenDataDir => {
-                if let Some(p) = &self.shell.paths {
-                    ctx.open_url(egui::OpenUrl::new_tab(file_url(&p.tool_dir)));
+                if let Some(p) = self.shell.paths.as_ref().map(|p| p.tool_dir.clone()) {
+                    self.shell.reveal(&p);
                 }
             }
             Action::Sibling(id) => {
@@ -831,7 +846,7 @@ impl<A: ToolApp> ShellApp<A> {
         self.palette_ui(&ctx, &mut actions);
 
         for a in actions {
-            self.run_action(a, &ctx);
+            self.run_action(a);
         }
 
         self.flush_settings(false);
@@ -1375,15 +1390,6 @@ impl<A: ToolApp> ShellApp<A> {
                 self.palette = None;
             }
         }
-    }
-}
-
-fn file_url(p: &Path) -> String {
-    let s = p.display().to_string().replace('\\', "/");
-    if s.starts_with('/') {
-        format!("file://{s}")
-    } else {
-        format!("file:///{s}")
     }
 }
 

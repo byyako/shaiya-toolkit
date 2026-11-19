@@ -7,6 +7,7 @@ All notable changes are listed here, newest first. The format follows [Keep a Ch
 ### Shaiya Toolkit
 
 - The command palette closes when you click outside it, as well as on Esc.
+- Help > Open log file, Help > Open data folder and Show folder after a build open the file or folder with the system's opener (Explorer, Finder, xdg-open) instead of the web browser.
 - The Tools menu lists Shaiya SVMap Editor, which ships with the toolkit, instead of programs that do not exist.
 
 ## [0.2.0] - 2026-11-18

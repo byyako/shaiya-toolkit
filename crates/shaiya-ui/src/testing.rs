@@ -25,6 +25,7 @@ pub struct Harness<A: ToolApp> {
     t: f64,
     text: String,
     copied: Vec<String>,
+    opened_urls: Vec<String>,
     /// The window size of the next frames.
     pub size: Vec2,
 }
@@ -57,7 +58,7 @@ impl<A: ToolApp> Harness<A> {
         let ctx = egui::Context::default();
         let mut app = ShellApp::<A>::new(ctx.clone(), &opts, None);
         app.shell.set_dialogs_enabled(false);
-        Harness { ctx, app, t: 0.0, text: String::new(), copied: Vec::new(), size: Vec2::new(1280.0, 800.0) }
+        Harness { ctx, app, t: 0.0, text: String::new(), copied: Vec::new(), opened_urls: Vec::new(), size: Vec2::new(1280.0, 800.0) }
     }
 
     /// No settings, no files.
@@ -79,6 +80,7 @@ impl<A: ToolApp> Harness<A> {
         out.textures_delta.clear();
         self.text = all_text(&out.shapes);
         self.copied = out.platform_output.commands.iter().filter_map(|c| if let egui::OutputCommand::CopyText(t) = c { Some(t.clone()) } else { None }).collect();
+        self.opened_urls = out.platform_output.commands.iter().filter_map(|c| if let egui::OutputCommand::OpenUrl(u) = c { Some(u.url.clone()) } else { None }).collect();
     }
 
     /// One frame with these events.
@@ -123,6 +125,11 @@ impl<A: ToolApp> Harness<A> {
     /// Everything the app put on the clipboard in the last frame.
     pub fn copied(&self) -> &[String] {
         &self.copied
+    }
+
+    /// Every URL the app asked the browser to open in the last frame.
+    pub fn opened_urls(&self) -> &[String] {
+        &self.opened_urls
     }
 
     /// Runs frames (sleeping a little between them) until `done` returns true or the timeout passes. Returns whether it was reached.

@@ -253,6 +253,35 @@ fn quit_with_running_tasks_asks_first() {
     assert!(h.wait_until(Duration::from_secs(3), |_| handle.poll().is_some()));
 }
 
+static OPENED: std::sync::Mutex<Vec<PathBuf>> = std::sync::Mutex::new(Vec::new());
+
+fn record_open(p: &std::path::Path) -> Result<(), String> {
+    OPENED.lock().unwrap().push(p.to_path_buf());
+    Ok(())
+}
+
+#[test]
+fn open_log_file_and_open_data_folder_use_the_system_opener_not_a_url() {
+    let d = temp("reveal");
+    let mut h = Harness::<Dummy>::new(ShellOptions { data_dir: Some(d.clone()), ..Default::default() });
+    h.app.shell.set_opener(record_open);
+    h.frames(2);
+    for (query, expect) in [("open log", "log.txt"), ("open data", "dummy-tool")] {
+        h.key(Key::P, Modifiers::COMMAND | Modifiers::SHIFT);
+        h.frames(2);
+        h.type_text(query);
+        h.frames(1);
+        h.key(Key::Enter, Modifiers::NONE);
+        let mut urls = h.opened_urls().to_vec();
+        h.frames(2);
+        urls.extend(h.opened_urls().iter().cloned());
+        assert!(urls.is_empty(), "{query}: no URL goes to the browser: {urls:?}");
+        let last = OPENED.lock().unwrap().last().cloned().expect("the opener ran");
+        assert!(last.starts_with(&d) && last.to_string_lossy().ends_with(expect), "{query}: {last:?}");
+    }
+    let _ = std::fs::remove_dir_all(&d);
+}
+
 #[test]
 fn siblings_that_are_not_installed_are_not_found() {
     assert_eq!(crate::sibling_path("shaiya-surely-not-installed"), None);

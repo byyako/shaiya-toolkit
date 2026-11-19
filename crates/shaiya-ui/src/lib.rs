@@ -12,6 +12,7 @@ pub mod fonts;
 pub mod log;
 pub mod palette;
 pub mod recovery;
+pub mod reveal;
 pub mod settings;
 mod shell;
 pub mod tasks;

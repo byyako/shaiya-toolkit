@@ -577,7 +577,9 @@ impl PatchBuilder {
                 ui.horizontal(|ui| {
                     if ui.button("Show folder").clicked() {
                         if let Some(parent) = out.parent() {
-                            ui.ctx().open_url(egui::OpenUrl::new_tab(crate::file_url(parent)));
+                            if let Err(e) = shaiya_ui::reveal::open_path(parent) {
+                                cx.shell.status(e);
+                            }
                         }
                     }
                     if ui.add_enabled(client.is_some(), egui::Button::new("Apply to a client...")).clicked() {
