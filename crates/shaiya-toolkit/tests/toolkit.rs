@@ -31,7 +31,7 @@ fn the_empty_state_explains_the_toolkit() {
     assert!(t.contains("Choose a client folder in the toolbar"), "{t}");
     assert!(t.contains("Nothing is written until you apply changes"), "{t}");
     assert!(t.contains("These tools work on your own copy of the game"), "{t}");
-    assert!(t.contains("Shaiya Archive") || t.contains("v0.2.1"), "{t}");
+    assert!(t.contains("Shaiya Archive") || t.contains("v0.3.0"), "{t}");
 }
 
 #[test]

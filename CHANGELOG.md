@@ -4,6 +4,8 @@ All notable changes are listed here, newest first. The format follows [Keep a Ch
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-19
+
 ### Shaiya Toolkit
 
 - Patches are unsigned by default in the wording: the Patch builder keeps signing in a closed section "Signing (only for an updater that checks signatures)", a build says "unsigned", and Sign & verify starts with "Optional. The original updater does not check signatures."
@@ -32,6 +34,13 @@ All notable changes are listed here, newest first. The format follows [Keep a Ch
 - `shaiya-patch` has a `publish` module (`plan_publish`, `publish`, `parse_update_ini`, `set_update_ini_keys`) and `read_files`; `shaiya-inspect::validate::check_patch` checks the files inside a finished patch. `shaiya_archive::client::VersionIni` gained `start_update` and is no longer `Copy`.
 - `shaiya-patch` has `BuildInput::skip_same_as` and `unchanged_files` (the comparison behind "only the changed files").
 - `shaiya-inspect` has a `validate` module (`check_file`, `check_source`, `check_input`) behind the checks; it depends on `shaiya-clientdata` for the texture reader.
+
+### Breaking
+
+- `shaiya_ui::shell::Confirm` gained the field `details` (labelled rows under the text) and now implements `Default`; a `Confirm` written out field by field needs `..Default::default()`.
+- `shaiya_archive::client::VersionIni` gained the field `start_update` and is no longer `Copy` (it is still `Clone`).
+- `shaiya-inspect` now depends on `shaiya-clientdata` (new module `validate`), so a program that uses `shaiya-inspect` links it too.
+- `shaiya_patch::BuildInput` has the new method `skip_same_as`; no existing field or method changed.
 
 ### Documentation
 
