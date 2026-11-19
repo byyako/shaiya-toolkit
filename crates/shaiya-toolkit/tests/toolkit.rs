@@ -1113,8 +1113,10 @@ fn a_check_that_did_not_finish_still_asks_before_the_patch_builder_builds() {
     w.h.app.app.patch.finish_checks(TaskOutcome::Cancelled);
     assert_eq!(finding_codes(w.h.app.app.patch.findings()), ["check-incomplete"]);
     with_cx(&mut w.h, |app, cx| app.patch.begin_build(&app.keys, cx));
-    w.h.frames(3);
-    assert!(w.h.text().contains("Build anyway") && w.h.text().contains("check-incomplete"), "{}", w.h.text());
+    // With a client open, the comparison with the client may still be running; Build then waits for it (BuildFlow::WaitSame) and asks
+    // afterwards, so wait for the question itself instead of counting frames.
+    assert!(w.h.wait_until(Duration::from_secs(60), |h| h.text().contains("Build anyway")), "{}", w.h.text());
+    assert!(w.h.text().contains("check-incomplete"), "{}", w.h.text());
     assert!(!out_dir.path().join("ps0001.patch").exists(), "nothing is built before the answer");
     w.h.app.shell.inject_answer("toolkit-build-findings", 1);
     w.h.frames(3);
