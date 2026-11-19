@@ -809,3 +809,105 @@ fn prune_and_swap_show_the_four_rows() {
     w.h.frames(3);
     assert!(!w.h.text().contains("Swap archives"), "Cancel closes it");
 }
+
+// ------------------------------------------------------------------------------------------------ T7 W3: undo the last applied change
+
+fn apply_put(w: &mut World, rel: &str, source: &std::path::Path, n: u64) {
+    w.h.app.app.archive.queue_puts(vec![(rel.to_string(), source.to_path_buf(), 0)]);
+    with_cx(&mut w.h, |app, cx| app.archive.request_apply(cx));
+    w.h.frames(3);
+    w.h.app.shell.inject_answer("toolkit-exclusive", 0);
+    assert!(w.h.wait_until(WAIT, |h| h.app.app.archive.changed_counter == n && h.app.app.archive.is_open()), "change {n} applied and reloaded");
+    assert!(w.h.wait_until(WAIT, |h| h.app.app.apply.history().len() as u64 == n), "the history lists change {n}");
+    w.h.frames(2);
+}
+
+fn undo_enabled(h: &Harness<ToolkitApp>) -> bool {
+    shaiya_ui::ToolApp::commands(&h.app.app).iter().find(|c| c.id == "history-rollback").map(|c| c.enabled).expect("the command exists")
+}
+
+#[test]
+fn undo_last_change_rolls_back_two_applied_changes_one_at_a_time() {
+    let mut w = open_world("t7-undo-two");
+    let client = w.client_dir();
+    let src = TempDir::new("t7-undo-two-src");
+    let (a, b) = (src.path().join("a.txt"), src.path().join("b.txt"));
+    std::fs::write(&a, b"first added file").unwrap();
+    std::fs::write(&b, b"second added file, longer than the first").unwrap();
+    assert_eq!(w.h.app.app.undo_state().unwrap_err(), "No change made by the toolkit to this client can be undone yet.", "nothing to undo before the first apply");
+    assert!(!undo_enabled(&w.h));
+    let (sah0, saf0) = (std::fs::read(client.join("data.sah")).unwrap(), std::fs::metadata(client.join("data.saf")).unwrap().len());
+    apply_put(&mut w, "u/a.txt", &a, 1);
+    let (sah1, saf1) = (std::fs::read(client.join("data.sah")).unwrap(), std::fs::metadata(client.join("data.saf")).unwrap().len());
+    apply_put(&mut w, "u/b.txt", &b, 2);
+    assert_ne!(std::fs::read(client.join("data.sah")).unwrap(), sah1);
+    assert!(undo_enabled(&w.h), "the palette command is enabled");
+    let newest = w.h.app.app.apply.history()[1].0.clone();
+    assert_eq!(w.h.app.app.undo_state().unwrap(), newest.label, "the newest journal is the one offered");
+    // first undo: the confirmation of the Roll back flow, naming the newest journal
+    with_cx(&mut w.h, |app, cx| shaiya_ui::ToolApp::run_command(app, "history-rollback", cx));
+    w.h.frames(3);
+    let t = w.h.text().to_string();
+    assert_eq!(w.h.app.app.tab, Tab::Apply);
+    assert!(t.contains("Roll back") && t.contains(&newest.id), "the W2 confirmation names the journal: {t}");
+    for label in ["Changes", "Writes", "Undo", "Game"] {
+        assert!(t.contains(label), "the {label} row: {t}");
+    }
+    assert!(std::fs::metadata(client.join("data.saf")).unwrap().len() > saf1, "nothing is restored before the answer");
+    w.h.app.shell.inject_answer("toolkit-rollback", 0);
+    assert!(
+        w.h.wait_until(WAIT, |h| matches!(h.app.app.apply.history().get(1).map(|(j, _)| j.state.clone()), Some(shaiya_archive::journal::State::RolledBack { .. })) && h.app.app.archive.is_open()),
+        "the second change is rolled back"
+    );
+    w.h.frames(3);
+    assert_eq!(std::fs::read(client.join("data.sah")).unwrap(), sah1, "data.sah is byte for byte the state after the first change");
+    assert_eq!(std::fs::metadata(client.join("data.saf")).unwrap().len(), saf1, "data.saf is cut to its length after the first change");
+    // second undo: the first change is now the newest applied one
+    assert!(w.h.wait_until(WAIT, |h| h.app.app.undo_state().is_ok()), "the first change can be undone now");
+    let first = w.h.app.app.apply.history()[0].0.clone();
+    assert_eq!(w.h.app.app.undo_state().unwrap(), first.label);
+    with_cx(&mut w.h, |app, cx| shaiya_ui::ToolApp::run_command(app, "history-rollback", cx));
+    w.h.frames(3);
+    assert!(w.h.text().contains(&first.id), "{}", w.h.text());
+    w.h.app.shell.inject_answer("toolkit-rollback", 0);
+    assert!(
+        w.h.wait_until(WAIT, |h| matches!(h.app.app.apply.history().first().map(|(j, _)| j.state.clone()), Some(shaiya_archive::journal::State::RolledBack { .. })) && h.app.app.archive.is_open()),
+        "the first change is rolled back"
+    );
+    w.h.frames(3);
+    assert_eq!(std::fs::read(client.join("data.sah")).unwrap(), sah0, "the original data.sah is back");
+    assert_eq!(std::fs::metadata(client.join("data.saf")).unwrap().len(), saf0, "the original data.saf length is back");
+    assert!(w.h.app.app.undo_state().is_err() && !undo_enabled(&w.h), "nothing is left to undo");
+}
+
+#[test]
+fn undo_last_change_is_disabled_after_compact_with_the_reason() {
+    let mut w = open_world("t7-undo-compact");
+    let src = TempDir::new("t7-undo-compact-src");
+    let a = src.path().join("Item.SData");
+    std::fs::write(&a, b"a replacement entry that leaves the old one as dead space").unwrap();
+    apply_put(&mut w, "Item/Item.SData", &a, 1);
+    assert!(w.h.app.app.undo_state().is_ok());
+    w.h.app.app.archive.request_compact();
+    w.h.frames(3);
+    w.h.app.shell.inject_answer("toolkit-exclusive", 0);
+    assert!(w.h.wait_until(WAIT, |h| h.app.app.archive.changed_counter == 2 && h.app.app.archive.is_open()), "compacted");
+    assert!(w.h.wait_until(WAIT, |h| h.app.app.undo_state().is_err()), "the item is disabled once the history is re-read");
+    let why = w.h.app.app.undo_state().unwrap_err();
+    assert!(why.starts_with("The newest change (") && why.contains("cannot be rolled back") && why.contains("changed since"), "{why}");
+    assert!(!undo_enabled(&w.h), "the palette command is disabled too");
+    let sah = std::fs::read(w.client.path().join("data.sah")).unwrap();
+    with_cx(&mut w.h, |app, cx| shaiya_ui::ToolApp::run_command(app, "history-rollback", cx));
+    w.h.frames(3);
+    assert!(!w.h.text().contains("Roll back "), "no confirmation opens when the item is disabled: {}", w.h.text());
+    assert_eq!(std::fs::read(w.client.path().join("data.sah")).unwrap(), sah, "nothing was written");
+}
+
+#[test]
+fn undo_last_change_needs_a_client() {
+    let mut h = Harness::<ToolkitApp>::bare();
+    h.frames(3);
+    assert!(h.text().contains("Undo last change"), "the toolbar button is drawn (disabled): {}", h.text());
+    assert_eq!(h.app.app.undo_state().unwrap_err(), "Open a client folder first.");
+    assert!(!undo_enabled(&h));
+}

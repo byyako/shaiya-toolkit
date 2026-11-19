@@ -358,12 +358,14 @@ impl ToolkitApp {
             Add,
             Other,
             Manage,
+            Undo,
             Tab(Tab),
         }
         let mut act: Option<A> = None;
         let pal = cx.shell.pal();
         let clients: Vec<shaiya_ui::Client> = cx.shell.shared().clients.clone();
         let current = self.current.as_ref().map(|c| c.name.clone());
+        let undo = self.undo_state();
         let shown = match (&current, self.archive.source_name()) {
             (Some(n), _) => n.clone(),
             (None, Some(f)) => f,
@@ -397,6 +399,19 @@ impl ToolkitApp {
                 act = Some(A::Manage);
             }
             ui.separator();
+            let tip = match &undo {
+                Ok(label) => format!("Roll back {label}, the newest change the toolkit made. It shows what is restored and asks first."),
+                Err(_) => String::new(),
+            };
+            let b = ui.add_enabled(undo.is_ok(), egui::Button::new("Undo last change"));
+            let clicked = match &undo {
+                Ok(_) => b.on_hover_text(tip).clicked(),
+                Err(why) => b.on_disabled_hover_text(why).clicked(),
+            };
+            if clicked {
+                act = Some(A::Undo);
+            }
+            ui.separator();
             for t in Tab::ALL {
                 if ui.selectable_label(self.tab == t, t.label()).clicked() {
                     act = Some(A::Tab(t));
@@ -415,9 +430,27 @@ impl ToolkitApp {
                 }
             }
             Some(A::Manage) => self.clients.open_manage(cx.shell),
+            Some(A::Undo) => self.undo_last_change(cx),
             Some(A::Tab(t)) => self.set_tab(t, cx),
             None => {}
         }
+    }
+
+    /// The label of the change "Undo last change" would roll back, or why it cannot be done now (the text of the disabled hover).
+    pub fn undo_state(&self) -> Result<String, String> {
+        if self.archive.is_applying() {
+            return Err("Wait for the change in the Archive tab to finish.".to_string());
+        }
+        self.apply.undo_target(self.current.is_some()).map(|j| j.label.clone())
+    }
+
+    /// Edit > Undo last applied change, the toolbar button and the palette command: the Roll back confirmation of the newest change.
+    fn undo_last_change(&mut self, cx: &mut ToolkitCx<'_>) {
+        if self.undo_state().is_err() {
+            return;
+        }
+        self.set_tab(Tab::Apply, cx);
+        self.apply.request_rollback(self.current.as_ref());
     }
 
     fn tab_keys(&mut self, ctx: &egui::Context, cx: &mut ToolkitCx<'_>) {
@@ -551,6 +584,16 @@ impl ToolApp for ToolkitApp {
             }
             Menu::Edit => {
                 ui.separator();
+                let undo = self.undo_state();
+                let b = ui.add_enabled(undo.is_ok(), egui::Button::new("Undo last applied change (roll back)..."));
+                let clicked = match &undo {
+                    Ok(label) => b.on_hover_text(format!("Roll back {label}, the newest change the toolkit made")).clicked(),
+                    Err(why) => b.on_disabled_hover_text(why).clicked(),
+                };
+                if clicked {
+                    ui.close();
+                    self.undo_last_change(cx);
+                }
                 if ui.add_enabled(!self.inspect.is_empty(), egui::Button::new("Hash selected")).clicked() {
                     ui.close();
                     self.inspect.hash_selected(cx);
@@ -581,7 +624,7 @@ impl ToolApp for ToolkitApp {
         let client = self.current.as_ref();
         v.push(Command { id: "patch-build", label: "Build the patch".into(), shortcut: None, enabled: self.patch.build_blocked(&self.keys).is_none() });
         v.push(Command { id: "apply-patches", label: "Apply the listed patches...".into(), shortcut: None, enabled: self.apply.apply_blocked(client).is_none() });
-        v.push(Command { id: "history-rollback", label: "Roll back the newest change...".into(), shortcut: None, enabled: client.is_some() && self.apply.newest_rollback().is_some() });
+        v.push(Command { id: "history-rollback", label: "Undo last applied change (roll back)...".into(), shortcut: None, enabled: self.undo_state().is_ok() });
         v.push(Command { id: "hash-selected", label: "Hash selected files".into(), shortcut: None, enabled: !self.inspect.is_empty() });
         v
     }
@@ -601,10 +644,7 @@ impl ToolApp for ToolkitApp {
                 self.set_tab(Tab::Apply, cx);
                 self.apply.request_apply(self.current.as_ref(), &self.keys);
             }
-            "history-rollback" => {
-                self.set_tab(Tab::Apply, cx);
-                self.apply.request_rollback(self.current.as_ref());
-            }
+            "history-rollback" => self.undo_last_change(cx),
             "hash-selected" => self.inspect.hash_selected(cx),
             other => {
                 self.set_tab(Tab::Archive, cx);

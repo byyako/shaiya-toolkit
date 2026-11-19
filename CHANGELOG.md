@@ -10,6 +10,7 @@ All notable changes are listed here, newest first. The format follows [Keep a Ch
 - Apply & history says "Signatures: not used (unsigned patches)" when the client has no public key; "NOT CHECKED" now means a key is set but the patches were not verified.
 
 - With no client or archive open, the Archive tab shows a Start page: one line for each job (add a client folder, change files, make a patch, apply patches) with a button that opens the right place.
+- Undo last change: a toolbar button and Edit > Undo last applied change (roll back)... open the Roll back confirmation of the newest change the toolkit made; when that change cannot be rolled back (after Compact, for example) they are greyed out and the hover text says why. Ctrl+Z still undoes only the pending queue.
 - Every confirmation that changes a client folder (apply changes, apply patches, compact, roll back, prune, swap archives) shows four rows under its text: Changes, Writes, Undo and Game, computed from the plan that is applied.
 
 ### Documentation

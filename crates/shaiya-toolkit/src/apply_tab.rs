@@ -349,6 +349,22 @@ impl ApplyTab {
         self.flow = Flow::Running(req, handle);
     }
 
+    /// The newest applied change when it can be rolled back now, otherwise why it cannot. This is the one rule behind the Roll back
+    /// button, Edit > Undo last applied change and the toolbar button: the reason is `journal::list`'s own `Rollback::Blocked` text.
+    pub fn undo_target(&self, client_open: bool) -> Result<&Journal, String> {
+        if !client_open {
+            return Err("Open a client folder first.".to_string());
+        }
+        if self.is_busy() {
+            return Err("Wait for the running task to finish.".to_string());
+        }
+        match self.history.iter().rev().find(|(j, _)| j.state == State::Applied) {
+            None => Err("No change made by the toolkit to this client can be undone yet.".to_string()),
+            Some((j, Rollback::Possible)) => Ok(j),
+            Some((j, Rollback::Blocked(why))) => Err(format!("The newest change ({}) cannot be rolled back: {why}", j.label)),
+        }
+    }
+
     /// The newest journal that can be rolled back now.
     pub fn newest_rollback(&self) -> Option<&Journal> {
         self.history.iter().rev().find(|(j, r)| j.state == State::Applied && matches!(r, Rollback::Possible)).map(|(j, _)| j)
@@ -363,7 +379,7 @@ impl ApplyTab {
         if self.is_busy() {
             return;
         }
-        let Some(j) = self.newest_rollback() else { return };
+        let Ok(j) = self.undo_target(true) else { return };
         let dir = j.dir.clone();
         let text = format!("Roll back {} (applied {})?", j.label, local_time(&j.created_utc));
         self.confirm_rows = match ClientFiles::locate(&c.dir) {
