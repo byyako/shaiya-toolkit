@@ -817,10 +817,25 @@ fn remove_cmd(ctx: &Ctx, a: &RemoveArgs, job: &Job) -> Result<i32> {
     edit_cmd(ctx, Kind::Remove, &a.archive, &[], "", None, None, &paths, a.ignore_missing, &a.target, job)
 }
 
+/// The file checks for the files an add or replace would put in; the copy already in the archive (when it opens and has the path)
+/// is what an SData file is compared with. Findings only warn.
+fn put_findings(ctx: &Ctx, archive: &str, puts: &[Put]) -> Vec<shaiya_inspect::validate::Finding> {
+    use shaiya_inspect::validate::{check_source, is_sdata_name};
+    let existing = if puts.iter().any(|p| is_sdata_name(&p.path)) { open_full(ctx, archive).ok() } else { None };
+    let mut out = Vec::new();
+    for p in puts {
+        let copy = existing.as_ref().filter(|_| is_sdata_name(&p.path)).and_then(|a| a.read(&p.path).ok());
+        out.extend(check_source(&p.path, &p.source, copy.as_deref()));
+    }
+    out
+}
+
 #[allow(clippy::too_many_arguments)]
 fn edit_cmd(ctx: &Ctx, kind: Kind, archive: &str, src: &[PathBuf], at: &str, as_path: Option<&str>, timestamp: Option<&str>, removes: &[String], ignore_missing: bool, t: &Target, job: &Job) -> Result<i32> {
     need_target(t.in_place, &t.out)?;
     let puts = build_puts(kind, src, at, as_path, timestamp)?;
+    let findings = put_findings(ctx, archive, &puts);
+    warn_findings(ctx, &findings);
     let label = match kind {
         Kind::Remove => format!("archive edit: remove {}", count(removes.len(), "file")),
         _ => format!("archive edit: {}", count(puts.len(), "file")),
@@ -832,7 +847,7 @@ fn edit_cmd(ctx: &Ctx, kind: Kind, archive: &str, src: &[PathBuf], at: &str, as_
         if t.dry_run {
             let idx = Index::read(&files.sah)?;
             let r = edit::preview(&idx, &plan)?;
-            print_edit(ctx, &r, true, None, archive, t.journal_dir.as_deref());
+            print_edit(ctx, &r, true, None, archive, t.journal_dir.as_deref(), &findings);
             return Ok(0);
         }
         if t.no_journal {
@@ -841,7 +856,7 @@ fn edit_cmd(ctx: &Ctx, kind: Kind, archive: &str, src: &[PathBuf], at: &str, as_
         let root = journal_root(&dir, t.journal_dir.as_deref());
         let opts = InPlaceOptions { journal: if t.no_journal { JournalMode::None } else { JournalMode::In(root) }, legacy_bak: true, check_in_use: false };
         let r = edit::apply_in_place(&dir, &plan, &opts, job)?;
-        print_edit(ctx, &r, false, None, archive, t.journal_dir.as_deref());
+        print_edit(ctx, &r, false, None, archive, t.journal_dir.as_deref(), &findings);
         return Ok(0);
     }
     let out = t.out.as_ref().expect("checked by need_target");
@@ -849,17 +864,18 @@ fn edit_cmd(ctx: &Ctx, kind: Kind, archive: &str, src: &[PathBuf], at: &str, as_
     let sah = out_sah(out)?;
     if t.dry_run {
         let r = edit::preview(a.index(), &plan)?;
-        print_edit(ctx, &r, true, Some(&sah), archive, t.journal_dir.as_deref());
+        print_edit(ctx, &r, true, Some(&sah), archive, t.journal_dir.as_deref(), &findings);
         return Ok(0);
     }
     let r = edit::write_new(&a, &plan, &sah, if t.force { Existing::Overwrite } else { Existing::Refuse }, job)?;
-    print_edit(ctx, &r, false, Some(&sah), archive, t.journal_dir.as_deref());
+    print_edit(ctx, &r, false, Some(&sah), archive, t.journal_dir.as_deref(), &findings);
     Ok(0)
 }
 
-fn print_edit(ctx: &Ctx, r: &EditReport, dry: bool, out: Option<&std::path::Path>, client_arg: &str, journal_dir: Option<&std::path::Path>) {
+fn print_edit(ctx: &Ctx, r: &EditReport, dry: bool, out: Option<&std::path::Path>, client_arg: &str, journal_dir: Option<&std::path::Path>, findings: &[shaiya_inspect::validate::Finding]) {
     if ctx.json {
         let mut v = serde_json::to_value(r).unwrap_or(Value::Null);
+        v["warnings"] = findings_json(findings);
         if dry {
             v["dry_run"] = json!(true);
         }

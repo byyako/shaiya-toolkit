@@ -12,6 +12,7 @@ use shaiya_archive::edit::{self, EditPlan, EditReport, InPlaceOptions, Put, PutM
 use shaiya_archive::extract::{self, ExtractOptions, ExtractReport};
 use shaiya_archive::journal::{self, JournalMode};
 use shaiya_archive::{compact, Archive, Entry, Index};
+use shaiya_inspect::validate::{self, Finding};
 use shaiya_core::fs::{portable_name, write_atomic_from_with, Existing, Sync};
 use shaiya_core::glob::{Filter, Pattern};
 use shaiya_core::text::Encoding;
@@ -249,6 +250,58 @@ pub struct AddDialog {
     pub keep_folder_names: bool,
     pub rows: Vec<AddRow>,
     pub error: Option<String>,
+    /// File checks for the rows (see `shaiya_inspect::validate`); filled by a background task, valid when `checked`.
+    pub findings: Vec<Finding>,
+    pub checked: bool,
+    /// The "Add anyway / Cancel" question is open.
+    pub asking: bool,
+    check_gen: u64,
+    checking: Option<(u64, TaskHandle<Vec<Finding>>)>,
+}
+
+impl AddDialog {
+    /// "Queue changes" pressed. True: queue now. False: nothing yet (the checks are running, or the "Add anyway" question is open
+    /// because a file is double-encrypted or fails its checksum).
+    pub fn press_queue(&mut self) -> bool {
+        if self.rows.is_empty() || !self.checked {
+            return false;
+        }
+        if validate::any_asks(&self.findings) {
+            self.asking = true;
+            return false;
+        }
+        true
+    }
+}
+
+/// A put to queue: archive path, the file, its pack time.
+type QueuedPut = (String, PathBuf, i32);
+
+/// One file to check: archive path, the file on disk, and the entry already in the archive at that path.
+type CheckItem = (String, PathBuf, Option<Entry>);
+
+/// The file checks for files about to be queued; an SData file is compared with the archive's copy of the same path.
+fn check_items(items: &[CheckItem], archive: Option<&Archive>) -> Vec<Finding> {
+    let mut out = Vec::new();
+    for (path, source, entry) in items {
+        let copy = if validate::is_sdata_name(path) { archive.zip(entry.as_ref()).and_then(|(a, e)| a.read_entry(e).ok()) } else { None };
+        out.extend(validate::check_path(path, source, copy.as_deref()));
+    }
+    out
+}
+
+/// The text of the "Add anyway" question: the findings that ask, at most six, then what happens.
+pub(crate) fn findings_question(findings: &[Finding], verb: &str) -> String {
+    let mut s = String::new();
+    let asking: Vec<&Finding> = findings.iter().filter(|f| f.asks()).collect();
+    for f in asking.iter().take(6) {
+        s.push_str(&format!("{}\n", f.line()));
+    }
+    if asking.len() > 6 {
+        s.push_str(&format!("... and {} more\n", asking.len() - 6));
+    }
+    s.push_str(&format!("\nThese files may not work in the game. You can still {verb} them; nothing is blocked."));
+    s
 }
 
 // ------------------------------------------------------------------------------------------------ flows
@@ -354,6 +407,8 @@ pub struct ArchiveView {
     pub pending: Vec<Pending>,
     history: History<QueueEdit>,
     pub add_dialog: Option<AddDialog>,
+    /// A replacement file whose checks ask first: the puts to queue and the findings.
+    pub replace_ask: Option<(Vec<QueuedPut>, Vec<Finding>)>,
     pub check: Option<CheckPanel>,
     pub compare: Option<ComparePanel>,
     extract: Option<ExtractFlow>,
@@ -428,6 +483,7 @@ impl ArchiveView {
             pending: Vec::new(),
             history: History::new(500),
             add_dialog: None,
+            replace_ask: None,
             check: None,
             compare: None,
             extract: None,
@@ -1377,7 +1433,7 @@ impl ArchiveView {
     /// Opens the "Add to archive" dialog for dropped or chosen files and folders.
     pub fn begin_add(&mut self, paths: Vec<PathBuf>) {
         let target = self.folder.clone();
-        let mut d = AddDialog { paths, target, keep_folder_names: false, rows: Vec::new(), error: None };
+        let mut d = AddDialog { paths, target, keep_folder_names: false, rows: Vec::new(), error: None, findings: Vec::new(), checked: false, asking: false, check_gen: 0, checking: None };
         self.recompute_add(&mut d);
         self.add_dialog = Some(d);
     }
@@ -1385,6 +1441,11 @@ impl ArchiveView {
     pub fn recompute_add(&self, d: &mut AddDialog) {
         d.rows.clear();
         d.error = None;
+        d.findings.clear();
+        d.checked = false;
+        d.asking = false;
+        d.check_gen += 1;
+        d.checking = None;
         let mut inputs = Vec::new();
         let mut prefix_names: Vec<(PathBuf, String)> = Vec::new();
         for p in &d.paths {
@@ -1419,6 +1480,41 @@ impl ArchiveView {
             let size = std::fs::metadata(&source).map(|m| m.len()).unwrap_or(0);
             let replaces = self.find_row(&path).and_then(|i| self.loaded.as_ref().map(|l| (l.rows[i].entry.length, l.rows[i].entry.version)));
             d.rows.push(AddRow { path, version: mtime(&source), source, size, replaces });
+        }
+    }
+
+    /// "Replace with file...": checks the file against the entry it replaces, then queues it. A file the checks ask about waits for
+    /// "Add anyway" (see `replace_ask`); other findings are shown in the status bar and the file is queued.
+    pub fn replace_with_file(&mut self, row: usize, file: PathBuf, cx: &mut ToolkitCx<'_>) {
+        let Some(l) = &self.loaded else { return };
+        let path = l.rows[row].path.clone();
+        let version = mtime(&file);
+        let findings = check_items(&[(path.clone(), file.clone(), Some(l.rows[row].entry.clone()))], l.archive.as_deref());
+        if validate::any_asks(&findings) {
+            self.replace_ask = Some((vec![(path, file, version)], findings));
+            return;
+        }
+        if let Some(first) = findings.first() {
+            cx.shell.status(format!("Queued, with a warning: {}", first.line()));
+        }
+        self.queue_puts(vec![(path, file, version)]);
+    }
+
+    /// What the file checks of the dialog look at: each row's file and the entry the archive already holds at that path.
+    fn add_check_items(&self, d: &AddDialog) -> Vec<CheckItem> {
+        d.rows
+            .iter()
+            .map(|r| {
+                let entry = self.find_row(&r.path).and_then(|i| self.loaded.as_ref().map(|l| l.rows[i].entry.clone()));
+                (r.path.clone(), r.source.clone(), entry)
+            })
+            .collect()
+    }
+
+    /// What pressing "Queue changes" does (tests press it here): queues, or opens the question.
+    pub fn press_queue_changes(&mut self) {
+        if self.add_dialog.as_mut().is_some_and(AddDialog::press_queue) {
+            self.queue_add_dialog();
         }
     }
 
@@ -2046,10 +2142,46 @@ impl ArchiveView {
 
     fn draw_dialogs(&mut self, ui: &mut egui::Ui, cx: &mut ToolkitCx<'_>, requests: &mut Vec<TabRequest>) {
         let ctx = ui.ctx().clone();
+        // Replace with a file that looks broken
+        if let Some((items, findings)) = self.replace_ask.take() {
+            let c = Confirm {
+                title: "This file looks broken".into(),
+                text: findings_question(&findings, "queue"),
+                buttons: vec!["Add anyway".into(), "Cancel".into()],
+                ..Default::default()
+            };
+            match cx.shell.confirm("toolkit-replace-findings", &c) {
+                None => self.replace_ask = Some((items, findings)),
+                Some(0) => self.queue_puts(items),
+                Some(_) => {}
+            }
+        }
         // Add to archive
         let mut action: Option<&'static str> = None;
         if let Some(mut d) = self.add_dialog.take() {
             let mut changed = false;
+            // the file checks run in the background; the answer is used only when it is for the rows now shown
+            if let Some((g, mut h)) = d.checking.take() {
+                match h.poll() {
+                    None => d.checking = Some((g, h)),
+                    Some(outcome) => {
+                        if g == d.check_gen {
+                            if let TaskOutcome::Done(f) = outcome {
+                                d.findings = f;
+                            }
+                            d.checked = true;
+                        }
+                    }
+                }
+            }
+            if d.rows.is_empty() {
+                d.checked = true;
+            } else if !d.checked && d.checking.is_none() {
+                let items = self.add_check_items(&d);
+                let archive = self.loaded.as_ref().and_then(|l| l.archive.clone());
+                let h = cx.shell.tasks().spawn(TaskSpec { title: "Checking the files".to_string(), cancellable: true, exclusive: None }, move |_job| Ok(check_items(&items, archive.as_deref())));
+                d.checking = Some((d.check_gen, h));
+            }
             egui::Window::new("Add to archive").collapsible(false).default_width(560.0).show(&ctx, |ui| {
                 ui.horizontal(|ui| {
                     ui.label("Target folder");
@@ -2071,8 +2203,19 @@ impl ArchiveView {
                         ui.label("Nothing to add.");
                     }
                 });
+                if !d.checked {
+                    ui.label(RichText::new("Checking the files...").color(cx.shell.pal().weak));
+                }
+                if !d.findings.is_empty() {
+                    ui.label(RichText::new(format!("Checks ({}); they only warn", d.findings.len())).strong());
+                    egui::ScrollArea::vertical().id_salt("toolkit-add-findings").max_height(110.0).show(ui, |ui| {
+                        for f in &d.findings {
+                            ui.label(RichText::new(f.line()).color(if f.asks() { cx.shell.pal().error } else { cx.shell.pal().warning }));
+                        }
+                    });
+                }
                 ui.horizontal(|ui| {
-                    if ui.add_enabled(!d.rows.is_empty(), egui::Button::new("Queue changes")).clicked() {
+                    if ui.add_enabled(!d.rows.is_empty() && d.checked, egui::Button::new("Queue changes")).clicked() && d.press_queue() {
                         action = Some("queue");
                     }
                     if ui.button("Cancel").clicked() {
@@ -2084,6 +2227,19 @@ impl ArchiveView {
                 let mut d2 = d;
                 self.recompute_add(&mut d2);
                 d = d2;
+            }
+            if d.asking {
+                let c = Confirm {
+                    title: "Some files look broken".into(),
+                    text: findings_question(&d.findings, "add"),
+                    buttons: vec!["Add anyway".into(), "Cancel".into()],
+                    ..Default::default()
+                };
+                match cx.shell.confirm("toolkit-add-findings", &c) {
+                    None => {}
+                    Some(0) => action = Some("queue"),
+                    Some(_) => d.asking = false,
+                }
             }
             match action {
                 Some("queue") => {
@@ -2341,11 +2497,7 @@ impl ArchiveView {
                 }
                 Act::ReplaceWith(i) => {
                     if let Some(f) = cx.shell.pick_file("replace", &[("All files", &["*"])]) {
-                        if let Some(l) = &self.loaded {
-                            let path = l.rows[i].path.clone();
-                            let v = mtime(&f);
-                            self.queue_puts(vec![(path, f, v)]);
-                        }
+                        self.replace_with_file(i, f, cx);
                     }
                 }
                 Act::DecryptTo(i) => {

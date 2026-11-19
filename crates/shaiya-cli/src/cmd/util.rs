@@ -40,6 +40,18 @@ pub fn warn(ctx: &Ctx, text: &str) {
     }
 }
 
+/// Prints each finding of the file checks as a warning (stderr, silenced by `--quiet`); never changes an exit code.
+pub fn warn_findings(ctx: &Ctx, findings: &[shaiya_inspect::validate::Finding]) {
+    for f in findings {
+        warn(ctx, &f.line());
+    }
+}
+
+/// The findings as the `warnings` array of a `--json` result.
+pub fn findings_json(findings: &[shaiya_inspect::validate::Finding]) -> serde_json::Value {
+    serde_json::to_value(findings).unwrap_or(serde_json::Value::Null)
+}
+
 pub fn size(n: u64) -> String {
     human_size(n)
 }

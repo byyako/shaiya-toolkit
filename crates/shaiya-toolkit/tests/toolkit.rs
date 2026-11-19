@@ -911,3 +911,156 @@ fn undo_last_change_needs_a_client() {
     assert_eq!(h.app.app.undo_state().unwrap_err(), "Open a client folder first.");
     assert!(!undo_enabled(&h));
 }
+
+// ------------------------------------------------------------------------------------------------ T7 W4: checks before files go in
+
+fn finding_codes(f: &[shaiya_inspect::validate::Finding]) -> Vec<&'static str> {
+    let mut v: Vec<&'static str> = f.iter().map(|x| x.code).collect();
+    v.sort_unstable();
+    v
+}
+
+#[test]
+fn the_add_dialog_shows_checks_and_only_asks_for_double_encryption_or_a_bad_checksum() {
+    let mut w = open_world("t7-w4-add");
+    let src = TempDir::new("t7-w4-add-src");
+    // a plain Item.SData over the client's encrypted copy: a warning, no question
+    let plain = src.path().join("Item.SData");
+    std::fs::write(&plain, b"plain replacement").unwrap();
+    w.h.drop_files(std::slice::from_ref(&plain));
+    w.h.frames(2);
+    {
+        let arch = &mut w.h.app.app.archive;
+        let mut d = arch.add_dialog.take().unwrap();
+        d.target = "Item".into();
+        arch.recompute_add(&mut d);
+        arch.add_dialog = Some(d);
+    }
+    assert!(w.h.wait_until(WAIT, |h| h.app.app.archive.add_dialog.as_ref().is_some_and(|d| d.checked)), "the checks finish");
+    w.h.frames(2);
+    let d = w.h.app.app.archive.add_dialog.as_ref().unwrap();
+    assert_eq!(finding_codes(&d.findings), ["sdata-state-differs"], "{:?}", d.findings);
+    let t = w.h.text();
+    assert!(t.contains("Checks (1)") && t.contains("sdata-state-differs") && t.contains("Item/Item.SData"), "{t}");
+    w.h.app.app.archive.press_queue_changes();
+    w.h.frames(2);
+    assert_eq!(w.h.app.app.archive.pending.len(), 1, "a warning does not ask or block: the file is queued");
+    assert!(w.h.app.app.archive.add_dialog.is_none());
+
+    // a double-encrypted file asks first; Cancel keeps the dialog, Add anyway queues
+    let twice = src.path().join("Twice.SData");
+    std::fs::write(&twice, shaiya_seed::encrypt(&shaiya_seed::encrypt(b"body of the table"))).unwrap();
+    w.h.app.app.archive.begin_add(vec![twice.clone()]);
+    assert!(w.h.wait_until(WAIT, |h| h.app.app.archive.add_dialog.as_ref().is_some_and(|d| d.checked)));
+    w.h.frames(2);
+    assert_eq!(finding_codes(&w.h.app.app.archive.add_dialog.as_ref().unwrap().findings), ["sdata-double-encrypted"]);
+    w.h.app.app.archive.press_queue_changes();
+    w.h.frames(3);
+    assert_eq!(w.h.app.app.archive.pending.len(), 1, "nothing is queued before the answer");
+    let t = w.h.text();
+    assert!(t.contains("Add anyway") && t.contains("sdata-double-encrypted") && t.contains("nothing is blocked"), "{t}");
+    w.h.app.shell.inject_answer("toolkit-add-findings", 1);
+    w.h.frames(3);
+    assert_eq!(w.h.app.app.archive.pending.len(), 1, "Cancel queues nothing");
+    assert!(w.h.app.app.archive.add_dialog.is_some(), "and the dialog stays");
+    w.h.app.app.archive.press_queue_changes();
+    w.h.frames(3);
+    w.h.app.shell.inject_answer("toolkit-add-findings", 0);
+    w.h.frames(3);
+    assert_eq!(w.h.app.app.archive.pending.len(), 2, "Add anyway queues it");
+    assert!(w.h.app.app.archive.add_dialog.is_none());
+
+    // a bad checksum asks too; an unreadable texture and an empty file only warn
+    let bad = {
+        let mut b = shaiya_seed::encrypt(b"some table body");
+        b[40] ^= 1;
+        b
+    };
+    let (badf, cut, empty) = (src.path().join("Bad.SData"), src.path().join("cut.tga"), src.path().join("empty.txt"));
+    std::fs::write(&badf, bad).unwrap();
+    std::fs::write(&cut, &shaiya_testkit::tga_stub(4, 4)[..30]).unwrap();
+    std::fs::write(&empty, b"").unwrap();
+    w.h.app.app.archive.begin_add(vec![cut.clone(), empty.clone()]);
+    assert!(w.h.wait_until(WAIT, |h| h.app.app.archive.add_dialog.as_ref().is_some_and(|d| d.checked)));
+    assert_eq!(finding_codes(&w.h.app.app.archive.add_dialog.as_ref().unwrap().findings), ["empty-file", "texture-unreadable"]);
+    w.h.app.app.archive.press_queue_changes();
+    assert_eq!(w.h.app.app.archive.pending.len(), 4, "two warnings only: both queued without a question");
+    w.h.app.app.archive.begin_add(vec![badf.clone()]);
+    assert!(w.h.wait_until(WAIT, |h| h.app.app.archive.add_dialog.as_ref().is_some_and(|d| d.checked)));
+    assert_eq!(finding_codes(&w.h.app.app.archive.add_dialog.as_ref().unwrap().findings), ["sdata-crc-bad"]);
+    w.h.app.app.archive.press_queue_changes();
+    assert!(w.h.app.app.archive.add_dialog.as_ref().unwrap().asking, "a checksum failure asks");
+    assert_eq!(w.h.app.app.archive.pending.len(), 4);
+}
+
+#[test]
+fn replace_with_file_asks_about_a_double_encrypted_file_and_otherwise_queues() {
+    let mut w = open_world("t7-w4-replace");
+    let src = TempDir::new("t7-w4-replace-src");
+    let row = w.h.app.app.archive.find_row("Item/Item.SData").expect("the synthetic Item.SData");
+    // plain over an encrypted copy: queued, with a warning in the status bar
+    let plain = src.path().join("plain.bin");
+    std::fs::write(&plain, b"plain bytes").unwrap();
+    with_cx(&mut w.h, |app, cx| app.archive.replace_with_file(row, plain.clone(), cx));
+    assert_eq!(w.h.app.app.archive.pending.len(), 1);
+    w.h.frames(2);
+    assert!(w.h.text().contains("sdata-state-differs"), "{}", w.h.text());
+    // double-encrypted: not queued until Add anyway
+    let twice = src.path().join("twice.bin");
+    std::fs::write(&twice, shaiya_seed::encrypt(&shaiya_seed::encrypt(b"x"))).unwrap();
+    with_cx(&mut w.h, |app, cx| app.archive.replace_with_file(row, twice.clone(), cx));
+    assert!(w.h.app.app.archive.replace_ask.is_some());
+    w.h.frames(3);
+    assert!(w.h.text().contains("Add anyway") && w.h.text().contains("sdata-double-encrypted"), "{}", w.h.text());
+    w.h.app.shell.inject_answer("toolkit-replace-findings", 1);
+    w.h.frames(3);
+    assert!(w.h.app.app.archive.replace_ask.is_none());
+    assert!(matches!(&w.h.app.app.archive.pending[0].kind, shaiya_toolkit::archive_view::PendingKind::Put { source, .. } if source == &plain), "Cancel keeps the earlier put");
+    with_cx(&mut w.h, |app, cx| app.archive.replace_with_file(row, twice.clone(), cx));
+    w.h.frames(3);
+    w.h.app.shell.inject_answer("toolkit-replace-findings", 0);
+    w.h.frames(3);
+    assert_eq!(w.h.app.app.archive.pending.len(), 1, "the queued put for the same path is replaced, not duplicated");
+    let queued = &w.h.app.app.archive.pending[0];
+    assert!(matches!(&queued.kind, shaiya_toolkit::archive_view::PendingKind::Put { source, .. } if source == &twice), "{queued:?}");
+}
+
+#[test]
+fn the_patch_builder_lists_checks_and_asks_before_building_a_broken_file() {
+    let mut w = open_world("t7-w4-patch");
+    let src = TempDir::new("t7-w4-patch-src");
+    let files = src.path().join("changed");
+    std::fs::create_dir_all(files.join("data")).unwrap();
+    std::fs::write(files.join("data/Twice.SData"), shaiya_seed::encrypt(&shaiya_seed::encrypt(b"table"))).unwrap();
+    std::fs::write(files.join("data/ok.txt"), b"fine").unwrap();
+    std::fs::write(files.join("cut.tga"), &shaiya_testkit::tga_stub(4, 4)[..20]).unwrap();
+    let out_dir = TempDir::new("t7-w4-patch-out");
+    go(&mut w.h, Tab::Patch);
+    w.h.app.app.patch.out_dir = out_dir.path().display().to_string();
+    w.h.drop_files(std::slice::from_ref(&files));
+    assert!(w.h.wait_until(WAIT, |h| h.app.app.patch.checks_done() && h.app.app.patch.rows.len() == 3), "rows and checks are ready");
+    w.h.frames(2);
+    assert_eq!(finding_codes(w.h.app.app.patch.findings()), ["sdata-double-encrypted", "texture-unreadable"]);
+    let t = w.h.text();
+    assert!(t.contains("Checks before files go in (2)") && t.contains("data/Twice.SData") && t.contains("cut.tga"), "{t}");
+    // Build asks first; Cancel builds nothing
+    with_cx(&mut w.h, |app, cx| app.patch.begin_build(&app.keys, cx));
+    w.h.frames(3);
+    assert!(w.h.text().contains("Build anyway") && w.h.text().contains("sdata-double-encrypted"), "{}", w.h.text());
+    w.h.app.shell.inject_answer("toolkit-build-findings", 1);
+    w.h.frames(3);
+    assert!(!out_dir.path().join("ps0001.patch").exists() && w.h.app.app.patch.last_out.is_none(), "Cancel builds nothing");
+    with_cx(&mut w.h, |app, cx| app.patch.begin_build(&app.keys, cx));
+    w.h.frames(3);
+    w.h.app.shell.inject_answer("toolkit-build-findings", 0);
+    assert!(w.h.wait_until(WAIT, |h| h.app.app.patch.last_out.is_some()), "Build anyway builds");
+    assert!(out_dir.path().join("ps0001.patch").exists());
+    // without the double-encrypted file only a warning is left, and Build goes straight ahead
+    std::fs::remove_file(files.join("data/Twice.SData")).unwrap();
+    w.h.app.app.patch.set_card(shaiya_toolkit::patch_builder::Card::Files, Some(files.clone()));
+    assert!(w.h.wait_until(WAIT, |h| h.app.app.patch.checks_done() && h.app.app.patch.rows.len() == 2));
+    assert_eq!(finding_codes(w.h.app.app.patch.findings()), ["texture-unreadable"]);
+    w.h.app.app.patch.out_name = "ps0002.patch".into();
+    with_cx(&mut w.h, |app, cx| app.patch.begin_build(&app.keys, cx));
+    assert!(w.h.wait_until(WAIT, |h| out_dir.path().join("ps0002.patch").exists() && h.app.app.patch.last_out.as_ref().is_some_and(|p| p.ends_with("ps0002.patch"))), "a warning does not ask");
+}

@@ -27,6 +27,12 @@ The cipher is KISA **SEED in ECB mode** with one fixed key; the lookup tables co
 
 The *tail* is what the last block holds after `size` (the encoder's zero fill in most files). `Wrapper::Seed` keeps it so that `wrap(unwrap(x)) == x` holds **byte for byte** for every SData of every client tested; when the plaintext length changes, the tail is zero filled.
 
+## Encrypted twice
+
+A file is **encrypted twice** when the plaintext that `unwrap` gives is itself a wrapped file: it starts with the same 40-byte signature again. It happens when a wrapped file is run through an encryptor that does not look for the signature. A reader that removes one layer is left with encrypted bytes where it expects its table. The toolkit reports it as `sdata-double-encrypted` (see [Checks before files go in](../tools/shaiya.md#checks-before-files-go-in)); one `decrypt` gives the singly wrapped file back. A wrapper whose checksum fails, or whose header or block length is wrong, is `sdata-crc-bad`.
+
+Verified on: synthetic files built by encrypting twice (the tests); the toolkit's opt-in test reports 0 originals with this finding on every client of the version matrix that has SData files.
+
 ## Notes
 
 - Some loaders ignore a bad checksum, others reject it; the toolkit always checks it and offers `decrypt_unchecked` for damaged files.

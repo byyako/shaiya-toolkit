@@ -300,12 +300,15 @@ fn build(ctx: &Ctx, a: &BuildArgs, job: &Job) -> Result<i32> {
     if !problems.is_empty() {
         return Err(Error::Refused(format!("{}:\n  {}", count(problems.len(), "problem"), problems.join("\n  "))));
     }
+    let findings = shaiya_inspect::validate::check_input(&input);
+    warn_findings(ctx, &findings);
     if a.dry_run {
         let total: u64 = input.files.iter().map(|f| f.1.len().unwrap_or(0)).sum();
         let loose: u64 = input.loose.iter().map(|(_, p)| std::fs::metadata(p).map(|m| m.len()).unwrap_or(0)).sum();
         if ctx.json {
             print_json(&json!({"dry_run": true, "out": a.out.display().to_string(), "files": input.files.iter().map(|f| f.0.clone()).collect::<Vec<_>>(),
-                "loose": input.loose.iter().map(|f| f.0.clone()).collect::<Vec<_>>(), "removals": input.removals, "archive_bytes": total, "loose_bytes": loose}));
+                "loose": input.loose.iter().map(|f| f.0.clone()).collect::<Vec<_>>(), "removals": input.removals, "archive_bytes": total, "loose_bytes": loose,
+                "warnings": findings_json(&findings)}));
         } else {
             let c = Contents {
                 sah_version: 0,
@@ -333,6 +336,7 @@ fn build(ctx: &Ctx, a: &BuildArgs, job: &Job) -> Result<i32> {
         let mut v = serde_json::to_value(&r).unwrap_or(Value::Null);
         v["out"] = json!(a.out.display().to_string());
         v["signature"] = json!(sig);
+        v["warnings"] = findings_json(&findings);
         print_json(&v);
     } else {
         let meta = std::fs::metadata(&a.out).map(|m| m.len()).unwrap_or(0);

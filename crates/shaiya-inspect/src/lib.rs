@@ -2,6 +2,8 @@
 //! program. Detection is by content first, name second. Malformed input gives a `problems` entry, not a failure, unless the file cannot
 //! be read at all.
 
+pub mod validate;
+
 use serde::Serialize;
 use shaiya_core::hash::{sha256_file, to_hex};
 use shaiya_core::time::utc_iso_unix;

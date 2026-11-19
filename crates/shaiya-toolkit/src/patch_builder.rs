@@ -12,6 +12,7 @@ use shaiya_core::fs::Existing;
 use shaiya_core::glob::Filter;
 use shaiya_core::time::{human_size, utc_iso_unix};
 use shaiya_core::Error;
+use shaiya_inspect::validate::{self, Finding};
 use shaiya_patch::{BuildInput, BuildOptions, Report};
 use shaiya_ui::{Confirm, Cx, TaskHandle, TaskOutcome, TaskSpec};
 use std::path::{Path, PathBuf};
@@ -50,6 +51,10 @@ struct BuildDone {
 
 enum BuildFlow {
     Idle,
+    /// Build pressed while the file checks of the current contents are still running.
+    WaitCheck(PathBuf),
+    /// The "Build anyway" question about files that look broken.
+    Ask(PathBuf),
     Confirm(PathBuf),
     Running(PathBuf, TaskHandle<BuildDone>),
 }
@@ -79,6 +84,11 @@ pub struct PatchBuilder {
     pub last_out: Option<PathBuf>,
     diff: Option<TaskHandle<(String, BuildInput)>>,
     effect_stamp: String,
+    /// File checks of the current contents (see `shaiya_inspect::validate`); valid when `checked_gen == Some(input_gen)`.
+    findings: Vec<Finding>,
+    check: Option<(u64, TaskHandle<Vec<Finding>>)>,
+    input_gen: u64,
+    checked_gen: Option<u64>,
 }
 
 impl Default for PatchBuilder {
@@ -131,6 +141,10 @@ impl PatchBuilder {
             last_out: None,
             diff: None,
             effect_stamp: String::new(),
+            findings: Vec::new(),
+            check: None,
+            input_gen: 1,
+            checked_gen: None,
         }
     }
 
@@ -222,6 +236,7 @@ impl PatchBuilder {
             }
         }
         self.problems = shaiya_patch::input_problems(&input);
+        self.input_gen += 1;
         self.input = input;
         self.effect_stamp.clear();
     }
@@ -331,11 +346,67 @@ impl PatchBuilder {
             return;
         }
         let Some(out) = self.out_path() else { return };
+        self.after_checks(out, cx);
+    }
+
+    /// The file checks of the current contents have finished.
+    fn checks_current(&self) -> bool {
+        self.checked_gen == Some(self.input_gen)
+    }
+
+    /// Next step of a build once the checks are known: the question about broken files, then the overwrite question, then the build.
+    fn after_checks(&mut self, out: PathBuf, cx: &mut ToolkitCx<'_>) {
+        if !self.checks_current() {
+            self.flow = BuildFlow::WaitCheck(out);
+        } else if validate::any_asks(&self.findings) {
+            self.flow = BuildFlow::Ask(out);
+        } else {
+            self.after_questions(out, cx);
+        }
+    }
+
+    fn after_questions(&mut self, out: PathBuf, cx: &mut ToolkitCx<'_>) {
         if out.exists() {
             self.flow = BuildFlow::Confirm(out);
         } else {
             self.start_build(out, Existing::Refuse, cx);
         }
+    }
+
+    /// Keeps `findings` in step with the contents: a background task when a file needs reading, directly when only lengths are needed.
+    fn run_checks(&mut self, cx: &mut ToolkitCx<'_>) {
+        if let Some((g, mut h)) = self.check.take() {
+            match h.poll() {
+                None => self.check = Some((g, h)),
+                Some(outcome) => {
+                    if g == self.input_gen {
+                        self.findings = if let TaskOutcome::Done(f) = outcome { f } else { Vec::new() };
+                        self.checked_gen = Some(g);
+                    }
+                }
+            }
+        }
+        if self.check.is_some() || self.checks_current() || self.dirty {
+            return;
+        }
+        let needs_reading = self.input.files.iter().map(|f| f.0.as_str()).chain(self.input.loose.iter().map(|f| f.0.as_str())).any(validate::wants_bytes);
+        if needs_reading {
+            let input = self.input.clone();
+            let h = cx.shell.tasks().spawn(TaskSpec { title: "Checking the files".to_string(), cancellable: true, exclusive: None }, move |_job| Ok(validate::check_input(&input)));
+            self.check = Some((self.input_gen, h));
+        } else {
+            self.findings = validate::check_input(&self.input);
+            self.checked_gen = Some(self.input_gen);
+        }
+    }
+
+    /// The file checks of the contents (valid once `checks_done`).
+    pub fn findings(&self) -> &[Finding] {
+        &self.findings
+    }
+
+    pub fn checks_done(&self) -> bool {
+        self.checks_current()
     }
 
     fn start_build(&mut self, out: PathBuf, existing: Existing, cx: &mut ToolkitCx<'_>) {
@@ -357,6 +428,7 @@ impl PatchBuilder {
     }
 
     pub fn tick(&mut self, cx: &mut ToolkitCx<'_>) {
+        self.run_checks(cx);
         if let Some(h) = &mut self.diff {
             match h.poll() {
                 None => {}
@@ -374,6 +446,26 @@ impl PatchBuilder {
         }
         match std::mem::replace(&mut self.flow, BuildFlow::Idle) {
             BuildFlow::Idle => {}
+            BuildFlow::WaitCheck(out) => {
+                if self.checks_current() {
+                    self.after_checks(out, cx);
+                } else {
+                    self.flow = BuildFlow::WaitCheck(out);
+                }
+            }
+            BuildFlow::Ask(out) => {
+                let c = Confirm {
+                    title: "Some files look broken".into(),
+                    text: crate::archive_view::findings_question(&self.findings, "put"),
+                    buttons: vec!["Build anyway".into(), "Cancel".into()],
+                    ..Default::default()
+                };
+                match cx.shell.confirm("toolkit-build-findings", &c) {
+                    None => self.flow = BuildFlow::Ask(out),
+                    Some(0) => self.after_questions(out, cx),
+                    Some(_) => {}
+                }
+            }
             BuildFlow::Confirm(out) => {
                 let c = Confirm { title: "Overwrite the patch".into(), text: format!("{} already exists.", out.display()), buttons: vec!["Overwrite".into(), "Cancel".into()], danger: Some(0), ..Default::default() };
                 match cx.shell.confirm("toolkit-build-exists", &c) {
@@ -502,6 +594,7 @@ impl PatchBuilder {
                     ui.end_row();
                 });
                 let n = self.rows.len();
+                let findings = &self.findings;
                 egui::ScrollArea::vertical().id_salt("toolkit-patch-rows").max_height(260.0).show_rows(ui, 18.0, n, |ui, range| {
                     for r in &self.rows[range] {
                         ui.horizontal(|ui| {
@@ -514,6 +607,9 @@ impl PatchBuilder {
                                 ui.label(RichText::new("problem").color(pal.error));
                             } else {
                                 ui.label(&r.effect);
+                                if findings.iter().any(|f| f.path == r.path) {
+                                    ui.label(RichText::new("check").color(pal.warning)).on_hover_text("See Checks before files go in, below the table");
+                                }
                             }
                         });
                     }
@@ -523,6 +619,18 @@ impl PatchBuilder {
                 }
                 if self.problems.len() > 8 {
                     ui.label(RichText::new(format!("... and {} more", self.problems.len() - 8)).color(pal.error));
+                }
+                if !self.checks_current() {
+                    ui.label(RichText::new("Checking the files...").color(pal.weak));
+                }
+                if !self.findings.is_empty() {
+                    ui.label(RichText::new(format!("Checks before files go in ({}); they only warn", self.findings.len())).strong());
+                    for f in self.findings.iter().take(8) {
+                        ui.label(RichText::new(f.line()).color(if f.asks() { pal.error } else { pal.warning }));
+                    }
+                    if self.findings.len() > 8 {
+                        ui.label(RichText::new(format!("... and {} more", self.findings.len() - 8)).color(pal.warning));
+                    }
                 }
             }
             ui.add_space(8.0);

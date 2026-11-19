@@ -12,11 +12,21 @@ All notable changes are listed here, newest first. The format follows [Keep a Ch
 - With no client or archive open, the Archive tab shows a Start page: one line for each job (add a client folder, change files, make a patch, apply patches) with a button that opens the right place.
 - Undo last change: a toolbar button and Edit > Undo last applied change (roll back)... open the Roll back confirmation of the newest change the toolkit made; when that change cannot be rolled back (after Compact, for example) they are greyed out and the hover text says why. Ctrl+Z still undoes only the pending queue.
 - Every confirmation that changes a client folder (apply changes, apply patches, compact, roll back, prune, swap archives) shows four rows under its text: Changes, Writes, Undo and Game, computed from the plan that is applied.
+- Checks before files go in: the Add to archive dialog, Replace with file... and the Patch builder check each SData, `.dds` and `.tga` file and each empty file and list the findings (`sdata-double-encrypted`, `sdata-crc-bad`, `sdata-state-differs`, `texture-unreadable`, `empty-file`). Findings only warn, except that a file encrypted twice or with a failing checksum asks once, "Add anyway" (the Patch builder: "Build anyway") or Cancel.
+
+### shaiya (CLI)
+
+- `patch build`, `archive add` and `archive replace` print the same findings as `warning:` lines and in a `warnings` array of the `--json` result; exit codes do not change.
+
+### Libraries
+
+- `shaiya-inspect` has a `validate` module (`check_file`, `check_source`, `check_input`) behind the checks; it depends on `shaiya-clientdata` for the texture reader.
 
 ### Documentation
 
 - The toolkit page describes the Start page and the four confirmation rows; the undo-and-recovery guide points to them.
 - The make-a-patch guide section 4 is now "Optional: sign it" (the anchor changed to `#4-optional-sign-it`) and the patch format page says signatures are optional.
+- The SData wrapper page describes a file encrypted twice; the CLI page, the toolkit page and the mod-files, SData files and make-a-patch guides list the checks before files go in; the version matrix gains two assumption rows with the measured numbers; the textures page says DXT2 and DXT4 DDS files do not read.
 
 ## [0.2.1] - 2026-11-19
 

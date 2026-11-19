@@ -14,6 +14,8 @@ The toolkit reads the client's pictures and writes two kinds of its own for new 
 
 A size of 0 or above 16,384 is refused. A texture that is missing or cannot be decoded is shown as a magenta and black checker.
 
+A DDS with another four-character code (DXT2 and DXT4, the premultiplied-alpha variants, for example) is refused: `Item/DDS/reflection.dds` of the US EP4.5 client is DXT2 and does not preview. The file checks before files go in report such a file as `texture-unreadable` and say the game may still accept it (see [Checks before files go in](../tools/shaiya.md#checks-before-files-go-in)).
+
 ## What is written
 
 Only Add a map writes pictures, to the staging folder. Both follow the files of the EP4.5 client.

@@ -59,6 +59,16 @@ Remove files: `shaiya archive remove "@mymod" test/junk.eft --in-place` (or `--l
 
 Loose files, the ones that live next to `game.exe` rather than inside the archive, are not part of `data.saf`. To change them, put them in a patch (`--loose`) and apply it; the toolkit saves the original in the journal first. See [make a patch](make-a-patch.md).
 
+## Checks before files go in
+
+Before an edit or a build, the toolkit looks at each file and prints what it finds as a warning; nothing is blocked. Shaiya Toolkit lists the same findings in the Add dialog and the Patch builder (and asks once, "Add anyway", for the first two). The full table is in [Checks before files go in](../tools/shaiya.md#checks-before-files-go-in).
+
+- `sdata-double-encrypted`: the SData file was encrypted twice (its decrypted body is SEED-encrypted again). Decrypting it once with `shaiya sdata decrypt` gives the singly encrypted file.
+- `sdata-crc-bad`: the SEED checksum fails or the wrapper is damaged.
+- `sdata-state-differs`: you are putting a plain SData where the client's copy is encrypted, or the reverse. Some clients store theirs plain, so this is advice only; `sdata encrypt --like "@name"` takes the form from the client (see [SData files](sdata-files.md)).
+- `texture-unreadable`: a `.dds` or `.tga` the toolkit's reader cannot open. The game may still read it; open it in an image editor to be sure.
+- `empty-file`: the file has no bytes.
+
 ## Or make a patch instead
 
 When other people need the same change, or you want one file that bundles several edits, build a patch from your folder and apply it. A patch is also the easiest way to hand a modification to a friend:
