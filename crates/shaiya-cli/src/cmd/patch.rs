@@ -42,6 +42,15 @@ pub enum Cmd {
     ///
     /// Example: shaiya patch apply "@us" ps0109.patch --key public.key --check-version 3
     Apply(ApplyArgs),
+    /// Publish patches for the regular updater: copy them into a server folder and raise PatchFileVersion in UpdateVersion.ini
+    ///
+    /// The folder is DIR/Shaiya/UpdateVersion.ini with the patches in DIR/Shaiya/patch/ (--layout shaiya), or all in DIR (--layout flat).
+    /// Nothing is published when a name is not psNNNN.patch, a number is missing, a different file with the same name is already
+    /// there, CheckVersion differs from the existing ini's, or DIR is a client folder. --dry-run shows the plan and writes nothing.
+    /// Exit 0 done (or nothing to do), 3 bad input, 4 refused.
+    ///
+    /// Example: shaiya patch publish ps0110.patch --to server-files --check-version 3
+    Publish(PublishArgs),
     /// Undo the newest change made by the toolkit to a client folder
     ///
     /// Example: shaiya patch rollback "@us"
@@ -150,6 +159,31 @@ pub struct ApplyArgs {
 }
 
 #[derive(clap::Args)]
+pub struct PublishArgs {
+    /// The patches to publish (psNNNN.patch; a .sig beside a patch goes with it)
+    #[arg(required = true)]
+    pub patches: Vec<PathBuf>,
+    /// The server folder to publish into (never a client folder)
+    #[arg(long, value_name = "DIR")]
+    pub to: PathBuf,
+    /// The client generation (CheckVersion in your players' Version.ini); required for a new UpdateVersion.ini
+    #[arg(long, value_name = "N")]
+    pub check_version: Option<u32>,
+    /// UpdaterVersion for a new UpdateVersion.ini (default 1), or the new value for an existing one
+    #[arg(long, value_name = "N")]
+    pub updater_version: Option<u32>,
+    /// Allow a CheckVersion that differs from the existing ini's (every player is then told to reinstall the game)
+    #[arg(long)]
+    pub new_check_version: bool,
+    /// shaiya: DIR/Shaiya/UpdateVersion.ini and DIR/Shaiya/patch/psNNNN.patch; flat: both in DIR
+    #[arg(long, value_name = "LAYOUT", default_value = "shaiya", value_parser = ["shaiya", "flat"])]
+    pub layout: String,
+    /// Show the plan and write nothing
+    #[arg(long)]
+    pub dry_run: bool,
+}
+
+#[derive(clap::Args)]
 pub struct RollbackArgs {
     pub client: String,
     /// The change to undo (default: the newest)
@@ -214,6 +248,7 @@ pub fn run(ctx: &Ctx, cmd: &Cmd, job: &Job) -> i32 {
         Cmd::List(a) => list(ctx, a),
         Cmd::Verify(a) => verify_cmd(ctx, a, job),
         Cmd::Apply(a) => apply(ctx, a, job),
+        Cmd::Publish(a) => publish_cmd(ctx, a, job),
         Cmd::Rollback(a) => rollback(ctx, a, job),
         Cmd::History(a) => history(ctx, a),
         Cmd::Keygen(a) => keygen(ctx, a),
@@ -504,6 +539,63 @@ fn apply(ctx: &Ctx, a: &ApplyArgs, job: &Job) -> Result<i32> {
     }
     if ctx.json {
         print_json(&json!({"client": dir.display().to_string(), "results": done.iter().map(|r| serde_json::to_value(r).unwrap_or(Value::Null)).collect::<Vec<_>>()}));
+    }
+    Ok(0)
+}
+
+// ---------------------------------------------------------------------------------------------------------- publish
+
+fn publish_cmd(ctx: &Ctx, a: &PublishArgs, job: &Job) -> Result<i32> {
+    use shaiya_patch::publish::{plan_publish, publish, FileState, Layout, PublishOptions};
+    let client_dirs: Vec<PathBuf> = crate::config::load_clients(ctx.data_dir.as_deref())?.into_iter().map(|c| c.path).collect();
+    let opts = PublishOptions {
+        layout: Layout::parse(&a.layout).unwrap_or(Layout::Shaiya),
+        check_version: a.check_version,
+        updater_version: a.updater_version,
+        new_check_version: a.new_check_version,
+        client_dirs,
+    };
+    let plan = plan_publish(&a.patches, &a.to, &opts, job)?;
+    let mut findings = Vec::new();
+    for item in &plan.items {
+        findings.extend(shaiya_inspect::validate::check_patch(&item.patch.source, job)?);
+    }
+    for w in &plan.warnings {
+        warn(ctx, w);
+    }
+    warn_findings(ctx, &findings);
+    let rel = |p: &std::path::Path| p.strip_prefix(&plan.dir).unwrap_or(p).display().to_string();
+    let report = if a.dry_run { None } else { Some(publish(&plan, job)?) };
+    if ctx.json {
+        let mut v = json!({"dry_run": a.dry_run, "plan": serde_json::to_value(&plan).unwrap_or(Value::Null), "warnings": findings_json(&findings), "notes": plan.warnings,
+            "nothing_to_do": plan.nothing_to_do()});
+        if let Some(r) = &report {
+            v["result"] = serde_json::to_value(r).unwrap_or(Value::Null);
+        }
+        print_json(&v);
+        return Ok(0);
+    }
+    let mut w = out();
+    outln!(w, "{} {} to {} (layout {})", if a.dry_run { "would publish" } else { "published" }, count(plan.items.len(), "patch"), plan.dir.display(), a.layout);
+    for item in &plan.items {
+        let state = match item.patch.state {
+            FileState::New => "new",
+            FileState::AlreadyPublished => "already published (same file)",
+        };
+        outln!(w, "  {}  {}  {}  -> {}", file_name(&item.patch.source), state, size(item.patch.size), rel(&item.patch.target));
+        if let Some(s) = &item.signature {
+            outln!(w, "    {}  {}  -> {}", file_name(&s.source), if s.state == FileState::New { "new" } else { "already published (same file)" }, rel(&s.target));
+        }
+    }
+    let ini = rel(&plan.ini_path);
+    if !plan.ini_changed {
+        outln!(w, "  {ini}: unchanged (PatchFileVersion {}, CheckVersion {}, UpdaterVersion {})", plan.patch_file_version_after, plan.check_version, plan.updater_version);
+    } else {
+        let before = plan.patch_file_version_before.map_or("new file".to_string(), |v| v.to_string());
+        outln!(w, "  {ini}: PatchFileVersion {before} -> {} (CheckVersion {}, UpdaterVersion {})", plan.patch_file_version_after, plan.check_version, plan.updater_version);
+    }
+    if report.is_some() {
+        outln!(w, "every written file was read back and matches");
     }
     Ok(0)
 }

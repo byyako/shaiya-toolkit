@@ -144,6 +144,25 @@ pub fn check_input(input: &BuildInput) -> Vec<Finding> {
     out
 }
 
+/// Findings for the files inside a finished patch (archive files and loose files), read from the patch without unpacking it to disk.
+/// No client copy is known, so `sdata-state-differs` is never reported. Empty files are reported from the patch's own listing.
+pub fn check_patch(patch: &Path, job: &Job) -> shaiya_core::Result<Vec<Finding>> {
+    let mut out = Vec::new();
+    let c = shaiya_patch::contents(patch)?;
+    for f in &c.files {
+        if f.length == 0 {
+            out.extend(check_file(&f.path, &[], None));
+        }
+    }
+    for (name, size) in &c.loose {
+        if *size == 0 {
+            out.extend(check_file(name, &[], None));
+        }
+    }
+    shaiya_patch::read_files(patch, READ_LIMIT, &wants_bytes, &mut |name, bytes| out.extend(check_file(name, bytes, None)), job)?;
+    Ok(out)
+}
+
 /// Findings that make the Toolkit ask once before going on.
 pub fn any_asks(findings: &[Finding]) -> bool {
     findings.iter().any(Finding::asks)
@@ -183,6 +202,34 @@ mod tests {
         // three layers are still reported once
         let thrice = seed::encrypt(&twice);
         assert_eq!(codes(&check_file("Item.sdata", &thrice, None)), [code::SDATA_DOUBLE_ENCRYPTED]);
+    }
+
+    #[test]
+    fn a_finished_patch_is_checked_from_its_archive_and_loose_files() {
+        let t = shaiya_testkit::TempDir::new("check-patch");
+        let files = t.path().join("files");
+        std::fs::create_dir_all(files.join("Item")).unwrap();
+        std::fs::create_dir_all(files.join("ui")).unwrap();
+        std::fs::write(files.join("Item/Item.SData"), seed::encrypt(&seed::encrypt(&payload()))).unwrap();
+        std::fs::write(files.join("Item/Skill.SData"), seed::encrypt(&payload())).unwrap();
+        std::fs::write(files.join("ui/broken.dds"), b"DDS not really").unwrap();
+        std::fs::write(files.join("ui/ok.tga"), tga_stub(4, 4)).unwrap();
+        let loose = t.path().join("loose");
+        std::fs::create_dir_all(&loose).unwrap();
+        std::fs::write(loose.join("Other.SData"), seed::encrypt(&seed::encrypt(&payload()))).unwrap();
+        let patch = t.path().join("ps0001.patch");
+        shaiya_patch::build(Some(&files), Some(&loose), None, &patch).unwrap();
+        let f = check_patch(&patch, &Job::silent()).unwrap();
+        let mut got: Vec<(String, &str)> = f.iter().map(|x| (x.path.to_lowercase(), x.code)).collect();
+        got.sort();
+        assert_eq!(
+            got,
+            [
+                ("item/item.sdata".to_string(), code::SDATA_DOUBLE_ENCRYPTED),
+                ("other.sdata".to_string(), code::SDATA_DOUBLE_ENCRYPTED),
+                ("ui/broken.dds".to_string(), code::TEXTURE_UNREADABLE)
+            ]
+        );
     }
 
     #[test]

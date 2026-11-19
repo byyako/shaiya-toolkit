@@ -104,11 +104,14 @@ pub fn recover(dir: &Path) -> Result<Vec<String>> {
     Ok(notes)
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct VersionIni {
     pub check_version: Option<u32>,
     pub current_version: Option<u32>,
+    /// `StartUpdate` as written (`UPDATE_START` while the original updater patches, `UPDATE_END` after; `UPDATE_START` that stays is
+    /// the mark of an update that did not finish).
+    pub start_update: Option<String>,
 }
 
 /// `[Version]` keys, case-insensitive, ASCII/cp949 text.
@@ -127,10 +130,10 @@ pub fn read_version_ini(files: &ClientFiles) -> Option<VersionIni> {
             continue;
         }
         let Some((k, v)) = l.split_once('=') else { continue };
-        let v = v.trim().parse::<u32>().ok();
         match k.trim().to_ascii_lowercase().as_str() {
-            "checkversion" => out.check_version = v,
-            "currentversion" => out.current_version = v,
+            "checkversion" => out.check_version = v.trim().parse::<u32>().ok(),
+            "currentversion" => out.current_version = v.trim().parse::<u32>().ok(),
+            "startupdate" => out.start_update = Some(v.trim().to_string()).filter(|v| !v.is_empty()),
             _ => {}
         }
     }
@@ -168,6 +171,11 @@ mod tests {
         let f = ClientFiles::locate(d.path()).unwrap();
         let v = read_version_ini(&f).unwrap();
         assert_eq!((v.check_version, v.current_version), (Some(7), None));
+        assert_eq!(v.start_update.as_deref(), Some("UPDATE_END"), "StartUpdate is read as written");
+        std::fs::write(&p, b"[Version]
+CurrentVersion=5
+").unwrap();
+        assert_eq!(read_version_ini(&f).unwrap().start_update, None, "absent when not there");
         std::fs::remove_file(&p).unwrap();
         assert!(read_version_ini(&ClientFiles::locate(d.path()).unwrap()).is_none());
     }

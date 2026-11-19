@@ -137,19 +137,19 @@ fn go(ctx: &Ctx, cmd: &Cmd) -> Result<i32> {
                 .ok_or_else(|| Error::io(PathBuf::from(format!("@{name}")), std::io::Error::new(std::io::ErrorKind::NotFound, "no saved client folder with this name (hint: shaiya clients list)")))?;
             let files = ClientFiles::locate(&c.path)?;
             let idx = Index::read(&files.sah)?;
-            let ini = read_version_ini(&files);
+            let ini = read_version_ini(&files).map(|i| (i.check_version, i.current_version));
             let journals = journal::list(&c.path, &c.path.join(journal::DEFAULT_DIR)).map(|l| l.len()).unwrap_or(0);
             if ctx.json {
                 print_json(&json!({
                     "name": c.name, "path": c.path.display().to_string(), "note": c.note, "added_utc": c.added_utc, "sah_version": idx.version, "files": idx.file_count(),
-                    "check_version": ini.and_then(|i| i.check_version), "current_version": ini.and_then(|i| i.current_version),
+                    "check_version": ini.and_then(|i| i.0), "current_version": ini.and_then(|i| i.1),
                     "game_exe": files.game_exe.is_some(), "journals": journals
                 }));
             } else {
                 let fmt = |v: Option<u32>| v.map(|n| n.to_string()).unwrap_or_else(|| "-".to_string());
                 println!("{}  {}", c.name, c.path.display());
                 println!("  archive:   SAH version {}, {}", idx.version, count(idx.file_count(), "file"));
-                println!("  Version.ini: CheckVersion {}, CurrentVersion {}", fmt(ini.and_then(|i| i.check_version)), fmt(ini.and_then(|i| i.current_version)));
+                println!("  Version.ini: CheckVersion {}, CurrentVersion {}", fmt(ini.and_then(|i| i.0)), fmt(ini.and_then(|i| i.1)));
                 println!("  game.exe:  {}", if files.game_exe.is_some() { "present" } else { "not found" });
                 println!("  changes made by the toolkit: {journals}");
             }

@@ -4,6 +4,7 @@
 //! Compaction is in `shaiya_archive::compact`. Also here: streaming reproducible builds, a dry-run [`plan`], [`apply_with`] over `shaiya_archive::edit::apply_in_place` (journal, rollback,
 //! in-use check), [`verify`] and signature file helpers ([`sign`]).
 
+pub mod publish;
 pub mod sign;
 
 use shaiya_archive::client::{self, ClientFiles};
@@ -212,6 +213,67 @@ pub fn contents(patch: &Path) -> Result<Contents> {
     let unpacked_size = (0..z.len()).filter_map(|i| z.by_index_raw(i).ok().map(|f| f.size())).sum();
     let zip_size = io_at(patch, fs::metadata(patch))?.len();
     Ok(Contents { sah_version: idx.version, files, loose, removals: read_removals(&mut z)?, zip_size, unpacked_size, signature_file: signature_path(patch).is_file() })
+}
+
+/// Hands the bytes of the patch's files to `visit`, for the files `want` accepts (by archive path or loose name) and whose length is at
+/// most `max_len`: archive files first, then loose files. Nothing is written; `update.saf` is read as a stream (one pass, files in
+/// order of their offsets), so at most one file is in memory at a time.
+pub fn read_files(patch: &Path, max_len: u64, want: &dyn Fn(&str) -> bool, visit: &mut dyn FnMut(&str, &[u8]), job: &Job) -> Result<()> {
+    let mut z = open_zip(patch)?;
+    let idx = read_index(&mut z)?;
+    let mut wanted: Vec<(String, u64, u32)> =
+        idx.files().into_iter().filter(|(p, e)| want(p) && (e.length as u64) <= max_len && e.length > 0).map(|(p, e)| (p, e.offset, e.length)).collect();
+    wanted.sort_by_key(|w| w.1);
+    if !wanted.is_empty() {
+        let i = find(&mut z, SAF).ok_or_else(|| Error::format("patch", None, "patch has no update.saf"))?;
+        let mut stream = z.by_index(i).map_err(zip_err)?;
+        let mut pos = 0u64;
+        let mut buf: Vec<u8> = Vec::new();
+        let mut later: Vec<(String, u64, u32)> = Vec::new();
+        for (path, offset, length) in wanted {
+            job.check()?;
+            if offset < pos {
+                later.push((path, offset, length));
+                continue;
+            }
+            if offset > pos {
+                let skipped = io::copy(&mut (&mut stream).take(offset - pos), &mut io::sink()).map_err(|e| Error::io(patch, e))?;
+                if skipped != offset - pos {
+                    return Err(Error::format("update.saf", Some(pos + skipped), "update.saf is shorter than update.sah says"));
+                }
+            }
+            buf.clear();
+            (&mut stream).take(length as u64).read_to_end(&mut buf).map_err(|e| Error::io(patch, e))?;
+            if buf.len() != length as usize {
+                return Err(Error::format("update.saf", Some(offset), "update.saf is shorter than update.sah says"));
+            }
+            pos = offset + length as u64;
+            visit(&path, &buf);
+        }
+        drop(stream);
+        // entries that overlap an earlier one: read again from the start
+        for (path, offset, length) in later {
+            job.check()?;
+            let i = find(&mut z, SAF).ok_or_else(|| Error::format("patch", None, "patch has no update.saf"))?;
+            let mut s = z.by_index(i).map_err(zip_err)?;
+            io::copy(&mut (&mut s).take(offset), &mut io::sink()).map_err(|e| Error::io(patch, e))?;
+            buf.clear();
+            (&mut s).take(length as u64).read_to_end(&mut buf).map_err(|e| Error::io(patch, e))?;
+            if buf.len() == length as usize {
+                visit(&path, &buf);
+            }
+        }
+    }
+    for (i, name, size) in loose_entries(&mut z) {
+        job.check()?;
+        if size == 0 || size > max_len || !want(&name) {
+            continue;
+        }
+        let mut buf = Vec::new();
+        z.by_index(i).map_err(zip_err)?.take(max_len).read_to_end(&mut buf).map_err(|e| Error::io(patch, e))?;
+        visit(&name, &buf);
+    }
+    Ok(())
 }
 
 // ------------------------------------------------------------------------------------------------ loose file names
