@@ -23,7 +23,7 @@ body:
     attributes:
       label: Version
       description: The output of `shaiya version`, or Help > About in a GUI.
-      placeholder: "shaiya 0.1.0 (git 0123456789ab, x86_64-pc-windows-msvc)"
+      placeholder: "shaiya 0.2.0 (git 0123456789ab, x86_64-pc-windows-msvc)"
     validations:
       required: true
   - type: input
