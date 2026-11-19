@@ -22,6 +22,7 @@ US, RU, FR, CN, Phoenix, KR episode 8 and Fawkes v68. What works on which client
 ## Start here
 
 - [getting-started.md](getting-started.md): five minutes from inspecting a file to building a patch on a copy and undoing it.
+- Formats: [overview of every format page](formats/README.md).
 - Guides: [modding files](guides/mod-files.md), [making patches](guides/make-a-patch.md), [SData files](guides/sdata-files.md), [undo and recovery](guides/undo-and-recovery.md).
 - [faq.md](faq.md): the common errors.
 
@@ -37,6 +38,7 @@ US, RU, FR, CN, Phoenix, KR episode 8 and Fawkes v68. What works on which client
 | [guides/sdata-files.md](guides/sdata-files.md) | Decrypt and encrypt SData around an editor, `--like`, unencrypted clients |
 | [guides/undo-and-recovery.md](guides/undo-and-recovery.md) | Journals, rollback, what blocks it, the pending marker, swap back |
 | [version-matrix.md](version-matrix.md) | What parses on which client |
+| [formats/README.md](formats/README.md) | Overview of every format page: what reads and writes it, where it was verified, and the extensions nobody has documented yet |
 | [formats/archive.md](formats/archive.md) | `data.sah` / `data.saf`: layout, names, hashing, shadowing, free list, versions 0 and 1, offsets past 4 GiB, compaction |
 | [formats/patch.md](formats/patch.md) | `psNNNN.patch`: ZIP layout, `remove.txt`, loose files and their name rules, deterministic builds, journaled apply, signatures |
 | [formats/version-ini.md](formats/version-ini.md) | `Version.ini` (client) and `UpdateVersion.ini` (patch server): keys, folder layout, what the original updater does, what `patch publish` writes |
@@ -48,6 +50,8 @@ US, RU, FR, CN, Phoenix, KR episode 8 and Fawkes v68. What works on which client
 | [formats/obelisk-ini.md](formats/obelisk-ini.md) | `Obelisk.ini`: zones and obelisk positions |
 | [formats/npcquest.md](formats/npcquest.md) | `NpcQuest.SData`: the 13 NPC sections, gatekeeper gates, the link table |
 | [formats/monster.md](formats/monster.md) | `Monster.SData`: the record layout and the monster id |
+| [formats/item-sdata.md](formats/item-sdata.md) | `Item.SData`: the item table, two layout variants, where each was verified |
+| [formats/skill-sdata.md](formats/skill-sdata.md) | `Skill.SData`: the skill table, three layout variants, where each was verified |
 | [formats/dg.md](formats/dg.md) | Dungeon floors (`.dg`): the octree layout and the map size rule |
 | [formats/smod.md](formats/smod.md) | Models (`.smod`): modules, vertices, faces, collision, orientation |
 | [formats/textures.md](formats/textures.md) | Textures: DDS and TGA as read; field chunk textures and the minimap the editor writes |
@@ -55,6 +59,7 @@ US, RU, FR, CN, Phoenix, KR episode 8 and Fawkes v68. What works on which client
 | [formats/tacticszone-zon.md](formats/tacticszone-zon.md) | `TacticsZone.zon`: header, areas with map id and type |
 | [formats/mobs-psv.md](formats/mobs-psv.md) | Afterglow's `mobs.psv`: the monster id column |
 | [formats/svmap-editor-files.md](formats/svmap-editor-files.md) | The files the editor defines: CSV export, install record, index backups, new-map note file, UTC stamp |
+| [formats/toolkit-files.md](formats/toolkit-files.md) | The toolkit's own files in a client folder: journals, the pending marker, `data.sah.bak`, compaction and swap files, temporary files |
 | [tools/shaiya.md](tools/shaiya.md) | The `shaiya` command line: every command (`info`, `archive`, `patch`, `sdata`, `svmap`, `clients`, `version`), flags, exit codes, JSON |
 | [tools/svmap-editor.md](tools/svmap-editor.md) | Shaiya SVMap Editor: the user guide (also the editor's Help), what it writes, verified episodes, workflows, rules, shortcuts |
 | [tools/toolkit.md](tools/toolkit.md) | Shaiya Toolkit: the six tabs, client folders, pending changes, prompts, keyboard |

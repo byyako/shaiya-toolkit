@@ -3,6 +3,8 @@
 mod deps;
 mod dist;
 #[cfg(test)]
+mod docs_formats;
+#[cfg(test)]
 mod docs_images;
 mod guard;
 mod icons;
