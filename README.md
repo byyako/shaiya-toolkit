@@ -11,7 +11,8 @@ The Shaiya Toolkit repository holds command-line and desktop tools for Shaiya ga
 | File inspector | Identify a Shaiya file (SAH index, SAF data, SData, patch, game.exe) and show what it is; SHA-256 | `shaiya info` | Shaiya Toolkit (`shaiya-toolkit`) | available |
 | Archive & patches | Browse, extract and edit `data.sah`/`data.saf` with a journal you can roll back; build, sign, verify, apply and roll back `psNNNN.patch`, publish them for the original updater (`UpdateVersion.ini`); compare, compact, pack and swap archives | `shaiya archive`, `shaiya patch`, `shaiya clients` | Shaiya Toolkit | available |
 | SData container | Describe, check, decrypt and encrypt SData files (the SEED wrapper), byte-identical round trips | `shaiya sdata` | Shaiya Toolkit (SData tab) | available |
-| SData schemas and editor | Read and edit the client's SData tables for each episode | (planned) | Shaiya SData Editor | planned |
+| SData tables (view) | Show Item, Skill, Monster and NpcQuest files as tables, export CSV or JSON; read only, one layout per format variant, a file no layout fits is shown as hex | `shaiya sdata table` | Shaiya Toolkit (SData tab, Archive preview) | available |
+| SData editor | Edit the client's SData tables for each episode | (planned) | Shaiya SData Editor | planned |
 | Packet log decoder | Decode game packet logs | `shaiya log` | Shaiya Log Viewer | planned |
 | Server map editor | Edit, check and make server map files (`.svmap`), their client `.wld` copies, `Map.ini`; export a patch; check maps from the command line | `shaiya svmap` | Shaiya SVMap Editor (`shaiya-svmap-editor`) | available |
 
@@ -38,7 +39,7 @@ Platform notes:
 
 ## Which clients work
 
-The toolkit reads, edits and patches the client archive, and reads the SData wrapper, of every client the project could test (US, RU, FR, CN, Phoenix, KR episode 8, Fawkes v68); what works on which client is in [docs/version-matrix.md](docs/version-matrix.md). Shaiya SVMap Editor and `shaiya svmap` were written for and verified on the US EP4.5 client (patch 108) and the original EP4.5 and Afterglow server files. Other episodes are detected and the checks that depend on EP4.5 data say so; the same page lists the assumptions. Patches the editor exports are unsigned; sign them with `shaiya patch sign` or Shaiya Toolkit if your updater needs a signature.
+The toolkit reads, edits and patches the client archive, and reads the SData wrapper, of every client the project could test (US, RU, FR, CN, Phoenix, KR episode 8, Fawkes v68); what works on which client is in [docs/version-matrix.md](docs/version-matrix.md). The SData table view reads a file only when a layout consumes it to the last byte; the layouts were checked on the US, RU, FR and Phoenix clients and the page says which variant read which client. Shaiya SVMap Editor and `shaiya svmap` were written for and verified on the US EP4.5 client (patch 108) and the original EP4.5 and Afterglow server files. Other episodes are detected and the checks that depend on EP4.5 data say so; the same page lists the assumptions. Patches the editor exports are unsigned; sign them with `shaiya patch sign` or Shaiya Toolkit if your updater needs a signature.
 
 ## Build from source
 

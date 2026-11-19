@@ -9,7 +9,7 @@ shaiya [GLOBAL FLAGS] <COMMAND> [ARGS]
 | [`info`](#shaiya-info) | Identify files and describe them |
 | [`archive`](#shaiya-archive) | List, check, extract, edit, compare, pack, swap `data.sah` / `data.saf` |
 | [`patch`](#shaiya-patch) | Build, verify, apply and roll back `psNNNN.patch` files; sign them |
-| [`sdata`](#shaiya-sdata) | Describe, check, decrypt and encrypt SData files |
+| [`sdata`](#shaiya-sdata) | Describe, check, decrypt and encrypt SData files; show a table as CSV or JSON |
 | [`svmap`](#shaiya-svmap) | Server map files (`.svmap`): check, dump, build, round trip, compare; check a client's `.wld` files; spawn report; bulk-edit dry run |
 | [`clients`](#shaiya-clients) | The saved "my client folders" list (`@name`) |
 | [`version`](#shaiya-version) | Version, git revision, target |
@@ -232,6 +232,7 @@ JSON: `build` gives `{"out", "files": [...], "loose": [...], "removals": [...], 
 | `check` | same as `info` | 0 all OK or plain; 1 a CRC failed; 3 |
 | `decrypt` | `INPUT...` (`-o PATH` or `--in-place`) or `--from ARCHIVE [PATTERN]... -o PATH` `--unchecked` `--skip-plain` `--force` or `--skip-existing` `--all-files` `--dry-run` | 0; 1 CRC failed with `--unchecked`; 3; 4 |
 | `encrypt` | `INPUT...` (`-o PATH` or `--in-place`) `--like PATH\|ARCHIVE` `--skip-encrypted` `--force` or `--skip-existing` `--all-files` `--dry-run` | 0; 3; 4 |
+| `table` | `INPUT` or `--from ARCHIVE INPUT`, `--layout auto\|item\|skill\|monster\|npcquest`, `--section NAME`, `--csv OUT` (`--force`), `--code-page cp949\|cp1252\|cp1251\|cp936\|utf-8\|utf-16le` | 0; 3 unreadable, or no layout (or more than one) reads the whole file; 4 `--csv OUT` exists without `--force`, or `--section` names no table |
 
 - Inputs are files, or folders searched recursively for names ending in `.SData` (any case; every file with `--all-files`). With `--from`, the inputs are patterns over the archive's visible files (default `*.sdata`).
 - `-o PATH` is a file when there is exactly one input and `PATH` is not an existing folder and does not end in `/` or `\`; otherwise it is a folder (created) that receives each file under its own relative name. `-o` equal to an input folder without `--in-place` stops with exit 4. Existing outputs stop the command (exit 4) unless `--force` or `--skip-existing`.
@@ -239,6 +240,7 @@ JSON: `build` gives `{"out", "files": [...], "loose": [...], "removals": [...], 
 - `decrypt` copies a plain (unencrypted) file unchanged (status "plain, copied") unless `--skip-plain`. A file whose CRC fails is exit 3 for that file and the batch continues, unless `--unchecked` (written anyway, status "checksum mismatch", exit 1).
 - `encrypt` copies an already encrypted file unless `--skip-encrypted`. `--like` takes a file (one input), a folder of originals or an ARCHIVE: each output reuses the original's header padding and tail, so an unchanged file comes out byte-identical, and a plain original stays plain.
 - The summary line (`9 files: 6 done, 3 copied, 0 skipped, 0 failed`) goes to stderr.
+- `table` reads one file (encrypted or plain) as rows and columns, read only. A layout is used only when it reads the whole file to its last byte with plausible counts; `--layout auto` tries every layout and uses the only one that fits. Without `--csv` or `--json` it prints the layout, the tables and their columns. `--csv OUT` writes the main table (or the one `--section` names) as UTF-8 with a byte-order mark, CRLF line ends and commas; a text cell starting with `=`, `+`, `-`, `@`, a tab or a carriage return gets a leading `'`, numbers are not touched. A file with several tables (`NpcQuest.SData`: `merchants`, `gatekeepers`, `npcs`, `quest_links`, `quests`) writes `quests` and says so on stderr. Names and descriptions are decoded with `--code-page` (default `cp949`). The layouts and what they were checked on: [Item.SData](../formats/item-sdata.md), [Skill.SData](../formats/skill-sdata.md), [Monster.SData](../formats/monster.md), [NpcQuest.SData](../formats/npcquest.md).
 
 ```
 $ shaiya sdata info Item.SData GuildHouse.SData
@@ -249,7 +251,7 @@ $ shaiya sdata decrypt --from "@us" -o plain/
 $ shaiya sdata encrypt plain/ -o enc/ --like "@us"
 ```
 
-JSON: `{"items": [{"name", "status", "size", "plain_size", "crc", "crc_ok", "padding_zero", "tail_zero", "out", "message"}], "summary": {"<status>": count}}`.
+JSON: `{"items": [{"name", "status", "size", "plain_size", "crc", "crc_ok", "padding_zero", "tail_zero", "out", "message"}], "summary": {"<status>": count}}`. For `table`: `{"layout", "table", "sheets": [{"name", "columns": [{"name", "kind"}], "row_count", "rows": [[...]]}]}` (`kind` is `int`, `float` or `text`; `--section` keeps one sheet); with `--csv` and `--json` together, `{"layout", "table", "section", "rows", "columns", "out"}`.
 
 Guide: [SData files](../guides/sdata-files.md).
 

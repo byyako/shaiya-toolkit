@@ -17,20 +17,25 @@ All notable changes are listed here, newest first. The format follows [Keep a Ch
 - Publish for the regular updater: a section of the Patch builder (and a Start page row, "Publish a patch") copies patches into a server folder and raises `PatchFileVersion` in `UpdateVersion.ini`. Check the plan first (new files, the ini change, refusals, the file checks), then Publish asks with the Changes, Writes, Undo and Game rows; it never writes into a client folder.
 - Patch from a mod folder: with a client selected, the Patch builder's box "Leave out files that are already the same in NAME" (on by default) leaves out the archive files that are identical to the client's copy; the contents table marks them "same, left out".
 
+- SData tables: in the SData tab, select a file and press **View table** (or double-click) to open it as a table: virtual scrolling, a filter box, the row count, **Copy rows**, **Export CSV...**, a choice of code page for the names and, for `NpcQuest.SData`, of its tables. A file no layout fits is shown as hex under "No table layout fits this file (N bytes); shown as hex". The Archive tab's SData preview has the same **View table** button, and the Start page has a row "Look at SData tables". Read only.
+
 ### shaiya (CLI)
 
+- `sdata table INPUT [--from ARCHIVE] [--layout auto|item|skill|monster|npcquest] [--section NAME] [--csv OUT [--force]] [--code-page NAME]` shows an SData file as a table and writes it as CSV, or as JSON with `--json`; exit 3 when the file is unreadable or no layout reads it to the last byte, 4 for an existing `--csv` output.
 - `patch build --files DIR --only-changed CLIENT` leaves out the files that are already identical (same length and SHA-256) in the client's archive, lists them on stderr and in the JSON `unchanged` array, and only reads the client.
 - `patch publish PATCH... --to DIR [--check-version N] [--updater-version N] [--new-check-version] [--layout shaiya|flat] [--dry-run]` copies patches to `DIR/Shaiya/patch/` and raises `PatchFileVersion` in `DIR/Shaiya/UpdateVersion.ini` (exit 4 for a name that is not `psNNNN.patch`, a gap, a different file under a published name, a changed CheckVersion without `--new-check-version`, or a client folder as destination).
 - `patch build`, `archive add` and `archive replace` print the same findings as `warning:` lines and in a `warnings` array of the `--json` result; exit codes do not change.
 
 ### Libraries
 
+- New crate `shaiya-sdata`: SData tables as rows and columns. Layouts are data (`layouts/*.json`, one per format variant: `item-81`, `item-132`, `skill-3`, `skill-9`, `skill-15`, `monster-31`, `npcquest-165`, `npcquest-87`) read by one engine; a layout applies only when it reads the whole file to the last byte with plausible counts, and `read` with `Hint::Auto` takes the only one that fits.
 - `shaiya-patch` has a `publish` module (`plan_publish`, `publish`, `parse_update_ini`, `set_update_ini_keys`) and `read_files`; `shaiya-inspect::validate::check_patch` checks the files inside a finished patch. `shaiya_archive::client::VersionIni` gained `start_update` and is no longer `Copy`.
 - `shaiya-patch` has `BuildInput::skip_same_as` and `unchanged_files` (the comparison behind "only the changed files").
 - `shaiya-inspect` has a `validate` module (`check_file`, `check_source`, `check_input`) behind the checks; it depends on `shaiya-clientdata` for the texture reader.
 
 ### Documentation
 
+- New formats pages [Item.SData](docs/formats/item-sdata.md) and [Skill.SData](docs/formats/skill-sdata.md); the SData files guide has a section "Look at a table"; the CLI and toolkit pages describe `sdata table` and View table ("SData record views" is gone from "Left out on purpose"; editing stays); the version matrix has three rows measured on every test client (`Item` fits, `Skill` fits, `auto` picks exactly one layout or none).
 - New page "Version.ini and UpdateVersion.ini" (keys, folder layout, what the original updater does with them, what `patch publish` writes); the make-a-patch guide section 6 describes publishing; the CLI page and the toolkit page describe `patch publish` and the Publish section.
 - The toolkit page describes the Start page and the four confirmation rows; the undo-and-recovery guide points to them.
 - The make-a-patch guide section 4 is now "Optional: sign it" (the anchor changed to `#4-optional-sign-it`) and the patch format page says signatures are optional.

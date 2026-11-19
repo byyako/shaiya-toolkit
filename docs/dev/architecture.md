@@ -13,6 +13,7 @@ crates/
                       journals and rollback, client folder recovery, compaction, diff, pack, swap
   shaiya-patch/       psNNNN.patch: build (streaming, deterministic), list, verify, plan, apply with journals; Ed25519 signatures
   shaiya-clientdata/  read-only client readers: archive or folder source, .wld, .dg, .smod, textures, sysmsg, Monster / NpcQuest
+  shaiya-sdata/       SData tables (Item, Skill, Monster, NpcQuest) as rows and columns: layout files read by one engine, CSV and JSON
   shaiya-svmap/       the .svmap server map format: model, reader, writer, validation, bit grid, JSON (no GUI, no client data)
   shaiya-svmap-tools/ the SVMap editor's engine without a GUI: documents with undo, client pairing, checks, spawn report, bulk planner,
                       Map.ini, new map, install; `batch` holds the entry points of `shaiya svmap`
@@ -28,7 +29,7 @@ crates/
 xtask/                development tasks (dist, notices, deps-check, guard, sizes, release-notes, icons)
 ```
 
-Names reserved for later tools: `shaiya-sdata`, `shaiya-sdata-editor`, `shaiya-packetlog`, `shaiya-log-viewer`, `shaiya-updater`.
+Names reserved for later tools: `shaiya-sdata-editor`, `shaiya-packetlog`, `shaiya-log-viewer`, `shaiya-updater`.
 
 ### Modules worth knowing
 
@@ -45,7 +46,8 @@ Names reserved for later tools: `shaiya-sdata`, `shaiya-sdata-editor`, `shaiya-p
 | `shaiya-patch` | `sign` | The signature message and key files; the format does not change |
 | `shaiya-seed` | `batch` | Check, decrypt and encrypt over many files, with `--like` |
 | `shaiya-svmap-tools` | `batch`, `episode`, `keys`, `stamp` | The `shaiya svmap` entry points and their report types; notes about a client that is not US EP4.5; the settings enums and path key; the fixed UTC stamp of backup and record names |
-| `shaiya-toolkit` | `archive_view`, `patch_builder`, `apply_tab`, `sign_tab`, `sdata_tab`, `inspect`, `clients` | One module per tab and the client-folder dialogs |
+| `shaiya-sdata` | `layout`, `engine`, `csv` | Layout files (`layouts/*.json`, one per format variant) read by one engine; `read` and `read_file` give a `Table` only when a layout consumes the whole file; CSV and JSON |
+| `shaiya-toolkit` | `archive_view`, `patch_builder`, `apply_tab`, `sign_tab`, `sdata_tab`, `sdata_table`, `inspect`, `clients` | One module per tab and the client-folder dialogs; `sdata_table` is the table window |
 
 ## Dependency rules
 
@@ -53,10 +55,11 @@ Names reserved for later tools: `shaiya-sdata`, `shaiya-sdata-editor`, `shaiya-p
 shaiya-core  <-  shaiya-seed
 shaiya-core  <-  shaiya-archive  <-  shaiya-patch
 shaiya-archive + shaiya-seed  <-  shaiya-clientdata
+core + seed + serde_json  <-  shaiya-sdata
 serde + serde_json + base64  <-  shaiya-svmap
 core + archive + patch + clientdata + svmap  <-  shaiya-svmap-tools
 core + seed + archive + patch  <-  shaiya-inspect
-libraries (now including svmap and svmap-tools)  <-  shaiya-cli
+libraries (now including svmap, svmap-tools and sdata)  <-  shaiya-cli
 shaiya-core + eframe / egui / rfd / serde  <-  shaiya-ui  <-  the GUI programs
 shaiya-ui (Paths/Env, theme) + svmap-tools + eframe / egui / egui-wgpu / wgpu / bytemuck / rfd  <-  shaiya-svmap-editor
 shaiya-testkit: dev-dependency only (std only, depends on no toolkit crate)

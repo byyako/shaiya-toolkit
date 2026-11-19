@@ -1,6 +1,6 @@
 # SData files
 
-SData files (`Item/Item.SData`, `Monster/Monster.SData`, ...) hold the game's tables. In most clients they are wrapped in a SEED encryption with a checksum; some clients (the Chinese client in the test set) store them plain. The toolkit can describe, check, decrypt and encrypt them. It does not edit the tables: use an editor of your choice on the decrypted file. (An SData editor is planned.) The wrapper format is in [formats/sdata-wrapper.md](../formats/sdata-wrapper.md).
+SData files (`Item/Item.SData`, `Monster/Monster.SData`, ...) hold the game's tables. In most clients they are wrapped in a SEED encryption with a checksum; some clients (the Chinese client in the test set) store them plain. The toolkit can describe, check, decrypt and encrypt them, and show the Item, Skill, Monster and NpcQuest tables as rows and columns (read only). It does not edit the tables: use an editor of your choice on the decrypted file. (An SData editor is planned.) The wrapper format is in [formats/sdata-wrapper.md](../formats/sdata-wrapper.md).
 
 All commands are in [`shaiya sdata`](../tools/shaiya.md#shaiya-sdata); Shaiya Toolkit's SData tab does the same into a folder you choose.
 
@@ -13,6 +13,18 @@ shaiya sdata check --from "@mymod"
 ```
 
 `info` says for each file: `SEED`, the plaintext size, whether the CRC matches and whether the header padding and tail are zero, or `not encrypted`. `check` is the same but exits 1 when a CRC fails. `--from ARCHIVE [PATTERN]...` reads straight out of a client's archive (default pattern `*.sdata`); folders given as inputs are searched for `*.SData`.
+
+## Look at a table
+
+```
+shaiya sdata table Item.SData --csv items.csv
+shaiya sdata table --from "@mymod" Item/Item.SData --json
+shaiya sdata table NpcQuest.SData --section merchants --csv npcs.csv
+```
+
+`table` reads an SData file (encrypted or plain) as rows and columns and writes them as CSV (UTF-8 with a byte-order mark, so a spreadsheet opens it with the right characters) or, with `--json`, as one JSON document. It works only when a layout reads the whole file to its last byte: the layouts are one per format variant (`Item` with 81 or 132 bytes per record, `Skill` with 3, 9 or 15 levels per entry, `Monster`, and `NpcQuest` with two quest record shapes), and `--layout auto` (the default) uses the one that fits. When none fits, or more than one does, the command exits 3 and says `No table layout fits this file`: the file may be another table, or another episode's version of one of these. Names and descriptions are decoded as code page 949 unless `--code-page` says otherwise (cp1252 and cp1251 for the French and Russian clients). A column that has no known meaning is named `f<offset>`. `NpcQuest.SData` holds five tables (`merchants`, `gatekeepers`, `npcs`, `quest_links`, `quests`); the CSV is `quests` unless `--section` names another. A text cell that starts with `=`, `+`, `-` or `@` gets a leading `'` in the CSV so a spreadsheet does not run it as a formula; numbers are written as they are.
+
+In Shaiya Toolkit's SData tab, select a file in the list and press **View table** (or double-click it): a window shows the rows with a filter box, the row count, **Copy rows** and **Export CSV...**, and a code page choice for the names. The Archive tab's preview of an SData file has the same **View table** button. For a file no layout fits, the window says "No table layout fits this file (N bytes); shown as hex" and shows the bytes. The formats pages say what each layout is and which clients it was checked on: [Item.SData](../formats/item-sdata.md), [Skill.SData](../formats/skill-sdata.md), [Monster.SData](../formats/monster.md), [NpcQuest.SData](../formats/npcquest.md).
 
 ## Decrypt, edit, encrypt
 

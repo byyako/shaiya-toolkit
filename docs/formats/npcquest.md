@@ -50,6 +50,17 @@ A map NPC (`type`, `type id`) means the `type id`-th record of that type's list,
 
 Every gatekeeper (type 2) has exactly three destinations: a map id, a position, the name shown and the cost in gold. The rule `gate-dest-invalid` reports a gate that sends players to a map that does not exist or to a position outside it, and `npc-client-server-differ` compares the gates of the client and server copies.
 
+## Quest records and the table view
+
+The part after the link table is `u32 count` and that many quest records, which the readers above skip. The table view (`shaiya sdata table`, the SData tab's View table) reads them, and the NPC sections, as five tables: `merchants`, `gatekeepers`, `npcs` (types 3 to 13, with a `kind` column), `quest_links` (the 256 x 256 cells) and `quests` (the table shown first). There are two quest record shapes, told apart by whether a layout reads the whole file:
+
+| Variant | A quest record |
+|---|---|
+| `npcquest-165` | `u16`, two strings, a fixed block of 165 bytes, seven strings |
+| `npcquest-87` | `u16`, two strings, a fixed block of 87 bytes, six sub-blocks of 33 bytes each followed by a string, four strings |
+
+Quests are numbered from 1 (the `id` column). Fields of the fixed blocks whose meaning is not known are shown as `f<offset>`. The NPC sections are the same in both variants.
+
 ## What the toolkit does with it
 
 | Program | Use |
