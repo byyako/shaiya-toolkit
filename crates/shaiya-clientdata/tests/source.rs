@@ -46,3 +46,28 @@ fn folder_mode_is_case_insensitive_and_lists_files() {
     assert!(ClientSource::open(&d.join("missing")).is_err());
     fs::remove_dir_all(&d).unwrap();
 }
+
+#[test]
+fn has_any_stops_at_the_entry_limit_and_finds_a_shallow_file() {
+    use shaiya_clientdata::Probe;
+    let d = temp_dir("probe");
+    let deep = d.join("a").join("b");
+    fs::create_dir_all(&deep).unwrap();
+    for i in 0..300 {
+        fs::write(deep.join(format!("f{i}.dat")), b"").unwrap();
+    }
+    let c = ClientSource::open(&d).unwrap();
+    let wld = |p: &str| p.to_ascii_lowercase().ends_with(".wld");
+    // nothing to find: gives up at the limit, having looked at no more than it
+    let r = c.has_any(wld, 100);
+    assert_eq!(r.probe, Probe::GaveUp);
+    assert!(r.visited <= 100, "{}", r.visited);
+    // a limit above the size of the tree: the whole tree was looked at
+    let r = c.has_any(wld, 10_000);
+    assert_eq!((r.probe, r.visited), (Probe::NotFound, 302));
+    // a file at depth 2 is found
+    fs::create_dir_all(d.join("world")).unwrap();
+    fs::write(d.join("world").join("1.wld"), b"").unwrap();
+    assert_eq!(c.has_any(wld, 10_000).probe, Probe::Found);
+    fs::remove_dir_all(&d).unwrap();
+}

@@ -19,7 +19,7 @@ pub use dg::{dungeon_map_size, Dg};
 pub use error::{Error, Result};
 pub use sdata::{Monster, Monsters, Npc, NpcQuest};
 pub use smod::Smod;
-pub use source::ClientSource;
+pub use source::{ClientSource, Probe, Probed};
 pub use text::{map_name, map_name_msg, AreaNames, SysMsg};
 pub use texture::Image;
 pub use wld::{Terrain, Wld};

@@ -21,6 +21,27 @@ enum Backing {
     Folder,
 }
 
+/// How a bounded look for a file ended ([`ClientSource::has_any`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Probe {
+    /// A path the predicate accepts exists.
+    Found,
+    /// The whole tree (to the depth limit) was looked at and nothing matched.
+    NotFound,
+    /// The entry limit was reached before the look was finished.
+    GaveUp,
+}
+
+/// The result of [`ClientSource::has_any`]: how it ended and how many entries (files and folders) it looked at.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Probed {
+    pub probe: Probe,
+    pub visited: usize,
+}
+
+/// Folders deeper than this below the client folder are not entered by [`ClientSource::has_any`] (`world/1.wld` is at depth 2).
+pub const PROBE_DEPTH: usize = 4;
+
 pub struct ClientSource {
     dir: PathBuf,
     backing: Backing,
@@ -117,6 +138,50 @@ impl ClientSource {
                 let mut out = Vec::new();
                 walk(&self.dir, "", &mut out);
                 out
+            }
+        }
+    }
+
+    /// Whether some file path (as in [`list`](Self::list)) satisfies `pred`, looking at no more than `limit` entries (files and
+    /// folders) and at no folder deeper than [`PROBE_DEPTH`]. For an extracted folder this stops a wrong folder (a drive root, a
+    /// home folder) from being walked to the end; an archive's index is already in memory and is always searched whole.
+    pub fn has_any(&self, pred: impl Fn(&str) -> bool, limit: usize) -> Probed {
+        match &self.backing {
+            Backing::Archive(a) => {
+                let found = a.index().files().into_iter().any(|(p, _)| pred(&p));
+                Probed { probe: if found { Probe::Found } else { Probe::NotFound }, visited: 0 }
+            }
+            Backing::Folder => {
+                struct St<'a> {
+                    pred: &'a dyn Fn(&str) -> bool,
+                    limit: usize,
+                    visited: usize,
+                }
+                // Some(outcome) ends the walk
+                fn walk(d: &Path, prefix: &str, depth: usize, st: &mut St) -> Option<Probe> {
+                    let Ok(rd) = std::fs::read_dir(d) else { return None };
+                    for e in rd.filter_map(|e| e.ok()) {
+                        if st.visited >= st.limit {
+                            return Some(Probe::GaveUp);
+                        }
+                        st.visited += 1;
+                        let name = e.file_name().to_string_lossy().into_owned();
+                        let p = e.path();
+                        if p.is_dir() {
+                            if depth < PROBE_DEPTH {
+                                if let Some(r) = walk(&p, &format!("{prefix}{name}/"), depth + 1, st) {
+                                    return Some(r);
+                                }
+                            }
+                        } else if (st.pred)(&format!("{prefix}{name}")) {
+                            return Some(Probe::Found);
+                        }
+                    }
+                    None
+                }
+                let mut st = St { pred: &pred, limit, visited: 0 };
+                let probe = walk(&self.dir, "", 1, &mut st).unwrap_or(Probe::NotFound);
+                Probed { probe, visited: st.visited }
             }
         }
     }

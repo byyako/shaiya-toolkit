@@ -83,19 +83,43 @@ fn file_name(p: &Path) -> String {
     p.file_name().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default()
 }
 
+/// How many files and folders [`open_client`] looks at in a folder without client files before it gives up.
+pub const CLIENT_PROBE_LIMIT: usize = 20_000;
+
 /// Opens a client folder (or `data.sah` archive) for the rules. A typed clientdata error becomes `Io` (missing or unreadable) or
 /// `Format`, so every failure to open is exit code 3.
 pub fn open_client(dir: &Path) -> Result<ClientRules> {
-    use shaiya_clientdata::Error as CdError;
+    open_client_within(dir, CLIENT_PROBE_LIMIT)
+}
+
+/// [`open_client`] with the probe limit as a parameter (the tests use a small one).
+fn open_client_within(dir: &Path, probe_limit: usize) -> Result<ClientRules> {
+    use shaiya_clientdata::{Error as CdError, Probe};
     let source = shaiya_clientdata::ClientSource::open(dir).map_err(|e| match e {
         CdError::NotFound(p) => not_found(Path::new(&p), "not found"),
         CdError::Io { path, source } => Error::io(path, source),
         CdError::Format { file, what, offset } => Error::format(file, Some(offset as u64), what),
         CdError::Archive(s) => Error::format(dir.display().to_string(), None, s),
     })?;
-    // an extracted folder must hold something of a client; an empty or wrong folder is a client that cannot be opened
-    if !source.is_archive() && !["Monster/Monster.SData", "Npc/NpcQuest.SData", "sysmsg-uni.txt"].iter().any(|p| source.exists(p)) && source.wld_paths().is_empty() {
-        return Err(not_found(dir, "no client files here (no data.sah and no extracted data such as world/*.wld or Monster/Monster.SData)"));
+    // an extracted folder must hold something of a client; an empty or wrong folder is a client that cannot be opened. The look for
+    // `world/*.wld` is bounded, so a drive root or home folder is refused quickly instead of being walked to the end.
+    if !source.is_archive() && !["Monster/Monster.SData", "Npc/NpcQuest.SData", "sysmsg-uni.txt"].iter().any(|p| source.exists(p)) {
+        let look = source.has_any(
+            |p| p.to_ascii_lowercase().ends_with(".wld"),
+            probe_limit,
+        );
+        match look.probe {
+            Probe::Found => {}
+            Probe::NotFound => {
+                return Err(not_found(dir, "no client files here (no data.sah and no extracted data such as world/*.wld or Monster/Monster.SData)"));
+            }
+            Probe::GaveUp => {
+                return Err(not_found(
+                    dir,
+                    &format!("no client files here (no data.sah and no extracted data such as world/*.wld or Monster/Monster.SData; stopped looking after {probe_limit} entries)"),
+                ));
+            }
+        }
     }
     ClientRules::open(dir).map_err(|s| Error::format(dir.display().to_string(), None, s))
 }
@@ -1036,6 +1060,35 @@ mod tests {
         let mut m = Svmap::new(64);
         m.mob_areas.push(MobArea { min: [1.0, 0.0, 1.0], max: [9.0, 2.0, 9.0], mobs: mobs.iter().map(|(mob, count)| MobEntry { mob: *mob, count: *count }).collect() });
         m
+    }
+
+    #[test]
+    fn a_folder_with_thousands_of_files_and_no_client_is_refused_after_the_limit() {
+        let t = TempDir::new("probe-wide");
+        let deep = t.join("a").join("b");
+        std::fs::create_dir_all(&deep).unwrap();
+        for i in 0..700 {
+            std::fs::write(deep.join(format!("f{i}.dat")), b"").unwrap();
+        }
+        let text = open_client_within(t.path(), 500).err().expect("refused").to_string();
+        assert!(text.contains("no client files here") && text.contains("stopped looking after 500 entries"), "{text}");
+        assert_eq!(CLIENT_PROBE_LIMIT, 20_000);
+        // the probe itself reports it looked at no more than the limit
+        let src = shaiya_clientdata::ClientSource::open(t.path()).unwrap();
+        let look = src.has_any(|p| p.to_ascii_lowercase().ends_with(".wld"), 500);
+        assert_eq!(look.probe, shaiya_clientdata::Probe::GaveUp);
+        assert!(look.visited <= 500, "{}", look.visited);
+    }
+
+    #[test]
+    fn a_folder_with_a_wld_at_depth_one_is_a_client() {
+        let t = TempDir::new("probe-client");
+        std::fs::create_dir_all(t.join("world")).unwrap();
+        std::fs::write(t.join("world").join("1.wld"), tiny_wld(4).to_bytes()).unwrap();
+        assert!(open_client(t.path()).is_ok());
+        let e = TempDir::new("probe-empty");
+        let text = open_client(e.path()).err().expect("refused").to_string();
+        assert!(text.contains("no client files here") && !text.contains("stopped looking"), "{text}");
     }
 
     fn originals() -> Option<PathBuf> {
