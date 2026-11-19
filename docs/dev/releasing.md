@@ -6,7 +6,7 @@
 
 ## The changelog
 
-`CHANGELOG.md` follows Keep a Changelog: `## [Unreleased]`, then `## [X.Y.Z] - YYYY-MM-DD` with subsections per tool (`### shaiya (CLI)`, `### Shaiya Toolkit`, `### Libraries`, `### Breaking` as needed). `cargo xtask release-notes <version>` prints the section of a version and fails when it is missing or empty.
+`CHANGELOG.md` follows Keep a Changelog: `## [Unreleased]`, then `## [X.Y.Z] - YYYY-MM-DD` with subsections per tool (`### shaiya (CLI)`, `### Shaiya Toolkit`, `### Libraries`, `### Breaking` as needed). The date is the maintainer's local date on the day of the version bump commit. `cargo xtask release-notes <version>` prints the section of a version and fails when it is missing or empty.
 
 ## Making a release
 
@@ -42,7 +42,7 @@ The `README.txt` inside each zip carries the same notice as the repository READM
 | SHA-256 of a 2 GB `data.saf` | at least 300 MB/s when the disk allows; cancel takes effect within 250 ms |
 | CI run | under 25 minutes |
 
-`cargo xtask sizes` checks the binary sizes; `cargo xtask dist --platform windows-x86_64` checks the zip sizes. The zip budget is the measured Windows size rounded up to the next whole MB, plus 2 MB (`shaiya-toolkit` zip) or 1 MB (`shaiya` zip). A missed budget is reported with the number, not silently accepted.
+`cargo xtask sizes` checks the binary sizes (it looks in `CARGO_TARGET_DIR` when that is set, else in `target/`); `cargo xtask dist --platform windows-x86_64` checks the zip sizes. The zip budget is the measured Windows size rounded up to the next whole MB, plus 2 MB (`shaiya-toolkit` zip) or 1 MB (`shaiya` zip). A missed budget is reported with the number, not silently accepted.
 
 ## CI
 

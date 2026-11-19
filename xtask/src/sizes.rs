@@ -32,9 +32,26 @@ pub fn budget(gui: bool) -> u64 {
     }
 }
 
-/// Where a release binary is: `target/release` or `target/<triple>/release`.
+/// The cargo target directory: `CARGO_TARGET_DIR` when it is set and not empty (a relative value counts from the repository root), else
+/// `<repo>/target`.
+pub fn target_dir() -> PathBuf {
+    target_dir_from(std::env::var_os("CARGO_TARGET_DIR"))
+}
+
+fn target_dir_from(env: Option<std::ffi::OsString>) -> PathBuf {
+    match env {
+        Some(v) if !v.is_empty() => root().join(v),
+        _ => root().join("target"),
+    }
+}
+
+/// Where a release binary is: `<target dir>/release` or `<target dir>/<triple>/release`.
 pub fn binary_path(bin: &str, windows: bool, target: Option<&str>) -> PathBuf {
-    let mut p = root().join("target");
+    binary_path_in(target_dir(), bin, windows, target)
+}
+
+fn binary_path_in(base: PathBuf, bin: &str, windows: bool, target: Option<&str>) -> PathBuf {
+    let mut p = base;
     if let Some(t) = target {
         p.push(t);
     }
@@ -81,8 +98,20 @@ mod tests {
     fn budgets_and_paths() {
         assert_eq!(budget(false), 6_000_000);
         assert_eq!(budget(true), 20_000_000);
-        assert!(binary_path("shaiya", true, None).ends_with("target/release/shaiya.exe") || binary_path("shaiya", true, None).ends_with("target\\release\\shaiya.exe"));
-        let p = binary_path("shaiya", false, Some("x86_64-unknown-linux-gnu")).display().to_string().replace('\\', "/");
+        assert!(binary_path_in(target_dir_from(None), "shaiya", true, None).ends_with("target/release/shaiya.exe") || binary_path_in(target_dir_from(None), "shaiya", true, None).ends_with("target\\release\\shaiya.exe"));
+        let p = binary_path_in(target_dir_from(None), "shaiya", false, Some("x86_64-unknown-linux-gnu")).display().to_string().replace('\\', "/");
         assert!(p.ends_with("target/x86_64-unknown-linux-gnu/release/shaiya"), "{p}");
+    }
+
+    #[test]
+    fn cargo_target_dir_is_honoured() {
+        use std::ffi::OsString;
+        assert_eq!(target_dir_from(None), root().join("target"));
+        assert_eq!(target_dir_from(Some(OsString::new())), root().join("target"));
+        let abs = std::env::temp_dir().join("elsewhere");
+        assert_eq!(target_dir_from(Some(abs.clone().into_os_string())), abs);
+        assert_eq!(target_dir_from(Some("rel-target".into())), root().join("rel-target"));
+        let p = binary_path_in(abs.clone(), "shaiya", true, None);
+        assert_eq!(p, abs.join("release").join("shaiya.exe"));
     }
 }
