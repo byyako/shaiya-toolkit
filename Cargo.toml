@@ -20,6 +20,7 @@ shaiya-seed = { path = "crates/shaiya-seed" }
 shaiya-archive = { path = "crates/shaiya-archive" }
 shaiya-patch = { path = "crates/shaiya-patch" }
 shaiya-clientdata = { path = "crates/shaiya-clientdata" }
+shaiya-sdata = { path = "crates/shaiya-sdata" }
 shaiya-svmap = { path = "crates/shaiya-svmap" }
 shaiya-svmap-tools = { path = "crates/shaiya-svmap-tools" }
 shaiya-inspect = { path = "crates/shaiya-inspect" }

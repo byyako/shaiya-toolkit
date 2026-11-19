@@ -1,0 +1,77 @@
+{
+ "format": 1,
+ "table": "Item",
+ "variant": "item-81",
+ "file": "Item/Item.SData",
+ "sections": [
+  {
+   "name": "items",
+   "primary": true,
+   "loops": [
+    {"index": "bank", "base": 0, "count": "u32", "max": 255},
+    {"count": "u32"}
+   ],
+   "record": [
+    {"kind": "lenstr", "name": "name"},
+    {"kind": "lenstr", "name": "description"},
+    {
+     "kind": "fixed",
+     "size": 81,
+     "fields": [
+      {"offset": 0, "name": "type", "kind": "u8"},
+      {"offset": 1, "name": "type_id", "kind": "u8"},
+      {"offset": 2, "name": "f2", "kind": "u8"},
+      {"offset": 3, "name": "f3", "kind": "u8"},
+      {"offset": 4, "name": "req_level", "kind": "u16"},
+      {"offset": 6, "name": "f6", "kind": "u8"},
+      {"offset": 7, "name": "f7", "kind": "u8"},
+      {"offset": 8, "name": "f8", "kind": "u8"},
+      {"offset": 9, "name": "f9", "kind": "u8"},
+      {"offset": 10, "name": "f10", "kind": "u8"},
+      {"offset": 11, "name": "f11", "kind": "u8"},
+      {"offset": 12, "name": "f12", "kind": "u8"},
+      {"offset": 13, "name": "f13", "kind": "u8"},
+      {"offset": 14, "name": "f14", "kind": "u8"},
+      {"offset": 15, "name": "f15", "kind": "u8"},
+      {"offset": 16, "name": "f16", "kind": "u16"},
+      {"offset": 18, "name": "f18", "kind": "u16"},
+      {"offset": 20, "name": "f20", "kind": "u16"},
+      {"offset": 22, "name": "f22", "kind": "u16"},
+      {"offset": 24, "name": "req_wis", "kind": "u16"},
+      {"offset": 26, "name": "req_luc", "kind": "u16"},
+      {"offset": 28, "name": "req_vg", "kind": "u16"},
+      {"offset": 30, "name": "f30", "kind": "u8"},
+      {"offset": 31, "name": "f31", "kind": "u8"},
+      {"offset": 32, "name": "range", "kind": "u8"},
+      {"offset": 33, "name": "f33", "kind": "u8"},
+      {"offset": 34, "name": "f34", "kind": "u8"},
+      {"offset": 35, "name": "special", "kind": "u8"},
+      {"offset": 36, "name": "slot", "kind": "u8"},
+      {"offset": 37, "name": "quality", "kind": "u16"},
+      {"offset": 39, "name": "f39", "kind": "u16"},
+      {"offset": 41, "name": "f41", "kind": "u16"},
+      {"offset": 43, "name": "f43", "kind": "u16"},
+      {"offset": 45, "name": "f45", "kind": "u16"},
+      {"offset": 47, "name": "hp", "kind": "u16"},
+      {"offset": 49, "name": "sp", "kind": "u16"},
+      {"offset": 51, "name": "mp", "kind": "u16"},
+      {"offset": 53, "name": "f53", "kind": "u16"},
+      {"offset": 55, "name": "f55", "kind": "u16"},
+      {"offset": 57, "name": "f57", "kind": "u16"},
+      {"offset": 59, "name": "f59", "kind": "u16"},
+      {"offset": 61, "name": "f61", "kind": "u16"},
+      {"offset": 63, "name": "f63", "kind": "u16"},
+      {"offset": 65, "name": "f65", "kind": "u8"},
+      {"offset": 66, "name": "f66", "kind": "u8"},
+      {"offset": 67, "name": "buy", "kind": "u32"},
+      {"offset": 71, "name": "sell", "kind": "u32"},
+      {"offset": 75, "name": "f75", "kind": "u16"},
+      {"offset": 77, "name": "f77", "kind": "u16"},
+      {"offset": 79, "name": "f79", "kind": "u8"},
+      {"offset": 80, "name": "stack", "kind": "u8"}
+     ]
+    }
+   ]
+  }
+ ]
+}

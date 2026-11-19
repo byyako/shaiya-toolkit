@@ -1,0 +1,20 @@
+[package]
+name = "shaiya-sdata"
+description = "Reads SData tables (Item, Skill, Monster, NpcQuest) into rows and columns from layout files, and writes them as CSV or JSON"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+shaiya-core = { workspace = true }
+shaiya-seed = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+shaiya-testkit = { workspace = true }

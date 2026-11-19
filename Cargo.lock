@@ -2639,6 +2639,7 @@ dependencies = [
  "shaiya-core",
  "shaiya-inspect",
  "shaiya-patch",
+ "shaiya-sdata",
  "shaiya-seed",
  "shaiya-svmap",
  "shaiya-svmap-tools",
@@ -2690,6 +2691,7 @@ dependencies = [
  "shaiya-core",
  "shaiya-inspect",
  "shaiya-patch",
+ "shaiya-sdata",
  "shaiya-seed",
  "shaiya-testkit",
 ]
@@ -2706,6 +2708,16 @@ dependencies = [
  "shaiya-core",
  "shaiya-testkit",
  "zip",
+]
+
+[[package]]
+name = "shaiya-sdata"
+version = "0.2.1"
+dependencies = [
+ "serde_json",
+ "shaiya-core",
+ "shaiya-seed",
+ "shaiya-testkit",
 ]
 
 [[package]]

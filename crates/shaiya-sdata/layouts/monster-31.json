@@ -1,0 +1,43 @@
+{
+ "format": 1,
+ "table": "Monster",
+ "variant": "monster-31",
+ "file": "Monster/Monster.SData",
+ "sections": [
+  {
+   "name": "monsters",
+   "primary": true,
+   "loops": [
+    {"index": "id", "base": 0, "count": "u32", "max": 65535}
+   ],
+   "record": [
+    {"kind": "lenstr", "name": "name"},
+    {
+     "kind": "fixed",
+     "size": 31,
+     "fields": [
+      {"offset": 0, "name": "model", "kind": "i16"},
+      {"offset": 2, "name": "level", "kind": "i16"},
+      {"offset": 4, "name": "ai", "kind": "u8"},
+      {"offset": 5, "name": "hp", "kind": "i32"},
+      {"offset": 9, "name": "day", "kind": "u8"},
+      {"offset": 10, "name": "size", "kind": "u8"},
+      {"offset": 11, "name": "element", "kind": "u8"},
+      {"offset": 12, "name": "normal_time", "kind": "u32"},
+      {"offset": 16, "name": "normal_step", "kind": "u8"},
+      {"offset": 17, "name": "chase_time", "kind": "u32"},
+      {"offset": 21, "name": "chase_step", "kind": "u8"},
+      {"offset": 22, "name": "f22", "kind": "u8"},
+      {"offset": 23, "name": "f23", "kind": "u8"},
+      {"offset": 24, "name": "f24", "kind": "u8"},
+      {"offset": 25, "name": "f25", "kind": "u8"},
+      {"offset": 26, "name": "f26", "kind": "u8"},
+      {"offset": 27, "name": "f27", "kind": "u8"},
+      {"offset": 28, "name": "attack_plus", "kind": "u8"},
+      {"offset": 29, "name": "quest_item", "kind": "i16"}
+     ]
+    }
+   ]
+  }
+ ]
+}
