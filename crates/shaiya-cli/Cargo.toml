@@ -25,6 +25,7 @@ shaiya-inspect = { workspace = true }
 shaiya-svmap = { workspace = true }
 shaiya-svmap-tools = { workspace = true }
 shaiya-clientdata = { workspace = true }
+shaiya-sdata = { workspace = true }
 clap = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

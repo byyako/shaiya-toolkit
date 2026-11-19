@@ -138,6 +138,21 @@ fn sysmsg_has_the_map_name_ids() {
     check(Cap::MapNameIds);
 }
 
+#[test]
+fn sdata_item_layout_fits() {
+    check(Cap::SdataItemFits);
+}
+
+#[test]
+fn sdata_skill_layout_fits() {
+    check(Cap::SdataSkillFits);
+}
+
+#[test]
+fn sdata_auto_picks_exactly_one_layout_or_none() {
+    check(Cap::SdataAutoPicks);
+}
+
 /// Prints the observed table (run with `--nocapture`) and the timing of the SAH parse; the table is what `docs/version-matrix.md` mirrors.
 #[test]
 fn print_the_observed_table() {

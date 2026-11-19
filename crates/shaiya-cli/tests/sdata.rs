@@ -143,3 +143,154 @@ fn every_sdata_command_has_help() {
         assert!(out(&o).contains("Example:"), "{c}: {}", out(&o));
     }
 }
+
+fn put_u32(v: &mut Vec<u8>, n: u32) {
+    v.extend_from_slice(&n.to_le_bytes());
+}
+
+fn put_str(v: &mut Vec<u8>, b: &[u8]) {
+    put_u32(v, b.len() as u32);
+    v.extend_from_slice(b);
+}
+
+/// A Monster table: the names, each with a 31-byte block whose first field (model) is 100 + the index.
+fn monster_table(names: &[&[u8]]) -> Vec<u8> {
+    let mut v = Vec::new();
+    put_u32(&mut v, names.len() as u32);
+    for (i, n) in names.iter().enumerate() {
+        put_str(&mut v, n);
+        let mut b = [0u8; 31];
+        b[0..2].copy_from_slice(&(100 + i as i16).to_le_bytes());
+        v.extend_from_slice(&b);
+    }
+    v
+}
+
+/// An NpcQuest table with one merchant and one quest (a table with no quests would fit both quest shapes).
+fn npcquest_table() -> Vec<u8> {
+    let mut v = Vec::new();
+    put_u32(&mut v, 1);
+    v.extend_from_slice(&[0u8; 20]);
+    put_str(&mut v, b"Smith");
+    put_str(&mut v, b"Hello");
+    for _ in 0..3 {
+        put_u32(&mut v, 0);
+    }
+    for _ in 0..12 {
+        put_u32(&mut v, 0);
+    }
+    v.extend(std::iter::repeat_n(0u8, 65536 * 8));
+    put_u32(&mut v, 1);
+    v.extend_from_slice(&1u16.to_le_bytes());
+    put_str(&mut v, b"Title");
+    put_str(&mut v, b"Text");
+    v.extend_from_slice(&[0u8; 165]);
+    for _ in 0..7 {
+        put_str(&mut v, b"");
+    }
+    v
+}
+
+#[test]
+fn table_writes_csv_and_refuses_to_overwrite() {
+    let w = world();
+    let f = w.tmp.path().join("Monster.SData");
+    write(&f, &encrypt(&monster_table(&[b"Wolf\0", b"=Bad,name\0"])));
+    let csv = w.tmp.path().join("out/monsters.csv");
+    write(&w.tmp.path().join("out/keep.txt"), b"x");
+    let o = sh(&w.data, &["sdata", "table", p(&f), "--csv", p(&csv)]);
+    assert_eq!(code(&o), 0, "{}", err(&o));
+    assert!(err(&o).contains("2 rows"), "{}", err(&o));
+    let bytes = std::fs::read(&csv).unwrap();
+    assert!(bytes.starts_with(&[0xEF, 0xBB, 0xBF]), "UTF-8 byte-order mark");
+    let t = String::from_utf8(bytes).unwrap();
+    let lines: Vec<&str> = t.trim_start_matches('\u{feff}').split("\r\n").collect();
+    assert_eq!(lines[0].split(',').take(3).collect::<Vec<_>>(), ["id", "name", "model"]);
+    assert!(lines[1].starts_with("0,Wolf,100,"), "{}", lines[1]);
+    assert!(lines[2].starts_with("1,\"'=Bad,name\",101,"), "formula-escaped and quoted: {}", lines[2]);
+    // an existing output is refused (exit 4) and left alone; --force replaces it
+    std::fs::write(&csv, b"mine").unwrap();
+    let o = sh(&w.data, &["sdata", "table", p(&f), "--csv", p(&csv)]);
+    assert_eq!(code(&o), 4, "{}", err(&o));
+    assert_eq!(std::fs::read(&csv).unwrap(), b"mine");
+    assert_eq!(code(&sh(&w.data, &["sdata", "table", p(&f), "--csv", p(&csv), "--force"])), 0);
+    assert!(std::fs::read(&csv).unwrap().starts_with(&[0xEF, 0xBB, 0xBF]));
+    // a plain file works the same
+    let plain = w.tmp.path().join("Plain.SData");
+    write(&plain, &monster_table(&[b"Wolf\0"]));
+    assert_eq!(code(&sh(&w.data, &["sdata", "table", p(&plain), "--layout", "monster", "--csv", p(&w.tmp.path().join("p.csv"))])), 0);
+}
+
+#[test]
+fn table_json_shape_and_sections() {
+    let w = world();
+    let f = w.tmp.path().join("Monster.SData");
+    write(&f, &encrypt(&monster_table(&[b"Wolf\0"])));
+    let v = json(&sh(&w.data, &["sdata", "table", p(&f), "--json"]));
+    assert_eq!((v["layout"].as_str(), v["table"].as_str()), (Some("monster-31"), Some("Monster")));
+    let s = &v["sheets"][0];
+    assert_eq!((s["name"].as_str(), s["row_count"].as_u64()), (Some("monsters"), Some(1)));
+    assert_eq!(s["columns"][0], serde_json::json!({"name": "id", "kind": "int"}));
+    assert_eq!((&s["rows"][0][0], &s["rows"][0][1], &s["rows"][0][2]), (&serde_json::json!(0), &serde_json::json!("Wolf"), &serde_json::json!(100)));
+    // text output names the layout and the columns
+    let o = sh(&w.data, &["sdata", "table", p(&f)]);
+    assert!(out(&o).contains("layout monster-31 (Monster), names read as cp949") && out(&o).contains("monsters: 1 rows, "), "{}", out(&o));
+    // several tables in one file
+    let q = w.tmp.path().join("NpcQuest.SData");
+    write(&q, &encrypt(&npcquest_table()));
+    let v = json(&sh(&w.data, &["sdata", "table", p(&q), "--json"]));
+    let names: Vec<&str> = v["sheets"].as_array().unwrap().iter().map(|s| s["name"].as_str().unwrap()).collect();
+    assert_eq!(names, ["merchants", "gatekeepers", "npcs", "quest_links", "quests"]);
+    let v = json(&sh(&w.data, &["sdata", "table", p(&q), "--section", "merchants", "--json"]));
+    assert_eq!(v["sheets"].as_array().unwrap().len(), 1);
+    assert_eq!(v["sheets"][0]["row_count"], 1);
+    let o = sh(&w.data, &["sdata", "table", p(&q), "--section", "nope"]);
+    assert_eq!(code(&o), 4);
+    assert!(err(&o).contains("merchants, gatekeepers"), "{}", err(&o));
+    // the CSV of a many-table file is its main table, with a note
+    let c = w.tmp.path().join("quests.csv");
+    let o = sh(&w.data, &["sdata", "table", p(&q), "--csv", p(&c)]);
+    assert_eq!(code(&o), 0, "{}", err(&o));
+    assert!(err(&o).contains("this file has 5 tables; wrote quests"), "{}", err(&o));
+}
+
+#[test]
+fn table_exit_codes() {
+    let w = world();
+    // a readable file no layout fits: exit 3, with the sentence the viewer uses
+    let f = w.tmp.path().join("Other.SData");
+    write(&f, &encrypt(b"just some bytes, not a table"));
+    let o = sh(&w.data, &["sdata", "table", p(&f)]);
+    assert_eq!(code(&o), 3);
+    assert!(err(&o).contains("No table layout fits this file (28 bytes)"), "{}", err(&o));
+    let v = json(&sh(&w.data, &["sdata", "table", p(&f), "--json"]));
+    assert_eq!(v["error"]["kind"], "format");
+    // a table, asked for as another table
+    let m = w.tmp.path().join("Monster.SData");
+    write(&m, &monster_table(&[b"Wolf\0"]));
+    assert_eq!(code(&sh(&w.data, &["sdata", "table", p(&m), "--layout", "skill"])), 3);
+    // a damaged wrapper, a missing file
+    let mut bad = encrypt(&monster_table(&[b"Wolf\0"]));
+    bad[70] ^= 1;
+    let b = w.tmp.path().join("Bad.SData");
+    write(&b, &bad);
+    assert_eq!(code(&sh(&w.data, &["sdata", "table", p(&b)])), 3);
+    assert_eq!(code(&sh(&w.data, &["sdata", "table", p(&w.tmp.path().join("nothing.SData"))])), 3);
+    // a name that is not a layout or a code page is a usage error
+    assert_eq!(code(&sh(&w.data, &["sdata", "table", p(&m), "--layout", "weapons"])), 2);
+    assert_eq!(code(&sh(&w.data, &["sdata", "table", p(&m), "--code-page", "latin9"])), 2);
+    // from an archive: the entry must exist; the fixture's Item.SData is not a table
+    assert_eq!(code(&sh(&w.data, &["sdata", "table", "Item/Nothing.SData", "--from", p(&w.client)])), 3);
+    assert_eq!(code(&sh(&w.data, &["sdata", "table", "Item/Item.SData", "--from", p(&w.client)])), 3);
+}
+
+#[test]
+fn table_code_page() {
+    let w = world();
+    let f = w.tmp.path().join("Monster.SData");
+    write(&f, &monster_table(&[&[0xB0, 0xCB, 0]]));
+    let cp949 = json(&sh(&w.data, &["sdata", "table", p(&f), "--json"]));
+    let cp1252 = json(&sh(&w.data, &["sdata", "table", p(&f), "--json", "--code-page", "cp1252"]));
+    assert_ne!(cp949["sheets"][0]["rows"][0][1], cp1252["sheets"][0]["rows"][0][1]);
+    assert_eq!(cp1252["sheets"][0]["rows"][0][1], "\u{B0}\u{CB}");
+}

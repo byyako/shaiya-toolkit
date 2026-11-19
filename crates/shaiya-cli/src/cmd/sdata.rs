@@ -37,6 +37,39 @@ pub enum Cmd {
     ///
     /// Example: shaiya sdata encrypt plain/ -o enc/ --like "@us"
     Encrypt(EncryptArgs),
+    /// Read an SData file as a table (rows and columns) and write it as CSV or JSON
+    ///
+    /// A layout is used only when it reads the whole file to the last byte; the file may be SEED-encrypted or plain. With --layout
+    /// auto (the default) the only layout that fits is used; when none fits, or more than one, the command exits 3. Names are decoded
+    /// with --code-page (default cp949). NpcQuest has several tables: --section picks one (default: quests).
+    ///
+    /// Example: shaiya sdata table Item.SData --csv items.csv
+    Table(TableArgs),
+}
+
+#[derive(clap::Args)]
+pub struct TableArgs {
+    /// An SData file; with --from, its path in the archive
+    #[arg(value_name = "INPUT")]
+    pub input: String,
+    /// Read from this archive (a client folder, a .sah file or @name)
+    #[arg(long, value_name = "ARCHIVE")]
+    pub from: Option<String>,
+    /// Which layouts to try: auto, item, skill, monster or npcquest
+    #[arg(long, value_name = "NAME", default_value = "auto", value_parser = clap::builder::PossibleValuesParser::new(["auto", "item", "skill", "monster", "npcquest"]))]
+    pub layout: String,
+    /// The table of a file with several (npcquest: merchants, gatekeepers, npcs, quest_links, quests); default is the main one
+    #[arg(long, value_name = "NAME")]
+    pub section: Option<String>,
+    /// Write the table as CSV (UTF-8 with a byte-order mark) to this file; an existing file is refused. With --json, print the table as one JSON document instead (a summary when --csv is also given)
+    #[arg(long, value_name = "FILE")]
+    pub csv: Option<PathBuf>,
+    /// Replace an existing --csv file
+    #[arg(long, requires = "csv")]
+    pub force: bool,
+    /// Text encoding of names and descriptions: cp949, cp1252, cp1251, cp936, utf-8, utf-16le
+    #[arg(long, value_name = "NAME", default_value = "cp949", value_parser = clap::builder::PossibleValuesParser::new(["cp949", "cp1252", "cp1251", "cp936", "utf-8", "utf-16le"]))]
+    pub code_page: String,
 }
 
 #[derive(clap::Args)]
@@ -110,6 +143,7 @@ pub fn run(ctx: &Ctx, cmd: &Cmd, job: &Job) -> i32 {
         Cmd::Check(a) => info(ctx, a, true, job),
         Cmd::Decrypt(a) => decrypt(ctx, a, job),
         Cmd::Encrypt(a) => encrypt(ctx, a, job),
+        Cmd::Table(a) => table(ctx, a),
     };
     match r {
         Ok(code) => code,
@@ -373,4 +407,54 @@ fn encrypt(ctx: &Ctx, a: &EncryptArgs, job: &Job) -> Result<i32> {
         };
         Ok(print_batch(ctx, &items, a.dry_run, "encrypted"))
     })
+}
+
+fn table(ctx: &Ctx, a: &TableArgs) -> Result<i32> {
+    let hint = shaiya_sdata::Hint::from_name(&a.layout).unwrap_or(shaiya_sdata::Hint::Auto);
+    let enc = shaiya_sdata::encoding_by_name(&a.code_page).unwrap_or(shaiya_core::text::Encoding::Cp949);
+    let (name, raw) = match &a.from {
+        Some(arch) => {
+            let archive = open_full(ctx, arch)?;
+            let e = archive.index().get(&a.input).ok_or_else(|| Error::io(&a.input, std::io::Error::new(std::io::ErrorKind::NotFound, "not in the archive")))?;
+            (a.input.clone(), archive.read_entry(e)?)
+        }
+        None => {
+            let path = resolve(ctx, &a.input)?;
+            (path.display().to_string(), std::fs::read(&path).map_err(|e| Error::io(&path, e))?)
+        }
+    };
+    let t = shaiya_sdata::read_file(&raw, &name, hint, enc).map_err(|e| e.into_error(&name))?;
+    let sheet = match &a.section {
+        Some(s) => Some(t.sheet(s).ok_or_else(|| Error::Refused(format!("{name}: no table called {s:?}; this file has: {}", t.sheets.iter().map(|x| x.name.as_str()).collect::<Vec<_>>().join(", "))))?),
+        None => None,
+    };
+    let shown = sheet.unwrap_or_else(|| t.primary());
+    if let Some(out_path) = &a.csv {
+        let out_path = resolve(ctx, &out_path.to_string_lossy())?;
+        if out_path.exists() && !a.force {
+            return Err(Error::Refused(format!("{} exists; use --force to replace it", out_path.display())));
+        }
+        shaiya_core::fs::write_atomic(&out_path, shaiya_sdata::csv(shown).as_bytes())?;
+        if t.sheets.len() > 1 && sheet.is_none() {
+            note(ctx, &format!("note: this file has {} tables; wrote {}. Use --section for: {}", t.sheets.len(), shown.name, t.sheets.iter().map(|x| x.name.as_str()).collect::<Vec<_>>().join(", ")));
+        }
+        note(ctx, &format!("{}: {} rows, {} columns -> {}", shown.name, num(shown.rows.len() as u64), shown.columns.len(), out_path.display()));
+        if ctx.json {
+            print_json(&json!({"layout": t.layout.variant, "table": t.layout.table.name(), "section": shown.name, "rows": shown.rows.len(), "columns": shown.columns.len(), "out": out_path.display().to_string()}));
+        }
+        return Ok(0);
+    }
+    if ctx.json {
+        print_json(&t.to_json(sheet));
+        return Ok(0);
+    }
+    let mut w = out();
+    outln!(w, "{name}: layout {} ({}), names read as {}", t.layout.variant, t.layout.table.name(), shaiya_sdata::encoding_name(enc));
+    for s in &t.sheets {
+        if sheet.is_some_and(|x| !std::ptr::eq(x, s)) {
+            continue;
+        }
+        outln!(w, "  {}: {} rows, {} columns: {}", s.name, num(s.rows.len() as u64), s.columns.len(), s.columns.iter().map(|c| c.name.as_str()).collect::<Vec<_>>().join(", "));
+    }
+    Ok(0)
 }
