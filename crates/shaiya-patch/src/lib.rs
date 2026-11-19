@@ -584,6 +584,74 @@ impl BuildInput {
     }
 }
 
+/// Feeds a SHA-256 from `Source::copy_to`.
+struct HashWrite(Hasher);
+
+impl Write for HashWrite {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        self.0.update(buf);
+        Ok(buf.len())
+    }
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+impl BuildInput {
+    /// "Only the changed files": drops every archive file that is already in the client's archive with the same length and the same
+    /// SHA-256 (the client is only read), and returns the archive paths that were left out, in input order. Loose files and removals
+    /// are not touched. `client` is the client folder.
+    pub fn skip_same_as(&mut self, client: &Path, job: &Job) -> Result<Vec<String>> {
+        let same = unchanged_files(&self.files, client, job)?;
+        if same.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut left_out = Vec::new();
+        let mut kept = Vec::with_capacity(self.files.len());
+        for (i, f) in std::mem::take(&mut self.files).into_iter().enumerate() {
+            if same.binary_search(&i).is_ok() {
+                left_out.push(f.0);
+            } else {
+                kept.push(f);
+            }
+        }
+        self.files = kept;
+        Ok(left_out)
+    }
+}
+
+/// Indexes (ascending) of the files that are already the same in the client's archive: same visible entry (the client's own lookup:
+/// case-insensitive, the later duplicate wins), same length, same SHA-256. Reads only.
+pub fn unchanged_files(files: &[(String, Source, i32)], client: &Path, job: &Job) -> Result<Vec<usize>> {
+    let cf = ClientFiles::locate(client)?;
+    let archive = Archive::open(&cf.sah)?;
+    let mut same = Vec::new();
+    for (i, (path, src, _)) in files.iter().enumerate() {
+        job.check()?;
+        let Some(entry) = archive.index().get(path) else { continue };
+        if src.len()? != entry.length as u64 {
+            continue;
+        }
+        let mut mine = HashWrite(Hasher::new());
+        src.copy_to(&mut mine, job)?;
+        let mut theirs = Hasher::new();
+        let mut r = archive.reader(entry)?;
+        let mut buf = vec![0u8; 1 << 16];
+        loop {
+            job.check()?;
+            let n = io_at(&cf.saf, r.read(&mut buf))?;
+            if n == 0 {
+                break;
+            }
+            theirs.update(&buf[..n]);
+        }
+        if mine.0.finish() == theirs.finish() {
+            same.push(i);
+        }
+    }
+    Ok(same)
+}
+
 /// Everything wrong with a build input, all at once (the loose-name rules and the archive rules).
 pub fn input_problems(input: &BuildInput) -> Vec<String> {
     let mut problems = Vec::new();

@@ -16,6 +16,14 @@ shaiya patch build -o ps0110.patch --files changed --loose loose --remove remove
 
 All three inputs are optional, but at least one is needed.
 
+**Only the changed files.** When `changed/` is a whole mod folder, add `--only-changed CLIENT` (a client folder or `@name`) and the files that are already identical in that client's archive (same size and same SHA-256) are left out of the patch. They are listed on stderr, so you can see what was skipped, and the client is only read:
+
+```
+shaiya patch build -o ps0110.patch --files changed --only-changed C:\Games\Shaiya
+```
+
+In Shaiya Toolkit's Patch builder the same thing is the box "Leave out files that are already the same in NAME", on when a client is selected; the contents table shows those files as "same, left out". If nothing differs, the patch is empty and the builder says so.
+
 **From the difference of two archives.** When you have the old and the new `data.sah`/`data.saf` (two client folders, or a stock pair and your edited one):
 
 ```

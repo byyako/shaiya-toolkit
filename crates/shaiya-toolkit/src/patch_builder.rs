@@ -34,6 +34,8 @@ pub struct Row {
     pub version: i32,
     pub effect: String,
     pub problem: bool,
+    /// "same, left out": already identical in the selected client, not part of the patch.
+    pub skipped: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -54,11 +56,16 @@ enum BuildFlow {
     Idle,
     /// Build pressed while the file checks of the current contents are still running.
     WaitCheck(PathBuf),
+    /// Build pressed while the comparison with the client (files that are already the same) is still running.
+    WaitSame(PathBuf),
     /// The "Build anyway" question about files that look broken.
     Ask(PathBuf),
     Confirm(PathBuf),
     Running(PathBuf, TaskHandle<BuildDone>),
 }
+
+/// (resolved contents generation, the Archive tab's change counter, client folder).
+type SameKey = (u64, u64, PathBuf);
 
 pub struct PatchBuilder {
     pub files_dir: Option<PathBuf>,
@@ -67,6 +74,19 @@ pub struct PatchBuilder {
     /// Pending changes or differences, as an extra source: (label, input).
     pub extra: Option<(String, BuildInput)>,
     input: BuildInput,
+    /// "Leave out files that are already the same in <client>" (on by default; only offered when a client is selected).
+    pub skip_same: bool,
+    /// Everything the sources resolved to, before the same files are left out.
+    all: BuildInput,
+    all_gen: u64,
+    /// The comparison with the client: key = (all_gen, the Archive tab's change counter, client folder).
+    cur_key: Option<SameKey>,
+    same_for: Option<SameKey>,
+    same: std::collections::HashSet<String>,
+    same_task: Option<(SameKey, TaskHandle<Vec<String>>)>,
+    same_note: Option<String>,
+    /// True while `input` is `all` without the same files.
+    skipping: bool,
     pub rows: Vec<Row>,
     pub problems: Vec<String>,
     pub resolve_error: Option<String>,
@@ -126,6 +146,15 @@ impl PatchBuilder {
             remove_list: None,
             extra: None,
             input: BuildInput::default(),
+            skip_same: true,
+            all: BuildInput::default(),
+            all_gen: 0,
+            cur_key: None,
+            same_for: None,
+            same: std::collections::HashSet::new(),
+            same_task: None,
+            same_note: None,
+            skipping: false,
             rows: Vec::new(),
             problems: Vec::new(),
             resolve_error: None,
@@ -239,14 +268,83 @@ impl PatchBuilder {
                 }
             }
         }
+        self.all = input;
+        self.all_gen += 1;
+        self.same_for = None;
+        self.same.clear();
+        self.same_task = None;
+        self.same_note = None;
+        self.skipping = false;
+        self.derive();
+    }
+
+    fn same_known(&self) -> bool {
+        self.skip_same && self.same_for.is_some() && self.same_for == self.cur_key && !self.same.is_empty()
+    }
+
+    /// `input` (what is built) from `all`, without the files that are already the same in the client when that is known.
+    fn derive(&mut self) {
+        let mut input = self.all.clone();
+        self.skipping = self.same_known();
+        if self.skipping {
+            input.files.retain(|f| !self.same.contains(&f.0));
+        }
         self.problems = shaiya_patch::input_problems(&input);
         self.input_gen += 1;
         self.input = input;
         self.effect_stamp.clear();
     }
 
+    /// Takes the result of the comparison with the client (called every tick).
+    fn poll_same(&mut self) {
+        let Some((key, mut h)) = self.same_task.take() else { return };
+        match h.poll() {
+            None => self.same_task = Some((key, h)),
+            Some(outcome) => {
+                if key.0 == self.all_gen {
+                    self.same.clear();
+                    self.same_note = None;
+                    match outcome {
+                        TaskOutcome::Done(list) => self.same.extend(list),
+                        TaskOutcome::Failed(e) => self.same_note = Some(format!("Could not compare with the client, so every file is included: {e}")),
+                        TaskOutcome::Cancelled => self.same_note = Some("The comparison with the client was cancelled, so every file is included".to_string()),
+                        TaskOutcome::Panicked(m) => self.same_note = Some(format!("Could not compare with the client, so every file is included (internal error: {m})")),
+                    }
+                    self.same_for = Some(key);
+                    self.reconcile();
+                }
+            }
+        }
+    }
+
+    /// Re-derives `input` when the answer to "leave out the same files" changed.
+    fn reconcile(&mut self) {
+        if self.same_known() != self.skipping {
+            self.derive();
+        }
+    }
+
+    /// Starts the comparison with the selected client (read-only) when it is wanted and not known for the current contents.
+    fn sync_same(&mut self, client: Option<&ClientInfo>, archive: &ArchiveView, cx: &mut ToolkitCx<'_>) {
+        self.cur_key = client.map(|c| (self.all_gen, archive.changed_counter, c.dir.clone()));
+        if let (true, Some(key)) = (self.skip_same && !self.all.files.is_empty(), self.cur_key.clone()) {
+            let running = self.same_task.as_ref().is_some_and(|(k, _)| *k == key);
+            if self.same_for.as_ref() != Some(&key) && !running {
+                let files = self.all.files.clone();
+                let dir = key.2.clone();
+                let h = cx.shell.tasks().spawn(TaskSpec { title: "Comparing with the client".to_string(), cancellable: true, exclusive: None }, move |job| {
+                    let same = shaiya_patch::unchanged_files(&files, &dir, job)?;
+                    Ok(same.into_iter().map(|i| files[i].0.clone()).collect::<Vec<String>>())
+                });
+                self.same_task = Some((key, h));
+            }
+        }
+        self.reconcile();
+    }
+
     fn refresh_rows(&mut self, client: Option<&ClientInfo>, archive: &ArchiveView) {
         let stamp = format!("{}|{}|{}", client.map(|c| c.dir.display().to_string()).unwrap_or_default(), archive.changed_counter, self.input.files.len() + self.input.loose.len() + self.input.removals.len());
+        let stamp = format!("{stamp}|{}", self.input_gen);
         if stamp == self.effect_stamp {
             return;
         }
@@ -264,7 +362,12 @@ impl PatchBuilder {
                     None => "new".into(),
                 }
             };
-            rows.push(Row { kind: "archive", path: path.clone(), size, version: *version, effect, problem: bad(path) });
+            rows.push(Row { kind: "archive", path: path.clone(), size, version: *version, effect, problem: bad(path), skipped: false });
+        }
+        if self.skipping {
+            for (path, src, version) in self.all.files.iter().filter(|f| self.same.contains(&f.0)) {
+                rows.push(Row { kind: "archive", path: path.clone(), size: src.len().unwrap_or(0), version: *version, effect: "same, left out".to_string(), problem: false, skipped: true });
+            }
         }
         for (name, file) in &self.input.loose {
             let size = std::fs::metadata(file).map(|m| m.len()).unwrap_or(0);
@@ -275,11 +378,11 @@ impl PatchBuilder {
                 }
                 None => String::new(),
             };
-            rows.push(Row { kind: "loose", path: name.clone(), size, version: 0, effect, problem: bad(name) });
+            rows.push(Row { kind: "loose", path: name.clone(), size, version: 0, effect, problem: bad(name), skipped: false });
         }
         for p in &self.input.removals {
             let effect = if !on_client { String::new() } else if archive.lookup(p).is_some() { "removes".to_string() } else { "not present".to_string() };
-            rows.push(Row { kind: "remove", path: p.clone(), size: 0, version: 0, effect, problem: bad(p) });
+            rows.push(Row { kind: "remove", path: p.clone(), size: 0, version: 0, effect, problem: bad(p), skipped: false });
         }
         self.rows = rows;
     }
@@ -305,6 +408,11 @@ impl PatchBuilder {
         }
     }
 
+    /// Nothing would go into the patch (files that are left out as "same" do not count).
+    fn contents_empty(&self) -> bool {
+        self.input.files.is_empty() && self.input.loose.is_empty() && self.input.removals.is_empty()
+    }
+
     pub fn warnings(&self) -> Vec<String> {
         let mut w = Vec::new();
         if shaiya_patch::patch_number(self.out_name.trim()).is_none() {
@@ -313,7 +421,7 @@ impl PatchBuilder {
         if !self.input.removals.is_empty() {
             w.push("remove.txt is honoured by the toolkit and the replacement updater, not by the original Updater.exe.".to_string());
         }
-        if self.rows.is_empty() {
+        if self.contents_empty() {
             w.push("The patch is empty.".to_string());
         }
         w
@@ -323,7 +431,7 @@ impl PatchBuilder {
         if self.is_busy() {
             return Some("Busy".into());
         }
-        if self.rows.is_empty() {
+        if self.contents_empty() {
             return Some("Nothing to build yet".into());
         }
         if !self.problems.is_empty() {
@@ -350,7 +458,11 @@ impl PatchBuilder {
             return;
         }
         let Some(out) = self.out_path() else { return };
-        self.after_checks(out, cx);
+        if self.same_task.is_some() {
+            self.flow = BuildFlow::WaitSame(out);
+        } else {
+            self.after_checks(out, cx);
+        }
     }
 
     /// The file checks of the current contents have finished.
@@ -439,6 +551,7 @@ impl PatchBuilder {
 
     pub fn tick(&mut self, cx: &mut ToolkitCx<'_>) {
         self.publish.tick(cx);
+        self.poll_same();
         self.run_checks(cx);
         if let Some(h) = &mut self.diff {
             match h.poll() {
@@ -457,6 +570,13 @@ impl PatchBuilder {
         }
         match std::mem::replace(&mut self.flow, BuildFlow::Idle) {
             BuildFlow::Idle => {}
+            BuildFlow::WaitSame(out) => {
+                if self.same_task.is_none() {
+                    self.after_checks(out, cx);
+                } else {
+                    self.flow = BuildFlow::WaitSame(out);
+                }
+            }
             BuildFlow::WaitCheck(out) => {
                 if self.checks_current() {
                     self.after_checks(out, cx);
@@ -488,8 +608,9 @@ impl PatchBuilder {
             BuildFlow::Running(out, mut h) => match h.poll() {
                 None => self.flow = BuildFlow::Running(out, h),
                 Some(TaskOutcome::Done(d)) => {
+                    let left_out = if self.skipping { format!(", {} left out (already the same in the client)", self.same.len()) } else { String::new() };
                     self.result = vec![format!(
-                        "Built {} ({}): {} archive files, {} loose, {} removals{}",
+                        "Built {} ({}): {} archive files, {} loose, {} removals{}{left_out}",
                         d.out.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(),
                         human_size(d.size),
                         d.report.added.len(),
@@ -525,6 +646,7 @@ impl PatchBuilder {
         if self.dirty {
             self.resolve();
         }
+        self.sync_same(client, archive, cx);
         self.refresh_rows(client, archive);
         let pal = cx.shell.pal();
         let mut choose: Option<Card> = None;
@@ -589,6 +711,18 @@ impl PatchBuilder {
                     ui.label("Comparing...");
                 }
             });
+            if let Some(c) = client {
+                ui.horizontal_wrapped(|ui| {
+                    ui.checkbox(&mut self.skip_same, format!("Leave out files that are already the same in {}", c.name))
+                        .on_hover_text("Compares each archive file with the one in the client (same size and SHA-256). The client is only read.");
+                    if self.same_task.is_some() {
+                        ui.label(RichText::new("Comparing with the client...").color(pal.weak));
+                    }
+                });
+                if let Some(n) = &self.same_note {
+                    ui.label(RichText::new(n).color(pal.warning));
+                }
+            }
             if let Some(e) = &self.resolve_error {
                 ui.label(RichText::new(e).color(pal.error));
             }
@@ -597,7 +731,9 @@ impl PatchBuilder {
                 ui.label(RichText::new("Drop a folder of changed files here. Files inside it keep their paths in the archive (for example Item/Item.SData). Loose files go into the client folder itself. Nothing is written until you press Build.").color(pal.weak));
             } else {
                 ui.add_space(6.0);
-                ui.label(RichText::new(format!("Contents ({})", self.rows.len())).strong());
+                let left = self.rows.iter().filter(|r| r.skipped).count();
+                let head = if left == 0 { format!("Contents ({})", self.rows.len()) } else { format!("Contents ({}, {left} left out)", self.rows.len() - left) };
+                ui.label(RichText::new(head).strong());
                 egui::Grid::new("toolkit-patch-rows-head").show(ui, |ui| {
                     for h in ["Kind", "Path", "Size", "Packed", "Effect on the client"] {
                         ui.label(RichText::new(h).strong());
@@ -609,7 +745,7 @@ impl PatchBuilder {
                 egui::ScrollArea::vertical().id_salt("toolkit-patch-rows").max_height(260.0).show_rows(ui, 18.0, n, |ui, range| {
                     for r in &self.rows[range] {
                         ui.horizontal(|ui| {
-                            let col = if r.problem { pal.error } else { pal.text };
+                            let col = if r.problem { pal.error } else if r.skipped { pal.weak } else { pal.text };
                             ui.add_sized([60.0, 16.0], egui::Label::new(RichText::new(r.kind).color(col)));
                             ui.add_sized([340.0, 16.0], egui::Label::new(RichText::new(&r.path).color(col)).truncate());
                             ui.add_sized([80.0, 16.0], egui::Label::new(human_size(r.size)));

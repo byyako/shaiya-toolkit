@@ -168,3 +168,61 @@ fn a_missing_or_foreign_file_is_an_error_not_a_panic() {
     fs::write(&junk, b"this is not a zip file").unwrap();
     assert_eq!(list(&junk).err().map(|e| e.kind()), Some(shaiya_core::ErrorKind::Format));
 }
+
+#[test]
+fn skip_same_as_drops_only_identical_files_and_never_writes_the_client() {
+    use shaiya_archive::edit::Source;
+    use shaiya_patch::BuildInput;
+    let t = TempDir::new("patch-same");
+    let client = t.path().join("client");
+    fs::create_dir_all(&client).unwrap();
+    client_in(&client);
+    let files = t.path().join("files");
+    fs::create_dir_all(files.join("Item")).unwrap();
+    fs::create_dir_all(files.join("keep")).unwrap();
+    fs::write(files.join("Item/Item.SData"), b"old item data").unwrap(); // identical
+    fs::write(files.join("keep/me.txt"), b"keeP").unwrap(); // same length, different bytes
+    fs::write(files.join("new.bin"), b"n").unwrap(); // not in the client
+    let before = (fs::read(client.join("data.sah")).unwrap(), fs::read(client.join("data.saf")).unwrap());
+    let mut input = BuildInput::from_folders(Some(&files), None, None, Some(5)).unwrap();
+    let left = input.skip_same_as(&client, &Job::silent()).unwrap();
+    assert_eq!(left, vec!["Item/Item.SData"]);
+    let kept: Vec<&str> = input.files.iter().map(|f| f.0.as_str()).collect();
+    assert_eq!(kept, vec!["keep/me.txt", "new.bin"]);
+    assert!(input.files.iter().all(|f| matches!(f.1, Source::File(_))));
+    assert_eq!((fs::read(client.join("data.sah")).unwrap(), fs::read(client.join("data.saf")).unwrap()), before, "the client is only read");
+
+    // an all-same folder leaves nothing, and no client archive is an error
+    let same = t.path().join("same");
+    fs::create_dir_all(same.join("keep")).unwrap();
+    fs::write(same.join("keep/me.txt"), b"keep").unwrap();
+    let mut all_same = BuildInput::from_folders(Some(&same), None, None, Some(5)).unwrap();
+    assert_eq!(all_same.skip_same_as(&client, &Job::silent()).unwrap(), vec!["keep/me.txt"]);
+    assert!(all_same.files.is_empty());
+    assert!(BuildInput::from_folders(Some(&same), None, None, None).unwrap().skip_same_as(t.path(), &Job::silent()).is_err());
+}
+
+#[test]
+fn a_patch_of_only_the_changed_files_is_deterministic_and_applies() {
+    use shaiya_core::fs::Existing;
+    use shaiya_patch::{build_with, BuildInput, BuildOptions};
+    let t = TempDir::new("patch-same-build");
+    let client = t.path().join("client");
+    fs::create_dir_all(&client).unwrap();
+    client_in(&client);
+    let files = t.path().join("files");
+    fs::create_dir_all(files.join("Item")).unwrap();
+    fs::write(files.join("Item/Item.SData"), b"old item data").unwrap();
+    fs::write(files.join("Item/Other.SData"), b"other").unwrap();
+    let build_once = |name: &str| {
+        let mut input = BuildInput::from_folders(Some(&files), None, None, Some(7)).unwrap();
+        input.skip_same_as(&client, &Job::silent()).unwrap();
+        let out = t.path().join(name);
+        let r = build_with(&input, &out, &BuildOptions { existing: Existing::Refuse, sign: None }, &Job::silent()).unwrap();
+        assert_eq!(r.added, vec!["Item/Other.SData"]);
+        out
+    };
+    let (a, b) = (build_once("a.patch"), build_once("b.patch"));
+    assert_eq!(fs::read(&a).unwrap(), fs::read(&b).unwrap(), "two builds are byte-identical");
+    assert_eq!(list(&a).unwrap().0, vec![("Item/Other.SData".to_string(), 5)]);
+}

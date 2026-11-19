@@ -1238,3 +1238,43 @@ fn a_double_encrypted_file_in_a_patch_asks_once_before_publishing() {
     assert!(w.h.wait_until(WAIT, |h| !h.app.app.patch.publish.result.is_empty()));
     assert!(dest.join("Shaiya/patch/ps0007.patch").is_file());
 }
+
+#[test]
+fn the_patch_builder_leaves_out_files_that_are_already_the_same_in_the_client() {
+    let mut w = open_world("t7-w6-same");
+    let src = TempDir::new("t7-w6-same-src");
+    let files = src.path().join("mod");
+    std::fs::create_dir_all(files.join("Item/3DO")).unwrap();
+    std::fs::write(files.join("Item/3DO/a.txt"), b"hello text").unwrap(); // identical to the client's
+    std::fs::write(files.join("Item/3DO/b.txt"), b"second!").unwrap(); // changed
+    std::fs::write(files.join("c.txt"), b"fresh").unwrap(); // new
+    let out_dir = TempDir::new("t7-w6-same-out");
+    go(&mut w.h, Tab::Patch);
+    w.h.app.app.patch.out_dir = out_dir.path().display().to_string();
+    assert!(w.h.app.app.patch.skip_same, "on by default");
+    w.h.drop_files(std::slice::from_ref(&files));
+    let skipped = |h: &Harness<ToolkitApp>| h.app.app.patch.rows.iter().filter(|r| r.skipped).map(|r| r.path.clone()).collect::<Vec<_>>();
+    assert!(w.h.wait_until(WAIT, |h| h.app.app.patch.rows.len() == 3 && !skipped(h).is_empty() && h.app.app.patch.checks_done()), "the comparison finishes");
+    w.h.frames(2);
+    assert_eq!(skipped(&w.h), ["Item/3DO/a.txt"]);
+    let rows = w.h.app.app.patch.rows.clone();
+    assert_eq!(rows.iter().find(|r| r.skipped).unwrap().effect, "same, left out");
+    let mut kept: Vec<String> = w.h.app.app.patch.input().files.iter().map(|f| f.0.clone()).collect();
+    kept.sort();
+    assert_eq!(kept, ["Item/3DO/b.txt", "c.txt"], "only the changed and the new file are built");
+    let t = w.h.text();
+    assert!(t.contains("Leave out files that are already the same in US test") && t.contains("1 left out"), "{t}");
+    // Build puts only the two in
+    with_cx(&mut w.h, |app, cx| app.patch.begin_build(&app.keys, cx));
+    assert!(w.h.wait_until(WAIT, |h| h.app.app.patch.last_out.is_some()), "built");
+    let c = shaiya_patch::contents(&out_dir.path().join("ps0001.patch")).unwrap();
+    let mut names: Vec<String> = c.files.iter().map(|f| f.path.clone()).collect();
+    names.sort();
+    assert_eq!(names, ["Item/3DO/b.txt", "c.txt"]);
+    assert!(w.h.app.app.patch.result[0].contains("1 left out"), "{:?}", w.h.app.app.patch.result);
+    // unticking brings the file back
+    w.h.app.app.patch.skip_same = false;
+    w.h.frames(3);
+    assert_eq!(w.h.app.app.patch.input().files.len(), 3);
+    assert!(skipped(&w.h).is_empty());
+}

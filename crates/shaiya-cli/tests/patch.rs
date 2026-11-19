@@ -273,3 +273,104 @@ fn unreadable_inputs_exit_3() {
         assert_eq!(code(&o), 3, "{args:?}: {}", err(&o));
     }
 }
+
+/// A mod folder over the synthetic client: one file identical to the client's, one changed, one new.
+fn mod_folder(w: &World) -> PathBuf {
+    let m = w.tmp.path().join("mod");
+    write(&m.join("Item/Item.SData"), &shaiya_seed::encrypt(ITEM_PLAIN));
+    write(&m.join("interface/icon/b.txt"), b"hello, changed");
+    write(&m.join("interface/new.txt"), b"brand new");
+    m
+}
+
+fn patch_paths(w: &World, patch: &Path) -> Vec<String> {
+    let v = json(&sh(&w.data, &["patch", "list", p(patch), "--json"]));
+    let mut names: Vec<String> = v["files"].as_array().unwrap().iter().map(|f| f["path"].as_str().unwrap().to_string()).collect();
+    names.sort();
+    names
+}
+
+#[test]
+fn only_changed_leaves_out_what_the_client_already_has() {
+    let w = world();
+    let m = mod_folder(&w);
+    let before = snapshot(&w.client);
+    let out = w.tmp.path().join("ps0109.patch");
+    let o = sh(&w.data, &["patch", "build", "-o", p(&out), "--files", p(&m), "--only-changed", p(&w.client), "--timestamp", "2026-11-15", "--json"]);
+    assert_eq!(code(&o), 0, "{}", err(&o));
+    assert_eq!(patch_paths(&w, &out), vec!["interface/icon/b.txt", "interface/new.txt"], "the identical file is not in the patch");
+    assert!(err(&o).contains("Item/Item.SData"), "the left-out file is listed on stderr: {}", err(&o));
+    let v = json(&o);
+    assert_eq!(v["unchanged"], serde_json::json!(["Item/Item.SData"]));
+    assert_eq!(v["added"].as_array().unwrap().len(), 2);
+    assert_eq!(snapshot(&w.client), before, "the client is only read");
+
+    // the same inputs give the same bytes
+    let again = w.tmp.path().join("again").join("ps0109.patch");
+    std::fs::create_dir_all(again.parent().unwrap()).unwrap();
+    let o = sh(&w.data, &["patch", "build", "-o", p(&again), "--files", p(&m), "--only-changed", p(&w.client), "--timestamp", "2026-11-15"]);
+    assert_eq!(code(&o), 0, "{}", err(&o));
+    assert_eq!(std::fs::read(&out).unwrap(), std::fs::read(&again).unwrap());
+
+    // without the option the identical file goes in
+    let full = w.tmp.path().join("full.patch");
+    assert_eq!(code(&sh(&w.data, &["patch", "build", "-o", p(&full), "--files", p(&m), "--timestamp", "2026-11-15"])), 0);
+    assert_eq!(patch_paths(&w, &full).len(), 3);
+
+    // a dry run lists the same files
+    let o = sh(&w.data, &["patch", "build", "-o", p(&w.tmp.path().join("dry.patch")), "--files", p(&m), "--only-changed", p(&w.client), "--dry-run", "--json"]);
+    assert_eq!(code(&o), 0, "{}", err(&o));
+    let v = json(&o);
+    assert_eq!((v["files"].as_array().unwrap().len(), v["unchanged"].as_array().unwrap().len()), (2, 1));
+}
+
+#[test]
+fn only_changed_with_nothing_changed_builds_an_empty_patch_with_the_warning() {
+    let w = world();
+    let m = w.tmp.path().join("same");
+    write(&m.join("Item/Item.SData"), &shaiya_seed::encrypt(ITEM_PLAIN));
+    write(&m.join("interface/icon/b.txt"), b"hello");
+    let out = w.tmp.path().join("ps0110.patch");
+    let o = sh(&w.data, &["patch", "build", "-o", p(&out), "--files", p(&m), "--only-changed", p(&w.client)]);
+    assert_eq!(code(&o), 0, "{}", err(&o));
+    assert!(err(&o).contains("the patch is empty"), "{}", err(&o));
+    assert!(patch_paths(&w, &out).is_empty());
+    // usage: --only-changed needs --files and cannot go with --diff
+    assert_eq!(code(&sh(&w.data, &["patch", "build", "-o", "x.patch", "--loose", p(&m), "--only-changed", p(&w.client)])), 2);
+    assert_eq!(code(&sh(&w.data, &["patch", "build", "-o", "x.patch", "--diff", "a", "b", "--only-changed", p(&w.client)])), 2);
+    // a client folder without an archive is an unreadable input
+    let empty = w.tmp.path().join("noclient");
+    std::fs::create_dir_all(&empty).unwrap();
+    assert_eq!(code(&sh(&w.data, &["patch", "build", "-o", p(&w.tmp.path().join("y.patch")), "--files", p(&m), "--only-changed", p(&empty)])), 3);
+}
+
+/// Opt-in (`SHAIYA_CLIENT`, read only): one real file extracted to a scratch folder, plus a modified copy under another archive path.
+#[test]
+fn opt_in_only_changed_on_a_real_client() {
+    let Some(client) = shaiya_testkit::env_client() else {
+        eprintln!("skipped: SHAIYA_CLIENT not set");
+        return;
+    };
+    let archive = shaiya_archive::Archive::open(&client).unwrap();
+    let mut files: Vec<(String, u32)> = archive.index().files().into_iter().filter(|(_, e)| e.length >= 16 && e.length <= 1 << 20).map(|(p, e)| (p, e.length)).collect();
+    files.sort();
+    let (path, len) = files.first().cloned().expect("the client holds a small file");
+    let bytes = archive.read(&path).unwrap();
+    let t = shaiya_testkit::TempDir::new("w6-optin");
+    let folder = t.path().join("mod");
+    write(&folder.join(&path), &bytes);
+    let mut changed = bytes.clone();
+    changed[0] ^= 0xFF;
+    let copy_path = format!("zz-toolkit-test/{}", path.rsplit('/').next().unwrap());
+    write(&folder.join(&copy_path), &changed);
+    let data = t.path().join("data");
+    std::fs::create_dir_all(&data).unwrap();
+    let out = t.path().join("ps0001.patch");
+    let t0 = std::time::Instant::now();
+    let o = sh(&data, &["patch", "build", "-o", p(&out), "--files", p(&folder), "--only-changed", p(&client), "--json"]);
+    assert_eq!(code(&o), 0, "{}", err(&o));
+    let v = json(&o);
+    eprintln!("only-changed on a real client: {path} ({len} bytes) left out, {copy_path} kept, {:?}", t0.elapsed());
+    assert_eq!(v["unchanged"].as_array().unwrap().len(), 1, "exactly the untouched file is left out");
+    assert_eq!(v["added"], serde_json::json!([copy_path]), "exactly the modified one goes in");
+}

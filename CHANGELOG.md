@@ -15,15 +15,18 @@ All notable changes are listed here, newest first. The format follows [Keep a Ch
 - Checks before files go in: the Add to archive dialog, Replace with file... and the Patch builder check each SData, `.dds` and `.tga` file and each empty file and list the findings (`sdata-double-encrypted`, `sdata-crc-bad`, `sdata-state-differs`, `texture-unreadable`, `empty-file`). Findings only warn, except that a file encrypted twice or with a failing checksum asks once, "Add anyway" (the Patch builder: "Build anyway") or Cancel; a check that cannot finish asks the same way instead of letting the files through.
 
 - Publish for the regular updater: a section of the Patch builder (and a Start page row, "Publish a patch") copies patches into a server folder and raises `PatchFileVersion` in `UpdateVersion.ini`. Check the plan first (new files, the ini change, refusals, the file checks), then Publish asks with the Changes, Writes, Undo and Game rows; it never writes into a client folder.
+- Patch from a mod folder: with a client selected, the Patch builder's box "Leave out files that are already the same in NAME" (on by default) leaves out the archive files that are identical to the client's copy; the contents table marks them "same, left out".
 
 ### shaiya (CLI)
 
+- `patch build --files DIR --only-changed CLIENT` leaves out the files that are already identical (same length and SHA-256) in the client's archive, lists them on stderr and in the JSON `unchanged` array, and only reads the client.
 - `patch publish PATCH... --to DIR [--check-version N] [--updater-version N] [--new-check-version] [--layout shaiya|flat] [--dry-run]` copies patches to `DIR/Shaiya/patch/` and raises `PatchFileVersion` in `DIR/Shaiya/UpdateVersion.ini` (exit 4 for a name that is not `psNNNN.patch`, a gap, a different file under a published name, a changed CheckVersion without `--new-check-version`, or a client folder as destination).
 - `patch build`, `archive add` and `archive replace` print the same findings as `warning:` lines and in a `warnings` array of the `--json` result; exit codes do not change.
 
 ### Libraries
 
 - `shaiya-patch` has a `publish` module (`plan_publish`, `publish`, `parse_update_ini`, `set_update_ini_keys`) and `read_files`; `shaiya-inspect::validate::check_patch` checks the files inside a finished patch. `shaiya_archive::client::VersionIni` gained `start_update` and is no longer `Copy`.
+- `shaiya-patch` has `BuildInput::skip_same_as` and `unchanged_files` (the comparison behind "only the changed files").
 - `shaiya-inspect` has a `validate` module (`check_file`, `check_source`, `check_input`) behind the checks; it depends on `shaiya-clientdata` for the texture reader.
 
 ### Documentation
@@ -31,6 +34,7 @@ All notable changes are listed here, newest first. The format follows [Keep a Ch
 - New page "Version.ini and UpdateVersion.ini" (keys, folder layout, what the original updater does with them, what `patch publish` writes); the make-a-patch guide section 6 describes publishing; the CLI page and the toolkit page describe `patch publish` and the Publish section.
 - The toolkit page describes the Start page and the four confirmation rows; the undo-and-recovery guide points to them.
 - The make-a-patch guide section 4 is now "Optional: sign it" (the anchor changed to `#4-optional-sign-it`) and the patch format page says signatures are optional.
+- The make-a-patch guide ("Only the changed files"), the CLI page and the toolkit page describe leaving out files that are already the same in the client.
 - The SData wrapper page describes a file encrypted twice; the CLI page, the toolkit page and the mod-files, SData files and make-a-patch guides list the checks before files go in; the version matrix gains two assumption rows with the measured numbers; the textures page says DXT2 and DXT4 DDS files do not read.
 
 ## [0.2.1] - 2026-11-19

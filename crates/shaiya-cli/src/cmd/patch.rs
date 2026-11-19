@@ -22,6 +22,7 @@ pub enum Cmd {
     ///
     /// --files DIR mirrors archive paths (DIR/Item/Item.SData becomes Item/Item.SData), --loose DIR holds files for the client folder
     /// itself (game.exe), --remove LIST names archive paths to delete. --diff OLD NEW builds the patch that turns OLD into NEW.
+    /// With --files, --only-changed CLIENT leaves out the files that are already identical in that client (listed on stderr).
     /// The same inputs always give the same bytes.
     ///
     /// Example: shaiya patch build -o ps0109.patch --files changed/ --sign secret.key --check-version 3
@@ -90,6 +91,9 @@ pub struct BuildArgs {
     /// Build from the difference of two archives (old, new)
     #[arg(long, num_args = 2, value_names = ["OLD", "NEW"])]
     pub diff: Vec<String>,
+    /// Leave out the --files files that are already the same (length and SHA-256) in this client's archive; the client is only read
+    #[arg(long, value_name = "CLIENT", requires = "files", conflicts_with = "diff")]
+    pub only_changed: Option<String>,
     /// Entry time for every file: Unix seconds, 2026-11-15 or 2026-11-15T12:00:00Z (default: file times)
     #[arg(long, value_name = "T")]
     pub timestamp: Option<String>,
@@ -321,6 +325,17 @@ fn build(ctx: &Ctx, a: &BuildArgs, job: &Job) -> Result<i32> {
         }
         BuildInput::from_folders(a.files.as_deref(), a.loose.as_deref(), a.remove.as_deref(), ts)?
     };
+    let mut input = input;
+    let mut unchanged: Vec<String> = Vec::new();
+    if let Some(c) = &a.only_changed {
+        unchanged = input.skip_same_as(&client_dir(ctx, c)?, job)?;
+        if !unchanged.is_empty() {
+            note(ctx, &format!("left out, already the same in the client ({}):", count(unchanged.len(), "file")));
+            for p in &unchanged {
+                note(ctx, &format!("  {p}"));
+            }
+        }
+    }
     let name = file_name(&a.out);
     if patch_number(&name).is_none() {
         warn(ctx, &format!("{name} is not named psNNNN.patch; the updater only fetches psNNNN.patch"));
@@ -343,7 +358,7 @@ fn build(ctx: &Ctx, a: &BuildArgs, job: &Job) -> Result<i32> {
         if ctx.json {
             print_json(&json!({"dry_run": true, "out": a.out.display().to_string(), "files": input.files.iter().map(|f| f.0.clone()).collect::<Vec<_>>(),
                 "loose": input.loose.iter().map(|f| f.0.clone()).collect::<Vec<_>>(), "removals": input.removals, "archive_bytes": total, "loose_bytes": loose,
-                "warnings": findings_json(&findings)}));
+                "unchanged": unchanged, "warnings": findings_json(&findings)}));
         } else {
             let c = Contents {
                 sah_version: 0,
@@ -371,6 +386,7 @@ fn build(ctx: &Ctx, a: &BuildArgs, job: &Job) -> Result<i32> {
         let mut v = serde_json::to_value(&r).unwrap_or(Value::Null);
         v["out"] = json!(a.out.display().to_string());
         v["signature"] = json!(sig);
+        v["unchanged"] = json!(unchanged);
         v["warnings"] = findings_json(&findings);
         print_json(&v);
     } else {
