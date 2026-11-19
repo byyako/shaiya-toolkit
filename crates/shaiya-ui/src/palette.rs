@@ -105,7 +105,8 @@ pub fn show(ctx: &egui::Context, p: &mut Palette, rows: &[Row]) -> Outcome {
         }
         p.selected = p.selected.min(rows.len() - 1);
     }
-    egui::Area::new(egui::Id::unique("shaiya-palette")).order(egui::Order::Foreground).anchor(Align2::CENTER_TOP, [0.0, 56.0]).show(ctx, |ui| {
+    let first_frame = p.first_frame;
+    let area = egui::Area::new(egui::Id::unique("shaiya-palette")).order(egui::Order::Foreground).anchor(Align2::CENTER_TOP, [0.0, 56.0]).show(ctx, |ui| {
         egui::Frame::popup(ui.style()).show(ui, |ui| {
             ui.set_width(520.0);
             ui.label(RichText::new("Command palette").small().weak());
@@ -148,6 +149,13 @@ pub fn show(ctx: &egui::Context, p: &mut Palette, rows: &[Row]) -> Outcome {
             }
         });
     });
+    // a primary press outside the popup closes it (not on its first frame, and a pick wins)
+    if matches!(out, Outcome::None) && !first_frame {
+        let outside = ctx.input(|i| i.pointer.primary_pressed() && i.pointer.interact_pos().is_some_and(|pos| !area.response.rect.contains(pos)));
+        if outside {
+            return Outcome::Close;
+        }
+    }
     out
 }
 

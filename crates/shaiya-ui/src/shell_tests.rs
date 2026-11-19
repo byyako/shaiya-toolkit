@@ -128,6 +128,30 @@ fn ctrl_shift_p_opens_the_palette_and_escape_closes_it() {
 }
 
 #[test]
+fn a_click_outside_the_palette_closes_it() {
+    let mut h = Harness::<Dummy>::bare();
+    h.frames(2);
+    h.key(Key::P, Modifiers::COMMAND | Modifiers::SHIFT);
+    h.frames(2);
+    assert!(h.text().contains("Type a command"), "{}", h.text());
+    h.click(egui::pos2(10.0, 700.0));
+    h.frames(2);
+    assert!(!h.text().contains("Type a command"), "the palette closed: {}", h.text());
+}
+
+#[test]
+fn a_click_inside_the_palette_keeps_it_open() {
+    let mut h = Harness::<Dummy>::bare();
+    h.frames(2);
+    h.key(Key::P, Modifiers::COMMAND | Modifiers::SHIFT);
+    h.frames(2);
+    h.click(egui::pos2(640.0, 90.0));
+    h.frames(2);
+    assert!(h.text().contains("Command palette"), "{}", h.text());
+    assert!(h.text().contains("Preferences..."), "the rows are still listed: {}", h.text());
+}
+
+#[test]
 fn help_activity_and_preferences_open_from_the_keyboard() {
     let mut h = Harness::<Dummy>::bare();
     h.frames(2);

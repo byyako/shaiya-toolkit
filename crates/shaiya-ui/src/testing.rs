@@ -98,6 +98,14 @@ impl<A: ToolApp> Harness<A> {
         self.frame(vec![Event::Key { key, physical_key: None, pressed: false, repeat: false, modifiers }]);
     }
 
+    /// Move the pointer to `pos`, then press and release the primary button there (three frames).
+    pub fn click(&mut self, pos: Pos2) {
+        let button = |pressed| Event::PointerButton { pos, button: egui::PointerButton::Primary, pressed, modifiers: Modifiers::NONE };
+        self.frame(vec![Event::PointerMoved(pos)]);
+        self.frame(vec![button(true)]);
+        self.frame(vec![button(false)]);
+    }
+
     pub fn type_text(&mut self, text: &str) {
         self.frame(vec![Event::Text(text.to_string())]);
     }

@@ -87,7 +87,7 @@ Buttons say what they do and the risky one is marked.
 | Ctrl+Z, Ctrl+Y | Undo, redo in the pending queue |
 | F5 | Reload the archive (asks first when changes are pending) |
 | F1 | Help |
-| Ctrl+Shift+P | Command palette: every action with its shortcut |
+| Ctrl+Shift+P | Command palette: every action with its shortcut (Esc or a click outside closes it) |
 | Ctrl+O, Ctrl+Shift+O | Open files, open by path |
 | Ctrl+J | Activity panel (progress, cancel) |
 | Ctrl+, | Preferences |
