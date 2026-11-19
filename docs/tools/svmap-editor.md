@@ -139,6 +139,7 @@ With `mob:<id>` in the query, **Replace monster...** puts another monster in tho
 - Left drag on empty ground turns the view around the ground point under the cursor, and that point stays under the cursor. Preferences can turn this off (**3D: orbit around the point under the cursor**); the view then turns around its focus.
 - Left drag on a record moves it along the ground (Ctrl: height only, Esc cancels). Right or middle drag pans, the wheel zooms.
 - F focuses the selection, Home shows the whole map, N turns to face north. These moves, Go to and the compass take 0.2 seconds. Preferences can turn this off (**3D: smooth camera moves**).
+- Home (or **View > Frame map**) fits the whole map, including its height, in the view at the window's current shape. **View > Top-down 3D view**, **View > Level 3D view** and **View > 45 degree 3D view** set the viewing angle and fit the whole map again. Top down is the steepest angle the orbit camera allows. The turn of the view stays. These have no keys, they are in the command palette too, and they are greyed outside the 3D view.
 - The compass at the top right shows where north is. Click it to face north.
 - Shift+F starts the fly mode: WASD move, Q and E go down and up, the wheel changes the speed, Shift is fast, dragging looks around.
 - Clicking selects like in 2D (Shift adds, Alt+click cycles); the selection is shared between 2D and 3D. The record under the cursor, and the record of a hovered row in the Outliner or Problems, gets a white outline.

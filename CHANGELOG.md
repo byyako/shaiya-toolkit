@@ -14,6 +14,8 @@ All notable changes are listed here, newest first. The format follows [Keep a Ch
 
 - File > Export may write a file in a folder that holds the client folder (for example the Desktop); a file in or at the client folder stays refused, also through a junction or symbolic link.
 
+- The 3D view's Frame map fits the whole map with its height at the current window shape, so tall small dungeons are no longer cropped. New View menu entries: Top-down 3D view, Level 3D view and 45 degree 3D view.
+
 ### shaiya (CLI)
 
 - `shaiya svmap check --client` (and `spawns`, `bulk`, `wld-check`) refuse a folder that holds no client files without walking it to the end: the look stops after 20,000 entries or 4 folders deep and exits 3.

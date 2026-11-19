@@ -303,7 +303,8 @@ impl App {
         let (bmin, bmax) = (scene.bounds_min, scene.bounds_max);
         let Some(st) = self.v3.states.get_mut(&uid) else { return };
         if sc.1 == 0.0 {
-            st.cam.frame_map(bmin, bmax);
+            let aspect = if st.size.y > 1.0 { st.size.x / st.size.y } else { 16.0 / 9.0 };
+            st.cam.frame_map(bmin, bmax, aspect);
         } else {
             st.cam.fly = false;
             st.cam.dist = sc.1;

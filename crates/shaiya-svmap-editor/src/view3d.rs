@@ -19,6 +19,8 @@ use crate::view2d::{self, DrawTarget, Request, Tool};
 
 pub const FOV_Y: f32 = 50.0 * std::f32::consts::PI / 180.0;
 const FAR: f32 = 16000.0;
+/// The part of the picture (each way, from the centre) the fitted map may fill.
+const FIT_MARGIN: f32 = 0.95;
 const MIN_PITCH: f32 = -89.0 * std::f32::consts::PI / 180.0;
 const MAX_ORBIT_PITCH: f32 = -3.0 * std::f32::consts::PI / 180.0;
 const MAX_FLY_PITCH: f32 = 89.0 * std::f32::consts::PI / 180.0;
@@ -162,15 +164,39 @@ impl Camera3d {
         }
     }
 
-    /// The whole map in view from the south-west-ish default direction.
-    pub fn frame_map(&mut self, min: V3, max: V3) {
+    /// The smallest distance from `focus` at which all eight corners of the box lie inside 95 % of the picture, for the camera's
+    /// yaw and pitch, [`FOV_Y`] and `aspect` (width over height). Clamped like the wheel zoom.
+    pub fn fit_dist(&self, min: V3, max: V3, aspect: f32) -> f32 {
+        let f = self.forward();
+        let r = self.right();
+        let u = math3d::cross(f, r);
+        let t = (FOV_Y * 0.5).tan() * FIT_MARGIN;
+        let tx = t * aspect.max(0.05);
+        let mut need = 0.0f32;
+        for i in 0..8 {
+            let corner = [if i & 1 == 0 { min[0] } else { max[0] }, if i & 2 == 0 { min[1] } else { max[1] }, if i & 4 == 0 { min[2] } else { max[2] }];
+            let v = math3d::sub(corner, self.focus);
+            let toward_eye = -math3d::dot(v, f);
+            need = need.max(toward_eye + math3d::dot(v, r).abs() / tx).max(toward_eye + math3d::dot(v, u).abs() / t);
+        }
+        (need * 1.01).clamp(40.0, 8000.0)
+    }
+
+    /// The whole map in view from the south-west-ish default direction, with its height, at this window shape.
+    pub fn frame_map(&mut self, min: V3, max: V3, aspect: f32) {
         self.fly = false;
         self.yaw = 0.0;
         self.pitch = -50f32.to_radians();
-        let c = math3d::scale(math3d::add(min, max), 0.5);
-        let half = ((max[0] - min[0]).max(max[2] - min[2]) * 0.5).max(16.0);
-        self.focus = c;
-        self.dist = (half / (FOV_Y * 0.5).tan() * 1.02).clamp(40.0, 8000.0);
+        self.focus = math3d::scale(math3d::add(min, max), 0.5);
+        self.dist = self.fit_dist(min, max, aspect);
+    }
+
+    /// One of the three fixed pitches, keeping the yaw, with the whole map fitted again.
+    pub fn snap(&mut self, view: Snap, min: V3, max: V3, aspect: f32) {
+        self.fly = false;
+        self.pitch = view.pitch();
+        self.focus = math3d::scale(math3d::add(min, max), 0.5);
+        self.dist = self.fit_dist(min, max, aspect);
     }
 
     pub fn look_north(&mut self) {
@@ -322,6 +348,27 @@ pub fn leave_to_2d(cam: &Camera3d, view: &mut crate::doc::View, viewport: Vec2) 
 
 // ------------------------------------------------------------------------------------------------------------------ commands (the 3D keys)
 
+/// The three fixed views of the View menu.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Snap {
+    /// Nearest straight down the orbit camera allows
+    TopDown,
+    /// Almost along the ground
+    Level,
+    /// Halfway between the two
+    Deg45,
+}
+
+impl Snap {
+    pub fn pitch(self) -> f32 {
+        match self {
+            Snap::TopDown => MIN_PITCH,
+            Snap::Level => -8f32.to_radians(),
+            Snap::Deg45 => -45f32.to_radians(),
+        }
+    }
+}
+
 /// What the 3D keys do. `key_command` maps a key press to one; `Camera3d`/`apply_command` carry it out.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Cmd3d {
@@ -333,6 +380,8 @@ pub enum Cmd3d {
     ToggleFly,
     /// N: turn to face north
     LookNorth,
+    /// View > 3D view: top down, level, 45 degrees
+    Snap(Snap),
 }
 
 /// The 3D command a key press means (no modifiers other than Shift), if any. The caller decides when keys are live (no text
@@ -379,14 +428,15 @@ pub fn record_bounds(r: &Rec) -> (V3, V3) {
 }
 
 /// Carries out a 3D command on a camera. `bounds` is the scene's box (for `FrameMap`).
-pub fn apply_command(cam: &mut Camera3d, cmd: Cmd3d, doc: &Doc, bounds: (V3, V3)) {
+pub fn apply_command(cam: &mut Camera3d, cmd: Cmd3d, doc: &Doc, bounds: (V3, V3), aspect: f32) {
     match cmd {
         Cmd3d::FrameSelection => {
             if let Some((mn, mx)) = selection_bounds(doc) {
                 cam.frame_box(mn, mx);
             }
         }
-        Cmd3d::FrameMap => cam.frame_map(bounds.0, bounds.1),
+        Cmd3d::FrameMap => cam.frame_map(bounds.0, bounds.1, aspect),
+        Cmd3d::Snap(v) => cam.snap(v, bounds.0, bounds.1, aspect),
         Cmd3d::ToggleFly => cam.toggle_fly(),
         Cmd3d::LookNorth => cam.look_north(),
     }
@@ -398,7 +448,8 @@ pub fn start_command(st: &mut View3dState, cmd: Cmd3d, doc: &Doc, bounds: (V3, V
     st.anim = None;
     st.goto = None;
     let mut target = st.cam;
-    apply_command(&mut target, cmd, doc, bounds);
+    let aspect = if st.size.y > 1.0 { st.size.x / st.size.y } else { 16.0 / 9.0 };
+    apply_command(&mut target, cmd, doc, bounds, aspect);
     if smooth && !st.cam.fly && cmd != Cmd3d::ToggleFly {
         st.goto = Some(target.pose());
     } else {
@@ -1338,7 +1389,7 @@ pub fn show(ui: &mut egui::Ui, c: &mut Ctx3, st: &mut View3dState, g: GpuRefs) -
     let ppp = ui.ctx().pixels_per_point();
     let bounds = (g.scene.bounds_min, g.scene.bounds_max);
     if !st.framed {
-        st.cam.frame_map(bounds.0, bounds.1);
+        st.cam.frame_map(bounds.0, bounds.1, aspect);
         st.framed = true;
     }
     if c.tool != Tool::Measure && st.measure.active() {
@@ -2358,6 +2409,46 @@ mod tests {
         assert_eq!(doc.selection, vec![(SectionId::Portals, 0)], "selection stays");
     }
 
+    /// NDC of a world point seen by `cam`, or `None` behind the eye.
+    fn ndc(cam: &Camera3d, aspect: f32, p: V3) -> Option<[f32; 2]> {
+        let c = math3d::project(&cam.view_proj(aspect), p);
+        (c[3] > 0.0).then(|| [c[0] / c[3], c[1] / c[3]])
+    }
+
+    #[test]
+    fn frame_fits_every_corner() {
+        let boxes: [(V3, V3); 3] = [([0.0, 0.0, 0.0], [512.0, 300.0, 512.0]), ([0.0, 0.0, 0.0], [2048.0, 0.0, 2048.0]), ([0.0, 0.0, 0.0], [64.0, 400.0, 64.0])];
+        for (min, max) in boxes {
+            for aspect in [16.0 / 9.0, 4.0 / 3.0, 0.5] {
+                let mut cam = Camera3d::default();
+                cam.frame_map(min, max, aspect);
+                assert_eq!((cam.yaw, cam.pitch), (0.0, -50f32.to_radians()));
+                assert!(cam.dist > 40.0 && cam.dist < 8000.0, "not clamped: {}", cam.dist);
+                for i in 0..8 {
+                    let p = [if i & 1 == 0 { min[0] } else { max[0] }, if i & 2 == 0 { min[1] } else { max[1] }, if i & 4 == 0 { min[2] } else { max[2] }];
+                    let n = ndc(&cam, aspect, p).expect("in front of the camera");
+                    assert!(n[0].abs() <= 0.95 + 1e-3 && n[1].abs() <= 0.95 + 1e-3, "corner {p:?} at aspect {aspect}: {n:?}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn snaps_set_the_pitch() {
+        let (min, max) = ([0.0; 3], [512.0, 300.0, 512.0]);
+        let mut cam = Camera3d { yaw: 1.2, ..Default::default() };
+        for (v, deg) in [(Snap::TopDown, -89.0f32), (Snap::Level, -8.0), (Snap::Deg45, -45.0)] {
+            cam.snap(v, min, max, 1.5);
+            assert!((cam.pitch - deg.to_radians()).abs() < 1e-6, "{v:?}: {}", cam.pitch.to_degrees());
+            assert_eq!(cam.yaw, 1.2, "the yaw stays");
+            for i in 0..8 {
+                let p = [if i & 1 == 0 { min[0] } else { max[0] }, if i & 2 == 0 { min[1] } else { max[1] }, if i & 4 == 0 { min[2] } else { max[2] }];
+                let n = ndc(&cam, 1.5, p).expect("in front of the camera");
+                assert!(n[0].abs() <= 0.95 + 1e-3 && n[1].abs() <= 0.95 + 1e-3, "{v:?} corner {p:?}: {n:?}");
+            }
+        }
+    }
+
     #[test]
     fn keys_map_to_commands_and_apply() {
         assert_eq!(key_command(Key::F, false), Some(Cmd3d::FrameSelection));
@@ -2369,14 +2460,14 @@ mod tests {
         let mut cam = Camera3d::default();
         // nothing selected: F does nothing
         let c0 = cam;
-        apply_command(&mut cam, Cmd3d::FrameSelection, &doc, ([0.0; 3], [256.0, 50.0, 256.0]));
+        apply_command(&mut cam, Cmd3d::FrameSelection, &doc, ([0.0; 3], [256.0, 50.0, 256.0]), 1.5);
         assert_eq!(cam, c0);
         doc.select_only(SectionId::Portals, 0);
-        apply_command(&mut cam, Cmd3d::FrameSelection, &doc, ([0.0; 3], [256.0, 50.0, 256.0]));
+        apply_command(&mut cam, Cmd3d::FrameSelection, &doc, ([0.0; 3], [256.0, 50.0, 256.0]), 1.5);
         assert!((cam.focus[0] - 60.0).abs() < 1.0 && (cam.focus[2] - 60.0).abs() < 1.0);
-        apply_command(&mut cam, Cmd3d::FrameMap, &doc, ([0.0; 3], [256.0, 50.0, 256.0]));
+        apply_command(&mut cam, Cmd3d::FrameMap, &doc, ([0.0; 3], [256.0, 50.0, 256.0]), 1.5);
         assert_eq!((cam.focus[0], cam.focus[2]), (128.0, 128.0));
-        apply_command(&mut cam, Cmd3d::ToggleFly, &doc, ([0.0; 3], [256.0, 50.0, 256.0]));
+        apply_command(&mut cam, Cmd3d::ToggleFly, &doc, ([0.0; 3], [256.0, 50.0, 256.0]), 1.5);
         assert!(cam.fly);
     }
 
@@ -2513,7 +2604,7 @@ mod tests {
         let mut st = View3dState { cam: cam_above(30.0, 30.0), ..Default::default() };
         let want = {
             let mut c = st.cam;
-            apply_command(&mut c, Cmd3d::FrameSelection, &doc, bounds);
+            apply_command(&mut c, Cmd3d::FrameSelection, &doc, bounds, 1.5);
             c.pose()
         };
         start_command(&mut st, Cmd3d::FrameSelection, &doc, bounds, true);

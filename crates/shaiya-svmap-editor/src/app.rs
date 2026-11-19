@@ -1917,6 +1917,10 @@ impl App {
         };
         match cmd {
             Cmd::ShowBrowser | Cmd::ShowInspector | Cmd::ShowDock | Cmd::ViewportOnly | Cmd::LayoutSimple | Cmd::LayoutEditing | Cmd::LayoutReview | Cmd::SaveLayout | Cmd::ManageLayouts | Cmd::OpenFile | Cmd::OpenFolder | Cmd::OpenClient | Cmd::QuickOpen | Cmd::Exit | Cmd::Preferences | Cmd::GoTo | Cmd::Palette | Cmd::Help | Cmd::Shortcuts | Cmd::Setup | Cmd::Tool(_) => Ok(()),
+            Cmd::SnapTopDown | Cmd::SnapLevel | Cmd::Snap45 => {
+                need_doc()?;
+                if self.mode3d { Ok(()) } else { Err("needs the 3D view (Tab)") }
+            }
             Cmd::HeatOff | Cmd::HeatDensity | Cmd::HeatCycle => need_doc(),
             Cmd::HeatLevel => {
                 need_doc()?;
@@ -2076,6 +2080,9 @@ impl App {
             Cmd::CompareFolders => self.open_compare_folders(),
             Cmd::FrameSelection => self.frame_selection(),
             Cmd::FrameMap => self.frame_map(),
+            Cmd::SnapTopDown => self.run_cmd3d(crate::view3d::Cmd3d::Snap(crate::view3d::Snap::TopDown)),
+            Cmd::SnapLevel => self.run_cmd3d(crate::view3d::Cmd3d::Snap(crate::view3d::Snap::Level)),
+            Cmd::Snap45 => self.run_cmd3d(crate::view3d::Cmd3d::Snap(crate::view3d::Snap::Deg45)),
             Cmd::Toggle3d => self.set_mode3d(!self.mode3d),
             Cmd::GoTo => self.palette = Some(Palette::new(PalMode::GoTo)),
             Cmd::Palette => self.palette = Some(Palette::new(PalMode::Commands)),

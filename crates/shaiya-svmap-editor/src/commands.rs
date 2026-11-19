@@ -51,6 +51,9 @@ pub enum Cmd {
     Preferences,
     FrameSelection,
     FrameMap,
+    SnapTopDown,
+    SnapLevel,
+    Snap45,
     Toggle3d,
     GoTo,
     Palette,
@@ -108,7 +111,7 @@ const fn c(cmd: Cmd, id: &'static str, label: &'static str, menu: &'static str, 
 
 pub const TOP_MENUS: [&str; 5] = ["File", "Edit", "View", "Tools", "Help"];
 
-static ALL: [CmdInfo; 85] = [
+static ALL: [CmdInfo; 88] = [
     // ---- File
     c(Cmd::OpenFile, "open-file", "Open file", "File > Open file...", 0, &["Ctrl+O"], "Open one .svmap file in a new tab."),
     c(Cmd::OpenFolder, "open-folder", "Open map folder", "File > Open folder...", 0, &[], "Open the server map folder. Turns on the cross-map checks."),
@@ -150,6 +153,9 @@ static ALL: [CmdInfo; 85] = [
     c(Cmd::Toggle3d, "toggle-3d", "Switch 2D / 3D", "View > Switch 2D / 3D", 0, &["Tab"], "Switch between the 2D editor and the 3D view."),
     c(Cmd::FrameSelection, "frame-selection", "Frame selection", "View > Frame selection", 0, &["F"], "Zoom to the selected records."),
     c(Cmd::FrameMap, "frame-map", "Frame map", "View > Frame map", 0, &["Home"], "Fit the whole map in the view."),
+    c(Cmd::SnapTopDown, "snap-top-down", "3D view: top down", "View > Top-down 3D view", 0, &[], "In the 3D view, look straight down at the whole map."),
+    c(Cmd::SnapLevel, "snap-level", "3D view: level", "View > Level 3D view", 0, &[], "In the 3D view, look along the ground at the whole map."),
+    c(Cmd::Snap45, "snap-45", "3D view: 45 degrees", "View > 45 degree 3D view", 0, &[], "In the 3D view, look down at 45 degrees at the whole map."),
     c(Cmd::GoTo, "go-to", "Go to", "View > Go to...", 0, &["Ctrl+G"], "Go to a position, cell, record, map or bookmark."),
     c(Cmd::Palette, "palette", "Command palette", "View > Command palette...", 0, &["Ctrl+Shift+P"], "Search every command by name."),
     c(Cmd::WorldView, "world-view", "World view", "View > World view", 5, &["Ctrl+Shift+M"], "Every map of the folder as a card, with its portal links."),
@@ -390,6 +396,23 @@ mod tests {
         assert_eq!(info(Cmd::Tool(Tool::Paint)).keys, &["5"]);
         assert_eq!(info(Cmd::HeatCycle).keys, &["H"]);
         assert_eq!(info(Cmd::Rulers).keys, &["Ctrl+R"]);
+    }
+
+    #[test]
+    fn no_two_commands_share_a_key() {
+        let mut seen = std::collections::HashMap::new();
+        for i in all() {
+            for k in i.keys {
+                if let Some(other) = seen.insert(k.to_lowercase(), i.id) {
+                    panic!("key {k} is bound to {other} and {}", i.id);
+                }
+            }
+        }
+        // the three 3D views are menu and palette commands only
+        for cmd in [Cmd::SnapTopDown, Cmd::SnapLevel, Cmd::Snap45] {
+            assert!(info(cmd).keys.is_empty());
+            assert!(info(cmd).menu.starts_with("View > ") && info(cmd).menu.ends_with("3D view"));
+        }
     }
 
     #[test]

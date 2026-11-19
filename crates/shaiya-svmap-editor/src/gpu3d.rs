@@ -1412,7 +1412,7 @@ mod tests {
             let fog = data.fog;
             let mut scene = gpu.upload(&device, &queue, data);
             let mut cam = crate::view3d::Camera3d::default();
-            cam.frame_map(bmin, bmax);
+            cam.frame_map(bmin, bmax, 400.0 / 300.0);
             cam.pitch = pitch.to_radians();
             let (w_px, h_px) = (400u32, 300u32);
             let params = FrameParams { view_proj: cam.view_proj(w_px as f32 / h_px as f32), eye: cam.eye(), size_px: [w_px, h_px], fog_start: cam.dist * 2.5, fog_end: cam.dist * 14.0, blocked: None, blocked_rev: 0, backface_cull: true, draw_ground: true, draw_dungeon: true, draw_buildings: true, draw_trees: true, prop_distance: 800.0, heat: None };
