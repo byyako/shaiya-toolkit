@@ -2,7 +2,7 @@
 
 Two small text files decide what the original updater downloads: `Version.ini` in the client folder says where a player is, and `UpdateVersion.ini` on the patch server says where the server is. `shaiya patch publish` and Shaiya Toolkit's Publish section write the second one; Shaiya Toolkit reads the first.
 
-**Verified on:** the original US EP4.5 updater. **Other episodes:** not verified. Both files are plain text with a `[Version]` section, so a replacement updater or another episode may read different keys; `--layout flat` and the key list below are plain enough to adapt by hand.
+**Verified on:** the author's analysis of the original US EP4.5 updater; the statements about what the original updater does in this page come from that analysis. **Other episodes:** not verified. Both files are plain text with a `[Version]` section, so a replacement updater or another episode may read different keys; `--layout flat` and the key list below are plain enough to adapt by hand.
 
 ## Version.ini (client folder)
 

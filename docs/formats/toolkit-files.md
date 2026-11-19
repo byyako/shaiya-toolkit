@@ -2,25 +2,25 @@
 
 When Shaiya Toolkit or `shaiya` changes a client folder it can leave a few files of its own there. This page lists every one of them: what it is called, what it holds, which action writes it, and what removes it. The files are not the game's formats; nothing here is read by the game. The guide [Undo and recovery](../guides/undo-and-recovery.md) says what to do with them; this page says what they are.
 
-Everything except the journal folder is a plain file next to `data.sah`. The journal and the pending marker are small text files of `key=value` lines; the other files are copies, renames or the archive pair itself.
+Except the journal folder and the files written next to a loose target (`.shaiya-tmp`, `.new`, `.bak`), these are plain files next to `data.sah`. The journal and the pending marker are small text files of `key=value` lines; the other files are copies, renames or the archive pair itself.
 
 ## At a glance
 
 | Name | Where | What it is | Written by | Removed by |
 |---|---|---|---|---|
-| `shaiya-toolkit-backups/<stamp>-<label>/` | the client folder (a folder you name with `--journal-dir` replaces it) | one **journal**: the backup of one change | every in-place archive change, patch apply and Shaiya Toolkit's Apply, unless `--no-journal` | `shaiya patch history --prune N` and the Apply tab's prune; recovery of an unfinished change |
+| `shaiya-toolkit-backups/<stamp>-<label>/` | the client folder (a folder you name with `--journal-dir` replaces it) | one **journal**: the backup of one change | every in-place add/replace/remove, patch apply and Shaiya Toolkit's Apply, unless `--no-journal` (compaction and swap make none) | `shaiya patch history --prune N` and the Apply tab's prune; recovery of an unfinished change |
 | `data.toolkit-pending` | the client folder | the **pending marker** of a change or rollback in progress | the same changes, before the first append | the change itself when it ends; recovery |
 | `data.sah.bak` | next to `data.sah` | a plain copy of the previous index | in-place archive changes that replace the index, and `archive compact --in-place` | nothing; the next such change overwrites it |
 | `data.sah.compact`, `data.saf.compact`, `data.compact-commit` | the client folder | the new archive pair and the commit marker of a compaction | `archive compact --in-place`, Shaiya Toolkit's Compact | the compaction; recovery |
 | `data.swap-journal` | the client folder | the four planned renames of an archive swap | `archive swap`, Shaiya Toolkit's "Use another archive pair" | the swap; recovery |
-| `data.<stamp>.sah`, `data.<stamp>.saf` | the client folder | the client's own pair, kept by a swap | the same swap | nothing |
+| `data.<stamp>.sah`, `data.<stamp>.saf` (with `-1`, `-2` ... after the stamp when that name is taken) | the client folder | the client's own pair, kept by a swap | the same swap | nothing |
 | `.<name>.<pid>.shaiya-tmp` | next to the file being written | a temporary file for an atomic write | every atomic write of the toolkit | the write, on success or failure |
-| `<name>.new` | next to the target | a loose file the patch was told not to overwrite | `shaiya patch apply --protect NAME` | nothing |
-| `<name>.bak` | next to the file | the original of a file changed in place | `sdata ... --in-place`; a forced rollback, for each loose file you changed | nothing |
+| `<name>.new` | next to the target | a loose file the patch was told not to overwrite | `shaiya patch apply --protect NAME` | a rollback of that patch |
+| `<name>.bak` (`<name>.<stamp>.bak` when `<name>.bak` already exists, then with `-1`, `-2` ... after the stamp) | next to the file | the original of a file changed in place | `sdata ... --in-place`; a forced rollback, for each loose file you changed | nothing |
 
 ## Journals: `shaiya-toolkit-backups/`
 
-Each change gets its own folder `<UTC stamp>-<label>/` under `shaiya-toolkit-backups/` in the client folder. The stamp is `yyyymmddThhmmssZ`. The label is the patch or change name made into a short slug (lower case letters and digits, other runs of characters become one `-`, at most 40 characters; `ps0109.patch` becomes `ps0109`, an empty one `change`). When the folder already exists a counter is added (`-2`, `-3`, ...).
+Each change gets its own folder `<UTC stamp>-<label>/` under `shaiya-toolkit-backups/` in the client folder. The stamp is `yyyymmddThhmmssZ`. The label is the patch or change name made into a short slug (the last extension, up to six letters or digits, is dropped, ASCII letters are lower-cased, every other run of characters becomes one `-`, leading and trailing `-` are removed, at most 40 characters; `ps0109.patch` becomes `ps0109`, an empty one `change`). When the folder already exists a counter is added (`-2`, `-3`, ...).
 
 | Entry | Content |
 |---|---|
@@ -43,7 +43,7 @@ Each change gets its own folder `<UTC stamp>-<label>/` under `shaiya-toolkit-bac
 | `rolled_back_utc` | when it was rolled back, else empty |
 | `loose` (repeated) | tab separated: `1` if the file existed before or `0`, the SHA-256 it has after the change or `-`, the backup path inside the journal or `-`, and the path in the client folder |
 
-A journal is what a rollback reads: it restores the index copy, cuts `data.saf` back to `saf_len_before` and puts the backed-up loose files back. Whether a rollback is still possible depends on the hashes: if `data.sah` is no longer the file the change wrote (compaction, a swap, the game's updater), the rollback is blocked and `history` says why. A rolled-back journal stays and is marked `rolled-back`.
+A journal is what a rollback reads: it restores the index copy, cuts `data.saf` back to `saf_len_before` and puts the backed-up loose files back. Whether a rollback is still possible depends on the newer journals, the hashes and `data.saf`'s length: if `data.sah` is no longer the file the change wrote (compaction, a swap, the game's updater), the rollback is blocked and `history` says why. A rolled-back journal stays and is marked `rolled-back`.
 
 Patches and edits cannot target a path inside the backup folder: such a name is refused.
 

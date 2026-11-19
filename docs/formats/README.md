@@ -2,7 +2,7 @@
 
 Every file format the toolkit reads or writes has a page here. A page says what the format is, which program touches it, and where it was **verified**. The pages state facts about the files, not addresses or internals of the game, and they say so when a fact was checked on one client only. A format that was checked on a client but whose table loader was not read there is called a fit, never verified; the [version matrix](../version-matrix.md) has the measured rows.
 
-"Verified" below means what the page's own "Verified on" paragraph says. "US EP4.5" is the client the author used as the reference (the `us-108` column of the matrix). Where the matrix test clients are named (`ru-ep3`, `ru-ep45`, `fr-ep54`, `phoenix-ep63`, `kr-ep8`, `fawkes-v68`, `cn-ep4`), the numbers are measured rows.
+"Verified" below means what the page's own "Verified on" paragraph says. "US EP4.5" is the client the author used as the reference (the `us-108` column of the matrix). Where the matrix test clients are named (`ru-ep3`, `ru-ep45`, `ru-ep54`, `fr-ep54`, `phoenix-ep63`, `kr-ep8`, `fawkes-v68`, `cn-ep4`), the numbers are measured rows.
 
 ## Documented formats
 
@@ -10,8 +10,8 @@ Every file format the toolkit reads or writes has a page here. A page says what 
 |---|---|---|---|---|
 | Archive (`data.sah`, `data.saf`) | [archive.md](archive.md) | `shaiya-archive`: the Archive tab, `shaiya archive`, patch apply, `shaiya info` | in-place edits, `archive compact`, `archive swap`, patch apply; a new pair for the `-o` forms | the matrix rows `Index::parse` and `to_bytes` byte-identical on all nine clients (the `fawkes-v68` index is version 1; its data end is past 4 GiB) |
 | Patch (`psNNNN.patch`) | [patch.md](patch.md) | the Patch builder, `shaiya patch list|verify|apply`, the Apply tab | `shaiya patch build`, the Patch builder, "Make patch from differences", Shaiya SVMap Editor | synthetic patches through apply and rollback on a copy of each client's real index, all nine clients (matrix row `patch_apply_rollback_stub`); the original updater's handling is on the Version.ini page |
-| `Version.ini` and `UpdateVersion.ini` | [version-ini.md](version-ini.md) | Shaiya Toolkit reads the client's `Version.ini` | `shaiya patch publish` and the Patch builder's Publish section write `UpdateVersion.ini` | the original US EP4.5 updater; other episodes not verified |
-| SData wrapper (SEED, CRC) | [sdata-wrapper.md](sdata-wrapper.md) | `shaiya-seed`: `shaiya sdata`, the SData tab, the checks before files go into an archive or a patch | `shaiya sdata decrypt|encrypt` (to a folder, or in place with a `.bak`) | every SData of every matrix client that has the file, wrap(unwrap(x)) byte for byte (`cn-ep4` stores them plain) |
+| `Version.ini` and `UpdateVersion.ini` | [version-ini.md](version-ini.md) | Shaiya Toolkit and `shaiya clients show` read the client's `Version.ini`; Publish reads the existing `UpdateVersion.ini` | `shaiya patch publish` and the Patch builder's Publish section write `UpdateVersion.ini` | the author's analysis of the original US EP4.5 updater; other episodes not verified |
+| SData wrapper (SEED, CRC) | [sdata-wrapper.md](sdata-wrapper.md) | `shaiya-seed`: `shaiya sdata`, the SData tab, the checks before files go into an archive or a patch | `shaiya sdata decrypt|encrypt` (to a folder, or in place with a `.bak`); the SData tab's Decrypt and Encrypt to folder | every SData of every matrix client that has the file, wrap(unwrap(x)) byte for byte (`cn-ep4` stores them plain) |
 | `Item.SData` | [item-sdata.md](item-sdata.md) | `shaiya-sdata`: `shaiya sdata table`, the SData tab's View table | not written (read only) | verified on `us-108`, `ru-ep3`, `ru-ep45`, `fr-ep54` (layout `item-81`) and `phoenix-ep63` (`item-132`); `cn-ep4` fits only; `kr-ep8` and `fawkes-v68` fit no layout |
 | `Skill.SData` | [skill-sdata.md](skill-sdata.md) | `shaiya-sdata`, as above | not written (read only) | verified on `us-108`, `ru-ep3`, `ru-ep45` (`skill-3`), `fr-ep54` (`skill-9`), `phoenix-ep63` (`skill-15`); `cn-ep4`, `kr-ep8`, `fawkes-v68` fit only; the monster skill file was measured, not verified |
 | `Monster.SData` | [monster.md](monster.md) | `shaiya-clientdata`, `shaiya-sdata`; Shaiya SVMap Editor for monster ids | not written (read only) | US EP4.5 (2,474 records); the table layout on `ru-ep3`, `ru-ep45`, `fr-ep54`, `phoenix-ep63` |
@@ -73,7 +73,7 @@ These extensions are in the archives of the nine matrix clients and no page cove
 | `.EPS` | 0 | 0 to 1 | 1 | not planned |
 | `.BAT` | 0 | 0 to 1 | 1 | not planned |
 
-Two extensions are only partly covered. `.TXT` (35 files in `us-108`, 33 to 567): `world/<id>.txt` is [area-txt.md](area-txt.md) and `sysmsg-uni.txt` is [sysmsg.md](sysmsg.md); no other text file has a page. `.SData` (8 files in `us-108`, 8 to 71): the four tables above and the [wrapper](sdata-wrapper.md) are documented; every other table is shown as hex and has no layout planned yet.
+Two extensions are only partly covered. `.TXT` (35 files in `us-108`, 33 to 567): `world/<id>.txt` is [area-txt.md](area-txt.md) and `sysmsg-uni.txt` is [sysmsg.md](sysmsg.md); no other text file has a page. `.SData` (8 files in `us-108`, 8 to 71): the four tables above and the [wrapper](sdata-wrapper.md) are documented; every other table is shown as hex, except NpcSkill, which a skill layout reads ([version matrix](../version-matrix.md)).
 
 The extensions that have a page are `.DDS` and `.TGA` ([textures.md](textures.md)), `.SMOD`, `.WLD`, `.DG` and `.ZON` (first table). `.SVMAP` is the server's file ([svmap.md](svmap.md)); four matrix clients also hold some in their archives (56, 5, 98 and 16 files).
 
