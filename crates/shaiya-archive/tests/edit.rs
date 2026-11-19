@@ -386,6 +386,156 @@ fn recovery_after_the_index_swap_finishes_the_change() {
     assert_eq!(rb[0].1, Rollback::Possible);
 }
 
+/// A change that writes only loose files (the index stays as it is) and the state a crash leaves: returns
+/// (client, journal folder, the three targets with their original bytes, marker). Targets: two existing files and one new file.
+type Loose = Vec<(&'static str, Option<Vec<u8>>, &'static [u8])>;
+
+fn crashed_loose_only(d: &TempDir) -> (PathBuf, PathBuf, Loose, Marker) {
+    let c = d.path().join("c");
+    make_client(&c);
+    std::fs::write(c.join("notice.txt"), b"original notice").unwrap();
+    std::fs::write(c.join("extra.txt"), b"original extra").unwrap();
+    let targets: Loose = vec![
+        ("notice.txt", Some(b"original notice".to_vec()), b"new notice"),
+        ("extra.txt", Some(b"original extra".to_vec()), b"new extra"),
+        ("fresh.txt", None, b"new fresh"),
+    ];
+    let root = c.join(journal::DEFAULT_DIR);
+    let plan = EditPlan { loose: targets.iter().map(|(r, _, new)| stage(&c, r, new)).collect(), label: "loose.patch".into(), ..EditPlan::default() };
+    edit::apply_in_place(&c, &plan, &opts(&root), &Job::silent()).unwrap();
+    let (j, _) = journal::list(&c, &root).unwrap().remove(0);
+    assert_eq!(j.sah_sha256_before, j.sah_sha256_after, "a loose-only change leaves the index alone");
+    let marker = Marker {
+        op: "apply".into(),
+        label: "loose.patch".into(),
+        saf_len_before: std::fs::metadata(c.join("data.saf")).unwrap().len(),
+        sah_sha256_before: j.sah_sha256_before.clone(),
+        sah_sha256_after: j.sah_sha256_after.clone(),
+        journal: Some(j.dir.clone()),
+        staged: targets.iter().map(|(r, _, _)| (format!(".{r}.1.shaiya-tmp"), r.to_string())).collect(),
+    };
+    (c, j.dir, targets, marker)
+}
+
+fn set_pending(jdir: &Path) {
+    let mut j = Journal::read(jdir).unwrap();
+    j.state = State::Pending;
+    for l in &mut j.loose {
+        l.sha256_after = None;
+    }
+    j.write().unwrap();
+}
+
+fn restore_original(c: &Path, t: &(&'static str, Option<Vec<u8>>, &'static [u8])) {
+    match &t.1 {
+        Some(o) => std::fs::write(c.join(t.0), o).unwrap(),
+        None => {
+            let _ = std::fs::remove_file(c.join(t.0));
+        }
+    }
+}
+
+fn restage(c: &Path, t: &(&'static str, Option<Vec<u8>>, &'static [u8])) {
+    std::fs::write(c.join(format!(".{}.1.shaiya-tmp", t.0)), t.2).unwrap();
+}
+
+#[test]
+fn loose_only_change_crashed_inside_the_commit_keeps_the_journal_and_rolls_back() {
+    let d = TempDir::new("crash-loose-mid");
+    let (c, jdir, targets, marker) = crashed_loose_only(&d);
+    let sah = std::fs::read(c.join("data.sah")).unwrap();
+    // crash state: the first target is already overwritten, the other two are still waiting in their staged files
+    for (i, t) in targets.iter().enumerate() {
+        restore_original(&c, t);
+        if i == 0 {
+            std::fs::write(c.join(t.0), t.2).unwrap();
+            let _ = std::fs::remove_file(c.join(format!(".{}.1.shaiya-tmp", t.0)));
+        } else {
+            restage(&c, t);
+        }
+    }
+    set_pending(&jdir);
+    marker.write(&c).unwrap();
+    let notes = client::recover(&c).unwrap();
+    assert!(notes[0].contains("finished the interrupted change loose.patch"), "{notes:?}");
+    assert!(jdir.exists(), "the journal holds the only backups and must stay");
+    assert!(!c.join("data.toolkit-pending").exists());
+    assert_eq!(std::fs::read(c.join("data.sah")).unwrap(), sah);
+    for t in &targets {
+        assert_eq!(std::fs::read(c.join(t.0)).unwrap(), t.2, "{} was finished", t.0);
+        assert!(!c.join(format!(".{}.1.shaiya-tmp", t.0)).exists());
+    }
+    let j = Journal::read(&jdir).unwrap();
+    assert_eq!(j.state, State::Applied);
+    assert!(j.loose.iter().all(|l| l.sha256_after.is_some()));
+    assert_eq!(journal::list(&c, jdir.parent().unwrap()).unwrap()[0].1, Rollback::Possible);
+    // and the rollback brings every original back byte for byte
+    journal::rollback(&c, &jdir, false, &Job::silent()).unwrap();
+    for t in &targets {
+        match &t.1 {
+            Some(o) => assert_eq!(&std::fs::read(c.join(t.0)).unwrap(), o, "{}", t.0),
+            None => assert!(!c.join(t.0).exists(), "{} did not exist before", t.0),
+        }
+    }
+    assert!(matches!(Journal::read(&jdir).unwrap().state, State::RolledBack { .. }));
+}
+
+#[test]
+fn loose_only_change_crashed_before_any_target_changed_is_cleaned_up() {
+    let d = TempDir::new("crash-loose-early");
+    let (c, jdir, targets, marker) = crashed_loose_only(&d);
+    for t in &targets {
+        restore_original(&c, t);
+        restage(&c, t);
+    }
+    set_pending(&jdir);
+    marker.write(&c).unwrap();
+    let notes = client::recover(&c).unwrap();
+    assert!(notes[0].contains("unfinished change loose.patch"), "{notes:?}");
+    assert!(!jdir.exists() && !c.join("data.toolkit-pending").exists());
+    for t in &targets {
+        assert!(!c.join(format!(".{}.1.shaiya-tmp", t.0)).exists());
+        match &t.1 {
+            Some(o) => assert_eq!(&std::fs::read(c.join(t.0)).unwrap(), o, "{} untouched", t.0),
+            None => assert!(!c.join(t.0).exists()),
+        }
+    }
+    assert!(client::recover(&c).unwrap().is_empty());
+}
+
+#[test]
+fn loose_only_change_crashed_after_the_commit_keeps_the_journal() {
+    let d = TempDir::new("crash-loose-late");
+    let (c, jdir, targets, marker) = crashed_loose_only(&d);
+    // after the last rename: every staged file is gone; the journal is still pending, or already applied (marker not yet removed)
+    for applied in [false, true] {
+        for t in &targets {
+            std::fs::write(c.join(t.0), t.2).unwrap();
+            let _ = std::fs::remove_file(c.join(format!(".{}.1.shaiya-tmp", t.0)));
+        }
+        if applied {
+            let mut j = Journal::read(&jdir).unwrap();
+            j.state = State::Applied;
+            j.write().unwrap();
+        } else {
+            set_pending(&jdir);
+        }
+        marker.write(&c).unwrap();
+        let notes = client::recover(&c).unwrap();
+        assert!(notes[0].contains("finished the interrupted change loose.patch"), "{notes:?}");
+        assert!(jdir.exists() && !c.join("data.toolkit-pending").exists());
+        assert_eq!(Journal::read(&jdir).unwrap().state, State::Applied);
+        assert_eq!(journal::list(&c, jdir.parent().unwrap()).unwrap()[0].1, Rollback::Possible);
+    }
+    // the applied journal with every staged file still present is also kept (the journal says the change ran)
+    for t in &targets {
+        restage(&c, t);
+    }
+    marker.write(&c).unwrap();
+    client::recover(&c).unwrap();
+    assert!(jdir.exists());
+}
+
 #[test]
 fn recovery_of_an_interrupted_rollback() {
     let d = TempDir::new("crash-c");

@@ -61,7 +61,13 @@ The marker exists only while a change or a rollback is running, or was interrupt
 | `journal` | the absolute path of the journal folder, or `-` with `--no-journal` |
 | `staged` (repeated) | `staged file`, a tab, `target`: loose files written beside their targets and not yet renamed into place |
 
-Recovery runs before every write to a client and when Shaiya Toolkit opens a client. It compares the SHA-256 of the current `data.sah` with the two in the marker. If it is the one before, the change did not reach the index: `data.saf` is cut back, the staged files and the journal folder of the unfinished change are deleted and the marker is removed. If it is the one after, the change is finished (staged files renamed, the journal marked `applied`). If it is neither, recovery stops with an error and leaves the marker; so does a marker that cannot be read.
+Recovery runs before every write to a client and when Shaiya Toolkit opens a client. It compares the SHA-256 of the current `data.sah` with the two in the marker; what it does depends on `op`.
+
+For `op=apply`: if `data.sah` is the one before, the change did not reach the index: `data.saf` is cut back, the staged files and the journal folder of the unfinished change are deleted and the marker is removed. If it is the one after, the change is finished (staged files renamed, the journal marked `applied`, the marker removed). If it is neither, recovery stops with an error and leaves the marker; so does a marker that cannot be read.
+
+A change that writes only loose files leaves the index as it was, so the two hashes in its marker are equal and say nothing about how far it got. Then the loose files decide. If any staged file is already gone (renamed over its target), or the journal says `applied`, a target may already be overwritten: recovery finishes the change (renames the staged files that remain, marks the journal `applied`, removes the marker) and keeps the journal, because its `loose/` copies are the only backups; `shaiya patch rollback` can still undo the change. Only when every staged file is still in place and the journal is not `applied` is the change treated as not started: the staged files and the journal folder are deleted and the marker is removed.
+
+For `op=rollback` (the hashes are those of the rollback: before is the changed index, after is the restored one): if `data.sah` is still the changed index, the marker is simply removed, because the rollback had not started; if it is the restored index, the rollback is finished (`data.saf` cut back, loose files restored, the journal marked `rolled-back`, the marker removed). For a change that wrote only loose files the two hashes are equal, so the marker is simply removed and the journal stays `applied`; run the rollback again. An unknown `op` stops recovery with an error.
 
 ## `data.sah.bak`
 

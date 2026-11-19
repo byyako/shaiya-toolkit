@@ -425,7 +425,14 @@ pub(crate) fn recover_marker(dir: &Path) -> Result<Option<String>> {
     let now = hash_of(&files.sah)?;
     match m.op.as_str() {
         "apply" => {
-            if now == m.sah_sha256_before {
+            // A change that writes only loose files leaves the index as it was, so the two hashes are equal and cannot tell how far it got.
+            // Then the loose files decide: once any staged file is gone (renamed over its target) or the journal says applied, the change
+            // may already have overwritten a target, so it is finished and its journal (the only backups) is kept.
+            let loose_only = m.sah_sha256_before == m.sah_sha256_after;
+            let started = loose_only
+                && (m.staged.iter().any(|(s, _)| safe_rel(s) && !join_rel(dir, s).exists())
+                    || m.journal.as_ref().filter(|j| is_journal_dir(j)).and_then(|j| Journal::read(j).ok()).is_some_and(|j| j.state == State::Applied));
+            if now == m.sah_sha256_before && !started {
                 truncate_to(&files.saf, m.saf_len_before)?;
                 for (s, _) in &m.staged {
                     if safe_rel(s) {

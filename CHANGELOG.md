@@ -35,6 +35,10 @@ All notable changes are listed here, newest first. The format follows [Keep a Ch
 - `shaiya-patch` has `BuildInput::skip_same_as` and `unchanged_files` (the comparison behind "only the changed files").
 - `shaiya-inspect` has a `validate` module (`check_file`, `check_source`, `check_input`) behind the checks; it depends on `shaiya-clientdata` for the texture reader.
 
+### Fixed
+
+- Recovery of an interrupted change that wrote only loose files no longer deletes its journal. Such a change leaves the index as it was, so recovery could not tell a change that had not started from one that had already overwritten some files, and it removed the journal that held the only backups; now it keeps the journal and finishes the change when any staged file is gone or the journal says applied, so it can still be rolled back (tests `loose_only_change_crashed_inside_the_commit_keeps_the_journal_and_rolls_back`, `loose_only_change_crashed_before_any_target_changed_is_cleaned_up` and `loose_only_change_crashed_after_the_commit_keeps_the_journal` in `crates/shaiya-archive/tests/edit.rs`).
+
 ### Breaking
 
 - `shaiya_ui::shell::Confirm` gained the field `details` (labelled rows under the text) and now implements `Default`; a `Confirm` written out field by field needs `..Default::default()`.
