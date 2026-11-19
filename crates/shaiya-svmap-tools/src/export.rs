@@ -173,7 +173,10 @@ pub fn map_json(m: &Svmap) -> Result<String, String> {
 /// whatever the dialog's filter said), never one of the `protected` files (the open tabs' and the folder's maps), and never into,
 /// around or at one of the `client_dirs` (every client folder the editor reads). Err holds the reason.
 pub fn check_target(path: &std::path::Path, protected: &[&std::path::Path], client_dirs: &[std::path::PathBuf]) -> Result<(), String> {
-    let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase();
+    // Windows drops trailing dots and spaces from a name, so `game.exe.` and `game.exe ` write game.exe
+    let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    let name = name.trim_end_matches(['.', ' ']);
+    let ext = name.rsplit_once('.').map_or("", |(_, e)| e).to_ascii_lowercase();
     if matches!(ext.as_str(), "svmap" | "sah" | "saf" | "exe" | "dll") {
         return Err(format!("{}: an export never writes a .{ext} file (pick a .csv, .json or .png name)", path.display()));
     }
@@ -296,7 +299,7 @@ mod tests {
         std::fs::write(&map, b"x").unwrap();
         let odd = dir.join("notes.txt");
         std::fs::write(&odd, b"x").unwrap();
-        for bad in ["1.svmap", "2.SVMAP", "data.sah", "data.SAF", "game.exe", "Game.EXE", "d3d9.dll", "X.Dll"] {
+        for bad in ["1.svmap", "2.SVMAP", "data.sah", "data.SAF", "game.exe", "Game.EXE", "d3d9.dll", "X.Dll", "game.exe.", "game.exe ", "game.exe. .", "1.svmap.", "data.sah "] {
             assert!(check_target(&dir.join(bad), &[], &[]).is_err(), "{bad}");
         }
         // an open file under any extension is refused, also when spelled with another case
