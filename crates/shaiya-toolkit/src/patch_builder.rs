@@ -392,7 +392,7 @@ impl PatchBuilder {
                         d.report.added.len(),
                         d.report.loose.len(),
                         self.input.removals.len(),
-                        if d.signed { ", signed" } else { "" }
+                        if d.signed { ", signed" } else { ", unsigned" }
                     )];
                     cx.shell.status(self.result[0].clone());
                     self.last_out = Some(d.out);
@@ -546,17 +546,20 @@ impl PatchBuilder {
                     changed_date |= ui.add(egui::TextEdit::singleline(&mut self.date_text).desired_width(110.0)).changed();
                 }
             });
-            ui.horizontal(|ui| {
-                ui.checkbox(&mut self.sign, "Sign after building");
-                if self.sign {
-                    ui.label("Secret key file");
-                    ui.add(egui::TextEdit::singleline(&mut self.secret_path).desired_width(260.0));
-                    if ui.button("Choose...").clicked() {
-                        pick_secret = true;
+            egui::CollapsingHeader::new("Signing (only for an updater that checks signatures)").default_open(self.sign).show(ui, |ui| {
+                ui.label(RichText::new("Optional. The original updater does not check signatures, so a patch is built unsigned unless you tick this.").color(pal.weak));
+                ui.horizontal(|ui| {
+                    ui.checkbox(&mut self.sign, "Sign after building");
+                    if self.sign {
+                        ui.label("Secret key file");
+                        ui.add(egui::TextEdit::singleline(&mut self.secret_path).desired_width(260.0));
+                        if ui.button("Choose...").clicked() {
+                            pick_secret = true;
+                        }
+                        ui.label("CheckVersion");
+                        ui.add(egui::TextEdit::singleline(&mut self.check_version).desired_width(50.0));
                     }
-                    ui.label("CheckVersion");
-                    ui.add(egui::TextEdit::singleline(&mut self.check_version).desired_width(50.0));
-                }
+                });
             });
             for w in self.warnings() {
                 ui.label(RichText::new(w).color(pal.warning));

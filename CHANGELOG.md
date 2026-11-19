@@ -4,6 +4,15 @@ All notable changes are listed here, newest first. The format follows [Keep a Ch
 
 ## [Unreleased]
 
+### Shaiya Toolkit
+
+- Patches are unsigned by default in the wording: the Patch builder keeps signing in a closed section "Signing (only for an updater that checks signatures)", a build says "unsigned", and Sign & verify starts with "Optional. The original updater does not check signatures."
+- Apply & history says "Signatures: not used (unsigned patches)" when the client has no public key; "NOT CHECKED" now means a key is set but the patches were not verified.
+
+### Documentation
+
+- The make-a-patch guide section 4 is now "Optional: sign it" (the anchor changed to `#4-optional-sign-it`) and the patch format page says signatures are optional.
+
 ## [0.2.1] - 2026-11-19
 
 ### Shaiya Toolkit

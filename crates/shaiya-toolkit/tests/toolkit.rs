@@ -501,7 +501,7 @@ fn apply_and_history_plan_apply_list_and_roll_back() {
     // apply through the confirmation
     with_cx(&mut w.h, |app, _| app.apply.request_apply(app.current.as_ref(), &app.keys));
     w.h.frames(3);
-    assert!(w.h.text().contains("Apply ps0001.patch to US test") && w.h.text().contains("Signatures: NOT CHECKED"), "{}", w.h.text());
+    assert!(w.h.text().contains("Apply ps0001.patch to US test") && w.h.text().contains("Signatures: not used (unsigned patches)"), "{}", w.h.text());
     w.h.app.shell.inject_answer("toolkit-apply-patches", 0);
     assert!(w.h.wait_until(WAIT, |h| h.app.app.apply.history().len() == 1 && h.app.app.archive.is_open() && h.app.app.archive.changed_counter >= 1), "applied; the history lists it");
     w.h.frames(3);
@@ -673,4 +673,48 @@ fn the_sdata_tab_lists_and_decrypts_to_a_folder() {
     with_cx(&mut w.h, |app, _| app.sdata.clear());
     w.h.app.app.sdata.from_client = true;
     assert!(w.h.wait_until(WAIT, |h| h.app.app.sdata.row_count() == 1), "the client's Item.SData is listed");
+}
+
+#[test]
+fn the_patch_builder_keeps_signing_in_a_closed_section() {
+    let mut w = open_world("t7-builder-signing");
+    go(&mut w.h, Tab::Patch);
+    let t = w.h.text();
+    assert!(t.contains("Signing (only for an updater that checks signatures)"), "{t}");
+    assert!(!t.contains("Secret key file") && !t.contains("Sign after building"), "no key field until the section opens: {t}");
+    assert!(!w.h.app.app.patch.sign, "a build is unsigned unless the section is used");
+    // a patch builder that was told to sign starts with the section open
+    let mut w2 = open_world("t7-builder-signing-open");
+    w2.h.app.app.patch.sign = true;
+    go(&mut w2.h, Tab::Patch);
+    let t = w2.h.text();
+    assert!(t.contains("Sign after building") && t.contains("Secret key file"), "{t}");
+}
+
+#[test]
+fn the_sign_tab_says_signing_is_optional() {
+    let mut w = open_world("t7-sign-optional");
+    go(&mut w.h, Tab::Sign);
+    assert!(w.h.text().contains("Optional. The original updater does not check signatures."), "{}", w.h.text());
+}
+
+#[test]
+fn the_apply_confirmation_says_not_checked_only_when_a_key_is_set_and_require_is_off() {
+    let mut w = open_world("t7-apply-sigtext");
+    let src = TempDir::new("t7-apply-sigtext-src");
+    let patch = build_patch(src.path(), "ps0001.patch");
+    go(&mut w.h, Tab::Apply);
+    with_cx(&mut w.h, |app, _| app.apply.add_patches(vec![patch.clone()]));
+    assert!(w.h.wait_until(WAIT, |h| h.app.app.apply.plan_summary().is_some() && h.app.app.apply.verify_summary().iter().all(|v| v.is_some())), "the plan is made");
+    // a public key is set and "Require" is off
+    w.h.app.app.keys.public_hex = "ab".repeat(32);
+    w.h.app.app.keys.check_version = "1".into();
+    w.h.app.app.apply.require = false;
+    with_cx(&mut w.h, |app, _| app.apply.request_apply(app.current.as_ref(), &app.keys));
+    w.h.frames(3);
+    assert!(w.h.text().contains("Signatures: NOT CHECKED"), "{}", w.h.text());
+    assert!(!w.h.text().contains("not used (unsigned patches)"), "{}", w.h.text());
+    w.h.app.shell.inject_answer("toolkit-apply-patches", 1);
+    w.h.frames(3);
+    assert!(w.h.app.app.apply.history().is_empty(), "Cancel applied nothing");
 }

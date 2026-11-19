@@ -56,7 +56,7 @@ Every change appends to `data.saf` and leaves the old bytes behind. `shaiya arch
 
 ## "signature not checked" when applying a patch
 
-You did not give a public key. To accept only patches you signed, pass `--key public.key --check-version N` ([make a patch](guides/make-a-patch.md#4-sign-it-recommended)).
+You did not give a public key. To accept only patches you signed, pass `--key public.key --check-version N` ([make a patch](guides/make-a-patch.md#4-optional-sign-it)).
 
 ## Does it work with the original Updater.exe?
 
@@ -72,7 +72,7 @@ The editor only writes a client map (`world/<id>.wld`) when the file reads and w
 
 ## Why is the exported patch unsigned?
 
-The original updater does not check signatures, and the editor holds no key. An updater that requires signed patches needs a signature file: sign the patch with `shaiya patch sign` or in Shaiya Toolkit (Sign & verify) ([make a patch](guides/make-a-patch.md#4-sign-it-recommended)).
+The original updater does not check signatures, and the editor holds no key. An updater that requires signed patches needs a signature file: sign the patch with `shaiya patch sign` or in Shaiya Toolkit (Sign & verify) ([make a patch](guides/make-a-patch.md#4-optional-sign-it)).
 
 ## Can the editor change game.exe or a DLL?
 

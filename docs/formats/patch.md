@@ -53,7 +53,7 @@ Paths are Unicode in lists and patches and code page 949 in the index.
 
 ## Signatures
 
-A patch can be accompanied by `psNNNN.patch.sig`, an Ed25519 signature (lower-case hex) over this message:
+Signatures are optional: the original updater does not check them and a patch needs none. A patch can be accompanied by `psNNNN.patch.sig`, an Ed25519 signature (lower-case hex) over this message:
 
 ```
 "shaiya-patch-v2\0" + CheckVersion (decimal) + "\0" + lower-case file name + "\0" + SHA-256(file)

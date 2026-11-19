@@ -53,6 +53,8 @@ struct ApplyReq {
     dir: PathBuf,
     name: String,
     key: Option<VerifyKey>,
+    /// Whether the client has a usable public key; only the wording of the confirmation depends on it.
+    key_set: bool,
     /// Patches applied by earlier attempts of the same request (a Retry continues after them).
     done: Vec<Report>,
 }
@@ -305,7 +307,13 @@ impl ApplyTab {
                 bytes += p.bytes;
             }
         }
-        let sigs = if req.key.is_some() && self.patches.iter().all(|r| matches!(&r.verify, Verify::Done(v) if v.signature == SigStatus::Valid)) { "valid" } else { "NOT CHECKED" };
+        let sigs = if !req.key_set {
+            "not used (unsigned patches)"
+        } else if req.key.is_some() && self.patches.iter().all(|r| matches!(&r.verify, Verify::Done(v) if v.signature == SigStatus::Valid)) {
+            "valid"
+        } else {
+            "NOT CHECKED"
+        };
         let last = if cfg!(windows) { "The game must be closed." } else { "Make sure the game is not running from this folder; this cannot be checked on this system." };
         format!(
             "Apply {list} to {}? It adds {a}, replaces {r} and removes {} and writes {}; {} will be appended to data.saf. Signatures: {sigs}. Backups go to shaiya-toolkit-backups\\...; you can roll back each patch. {last}",
@@ -322,7 +330,7 @@ impl ApplyTab {
         if self.apply_blocked(client).is_some() {
             return;
         }
-        let req = ApplyReq { patches: self.patches.iter().map(|r| r.path.clone()).collect(), dir: c.dir.clone(), name: c.name.clone(), key: if self.require { keys.verify_key() } else { None }, done: Vec::new() };
+        let req = ApplyReq { patches: self.patches.iter().map(|r| r.path.clone()).collect(), dir: c.dir.clone(), name: c.name.clone(), key: if self.require { keys.verify_key() } else { None }, key_set: keys.verify_key().is_some(), done: Vec::new() };
         self.flow = Flow::Confirm(req);
     }
 

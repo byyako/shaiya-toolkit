@@ -47,9 +47,9 @@ Build stops, listing every offender at once (exit 4), when a name cannot work:
 - a loose file called `data.sah`, `data.saf` or another file the toolkit manages, one inside `shaiya-toolkit-backups`, or one with a `..` or absolute path;
 - a loose file whose name ends in `.shaiya-tmp`.
 
-## 4. Sign it (recommended)
+## 4. Optional: sign it
 
-Signing lets a client or updater accept only patches that you made.
+Optional. The original updater does not check signatures, so a patch works without one. Sign only if you run an updater that requires signed patches: signing lets it accept only patches that you made.
 
 ```
 shaiya patch keygen --secret secret.key --public public.key

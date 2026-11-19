@@ -329,6 +329,7 @@ impl SignTab {
         let mut verify_go = false;
         let mut add: Option<Section> = None;
         egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+            ui.label(RichText::new("Optional. The original updater does not check signatures.").color(pal.weak));
             ui.heading("Keys");
             ui.horizontal(|ui| {
                 if ui.button("Generate key pair...").clicked() {
