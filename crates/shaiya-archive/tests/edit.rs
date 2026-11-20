@@ -665,6 +665,48 @@ fn interrupted_loose_only_rollback_without_its_journal_is_refused() {
 }
 
 #[test]
+fn interrupted_loose_only_rollback_whose_journal_is_already_rolled_back_only_drops_the_marker() {
+    let d = TempDir::new("rb-loose-done");
+    let (c, jdir, targets, _apply_marker) = crashed_loose_only(&d);
+    // crash after the journal was marked rolled-back, before the marker was removed
+    for t in &targets {
+        restore_original(&c, t);
+    }
+    let mut j = Journal::read(&jdir).unwrap();
+    j.state = State::RolledBack { at_utc: "2026-01-01T00:00:00Z".into() };
+    j.write().unwrap();
+    loose_rollback_marker(&jdir).write(&c).unwrap();
+    let notes = client::recover(&c).unwrap();
+    assert!(notes[0].contains("had already finished; the marker was removed"), "{notes:?}");
+    assert!(!notes[0].contains("had not started"), "{notes:?}");
+    assert_loose_originals(&c, &targets);
+    assert!(!c.join("data.toolkit-pending").exists());
+    assert!(client::recover(&c).unwrap().is_empty());
+}
+
+#[test]
+fn a_journal_with_an_unsafe_backup_path_is_refused_and_nothing_is_copied() {
+    let d = TempDir::new("rb-loose-badbackup");
+    let (c, jdir, targets, _apply_marker) = crashed_loose_only(&d);
+    let evil = jdir.parent().unwrap().join("evil.bin");
+    std::fs::write(&evil, b"outside the journal").unwrap();
+    let mut j = Journal::read(&jdir).unwrap();
+    let rec = j.loose.iter_mut().find(|l| l.rel == "notice.txt").unwrap();
+    rec.backup = Some("../evil.bin".into());
+    j.write().unwrap();
+    loose_rollback_marker(&jdir).write(&c).unwrap();
+    let e = client::recover(&c).unwrap_err();
+    assert!(matches!(&e, Error::Refused(m) if m.contains("unsafe backup path")), "{e}");
+    assert!(c.join("data.toolkit-pending").exists(), "the marker stays until a person looks");
+    for t in &targets {
+        assert_eq!(std::fs::read(c.join(t.0)).unwrap(), t.2, "{} untouched", t.0);
+    }
+    assert!(matches!(Journal::read(&jdir).unwrap().state, State::Applied));
+    assert!(journal::rollback(&c, &jdir, false, &Job::silent()).is_err());
+    assert_eq!(std::fs::read(c.join("notice.txt")).unwrap(), b"new notice");
+}
+
+#[test]
 fn a_foreign_change_to_the_index_blocks_further_writes() {
     let d = TempDir::new("crash-d");
     let (c, _jdir, _before, _after, marker) = crashed_apply(&d);

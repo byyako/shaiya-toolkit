@@ -476,7 +476,7 @@ pub(crate) fn recover_marker(dir: &Path) -> Result<Option<String>> {
                 let j = Journal::read(&jd)?;
                 if j.state != State::Applied {
                     Marker::remove(dir);
-                    return Ok(Some(format!("an interrupted rollback of {} had not started; nothing was changed", m.label)));
+                    return Ok(Some(format!("an interrupted rollback of {} had already finished; the marker was removed", m.label)));
                 }
                 let (_, saved) = finish_rollback(dir, &files, &j, true)?;
                 Marker::remove(dir);
@@ -509,6 +509,9 @@ pub(crate) fn recover_marker(dir: &Path) -> Result<Option<String>> {
 /// is first saved with `make_backup`, because something else changed it after the crash; the saved paths are returned.
 fn finish_rollback(dir: &Path, files: &ClientFiles, j: &Journal, protect: bool) -> Result<(RollbackReport, Vec<PathBuf>)> {
     let mut saved = Vec::new();
+    if let Some(bad) = j.loose.iter().filter_map(|r| r.backup.as_deref()).find(|b| !safe_rel(b)) {
+        return Err(Error::Refused(format!("the journal {} names an unsafe backup path ({bad:?}); nothing was changed", j.id)));
+    }
     truncate_to(&files.saf, j.saf_len_before)?;
     let mut rep = RollbackReport { journal: j.dir.clone(), restored_index: true, truncated_to: j.saf_len_before, ..RollbackReport::default() };
     for rec in &j.loose {

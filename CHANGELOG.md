@@ -16,7 +16,7 @@ All notable changes are listed here, newest first. The format follows [Keep a Ch
 
 ### Fixed
 
-- A rollback of a change that wrote only loose files, interrupted by a crash, is now finished the next time the client is opened (the files it had not yet restored are restored). Before, the pending marker was dropped with "had not started", some files stayed restored and a second rollback was refused. A file changed by hand after the crash is saved as `<name>.bak` first.
+- A rollback of a change that wrote only loose files, interrupted by a crash, is now finished the next time the client is opened (the files it had not yet restored are restored). Before, the pending marker was dropped with "had not started", some files stayed restored and a second rollback was refused unless `--force` was given. A file changed by hand after the crash is saved first as `<name>.bak`, or `<name>.<UTC>.bak` when that name exists. A journal that already says rolled-back only has its marker removed, and a journal naming a backup path outside its folder is refused.
 
 ## [0.3.0] - 2026-11-19
 
