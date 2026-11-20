@@ -4,6 +4,14 @@ All notable changes are listed here, newest first. The format follows [Keep a Ch
 
 ## [Unreleased]
 
+### Shaiya Toolkit
+
+- DXT2 and DXT4 textures now preview and pass the texture check: they are read as DXT3 and DXT5 blocks and the colour is un-premultiplied. Before, such a file (`Item/DDS/reflection.dds` of the US EP4.5 client) was refused as `texture-unreadable`.
+
+### Libraries
+
+- `shaiya-clientdata::texture::decode_dds` reads `DXT2` and `DXT4`; the returned `Image` is straight-alpha RGBA like for every other format.
+
 ## [0.3.0] - 2026-11-19
 
 ### Shaiya Toolkit

@@ -308,11 +308,11 @@ mod tests {
     }
 
     #[test]
-    fn dxt1_3_5_pass_and_dxt2_is_refused_by_the_reader_so_it_is_reported() {
-        for ok in [b"DXT1", b"DXT3", b"DXT5"] {
+    fn dxt1_to_5_pass_and_another_fourcc_is_refused_by_the_reader_so_it_is_reported() {
+        for ok in [b"DXT1", b"DXT2", b"DXT3", b"DXT4", b"DXT5"] {
             assert!(check_file("a.dds", &dds(ok), None).is_empty(), "{ok:?}");
         }
-        for refused in [b"DXT2", b"DXT4"] {
+        for refused in [b"ATI1", b"BC7 "] {
             let f = check_file("a.dds", &dds(refused), None);
             assert_eq!(codes(&f), [code::TEXTURE_UNREADABLE], "{refused:?}");
             assert!(f[0].message.contains("game may still accept it"));

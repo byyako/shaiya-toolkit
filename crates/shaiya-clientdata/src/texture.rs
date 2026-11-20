@@ -1,4 +1,4 @@
-//! Texture decoding to RGBA8: DDS (DXT1/3/5 and uncompressed bit-mask formats, first mip level), TGA (uncompressed and RLE
+//! Texture decoding to RGBA8: DDS (DXT1 to DXT5, DXT2/DXT4 with the colour un-premultiplied, and uncompressed bit-mask formats, first mip level), TGA (uncompressed and RLE
 //! true-colour, 24/32 bit) and BMP (24/32 bit, some "dds" files of the client are really bitmaps). No dependencies.
 
 use crate::error::{Cur, Result};
@@ -125,6 +125,18 @@ fn dxt_alpha5(b: &[u8]) -> [u8; 16] {
     out
 }
 
+/// DXT2 and DXT4 store the colour multiplied by alpha. Back to straight alpha: c = round(c * 255 / a); alpha 0 gives 0,0,0,0.
+fn unpremultiply(p: &mut [u8; 4]) {
+    let a = p[3] as u32;
+    if a == 0 {
+        *p = [0; 4];
+    } else if a != 255 {
+        for c in p.iter_mut().take(3) {
+            *c = ((*c as u32 * 255 + a / 2) / a).min(255) as u8;
+        }
+    }
+}
+
 fn mask_shift(mask: u32) -> (u32, u32) {
     if mask == 0 {
         return (0, 0);
@@ -172,7 +184,7 @@ pub fn decode_dds(data: &[u8], file: &str) -> Result<Image> {
     if pf_flags & 4 != 0 {
         let block = match &fourcc[..] {
             b"DXT1" => 8,
-            b"DXT3" | b"DXT5" => 16,
+            b"DXT2" | b"DXT3" | b"DXT4" | b"DXT5" => 16,
             other => return Err(r.fail(format!("unsupported DDS format {:?}", String::from_utf8_lossy(other)))),
         };
         let (bw, bh) = (w.div_ceil(4), h.div_ceil(4));
@@ -183,7 +195,7 @@ pub fn decode_dds(data: &[u8], file: &str) -> Result<Image> {
                 let mut px = [[0u8; 4]; 16];
                 match &fourcc[..] {
                     b"DXT1" => colour_block(b, false, &mut px),
-                    b"DXT3" => {
+                    b"DXT2" | b"DXT3" => {
                         colour_block(&b[8..], true, &mut px);
                         for (i, p) in px.iter_mut().enumerate() {
                             let nib = (b[i / 2] >> (4 * (i % 2))) & 15;
@@ -196,6 +208,11 @@ pub fn decode_dds(data: &[u8], file: &str) -> Result<Image> {
                         for (p, a) in px.iter_mut().zip(a) {
                             p[3] = a;
                         }
+                    }
+                }
+                if matches!(&fourcc[..], b"DXT2" | b"DXT4") {
+                    for p in px.iter_mut() {
+                        unpremultiply(p);
                     }
                 }
                 for (i, p) in px.iter().enumerate() {
@@ -373,6 +390,90 @@ mod tests {
         assert_eq!(&img.rgba[0..4], &[255, 255, 255, 255]);
         assert!(decode_dds(&d[..d.len() - 1], "t").is_err());
         assert!(decode_dds(&d[..20], "t").is_err());
+    }
+
+    // DXT3 block: alpha of pixel i = i * 17; both colours = c (565).
+    fn dxt3_block(c: u16) -> Vec<u8> {
+        let mut b = Vec::new();
+        for i in 0..8u8 {
+            b.push((2 * i) | ((2 * i + 1) << 4));
+        }
+        b.extend_from_slice(&c.to_le_bytes());
+        b.extend_from_slice(&c.to_le_bytes());
+        b.extend_from_slice(&[0; 4]);
+        b
+    }
+
+    // DXT5 block: alpha0 = 200, alpha1 = 100, every index 1 (alpha 100); both colours = c (565).
+    fn dxt5_block(c: u16) -> Vec<u8> {
+        let mut b = vec![200, 100, 0x49, 0x92, 0x24, 0x49, 0x92, 0x24];
+        b.extend_from_slice(&c.to_le_bytes());
+        b.extend_from_slice(&c.to_le_bytes());
+        b.extend_from_slice(&[0; 4]);
+        b
+    }
+
+    #[test]
+    fn dxt3_and_dxt5_bytes_are_unchanged_by_dxt2_dxt4_support() {
+        // 565 0x07E0 is pure green; expected bytes are written out, not derived from the decoder.
+        let mut d = dds_header(4, 4, 4, b"DXT3", 0, [0; 4]);
+        d.extend_from_slice(&dxt3_block(0x07e0));
+        let img = decode_dds(&d, "t").unwrap();
+        for i in 0..16usize {
+            assert_eq!(&img.rgba[i * 4..i * 4 + 4], &[0, 255, 0, (i as u8) * 17], "dxt3 pixel {i}");
+        }
+        let mut d = dds_header(4, 4, 4, b"DXT5", 0, [0; 4]);
+        d.extend_from_slice(&dxt5_block(0x07e0));
+        let img = decode_dds(&d, "t").unwrap();
+        for i in 0..16usize {
+            assert_eq!(&img.rgba[i * 4..i * 4 + 4], &[0, 255, 0, 100], "dxt5 pixel {i}");
+        }
+    }
+
+    #[test]
+    fn dxt2_is_dxt3_blocks_with_the_colour_un_premultiplied() {
+        // stored 565 0x0400: g = 32 -> (32*255+31)/63 = 130
+        let mut d = dds_header(4, 4, 4, b"DXT2", 0, [0; 4]);
+        d.extend_from_slice(&dxt3_block(0x0400));
+        let img = decode_dds(&d, "t").unwrap();
+        assert_eq!(&img.rgba[0..4], &[0, 0, 0, 0], "alpha 0 gives 0,0,0,0");
+        assert_eq!(&img.rgba[60..64], &[0, 130, 0, 255], "alpha 255 keeps the colour");
+        assert_eq!(&img.rgba[20..24], &[0, 255, 0, 85], "130 * 255 / 85 clamps to 255");
+        assert_eq!(&img.rgba[40..44], &[0, 195, 0, 170], "round(130 * 255 / 170)");
+        let mut d3 = dds_header(4, 4, 4, b"DXT3", 0, [0; 4]);
+        d3.extend_from_slice(&dxt3_block(0x0400));
+        let img3 = decode_dds(&d3, "t").unwrap();
+        for i in 0..16usize {
+            assert_eq!(img.rgba[i * 4 + 3], img3.rgba[i * 4 + 3], "alpha is the DXT3 alpha");
+        }
+    }
+
+    #[test]
+    fn dxt4_is_dxt5_blocks_with_the_colour_un_premultiplied() {
+        // stored 565 0x4000: r = 8 -> (8*255+15)/31 = 66; alpha 100 -> (66*255+50)/100 = 168
+        let mut d = dds_header(4, 4, 4, b"DXT4", 0, [0; 4]);
+        d.extend_from_slice(&dxt5_block(0x4000));
+        let img = decode_dds(&d, "t").unwrap();
+        assert_eq!(&img.rgba[0..4], &[168, 0, 0, 100]);
+        assert_eq!(&img.rgba[60..64], &[168, 0, 0, 100]);
+        assert!(decode_dds(&d[..d.len() - 1], "t").is_err());
+    }
+
+    #[test]
+    fn un_premultiplying_stays_close_to_the_straight_colour() {
+        for straight in [0u32, 1, 40, 128, 200, 255] {
+            for a in 1..=255u32 {
+                let stored = (straight * a + 127) / 255;
+                let mut p = [stored as u8, stored as u8, stored as u8, a as u8];
+                unpremultiply(&mut p);
+                // half a step of the stored value, scaled by 255 / a, plus rounding
+                let allowed = (255 / a as i64) / 2 + 1;
+                assert!((p[0] as i64 - straight as i64).abs() <= allowed, "straight {straight} alpha {a} -> {}", p[0]);
+            }
+        }
+        let mut p = [9, 9, 9, 0];
+        unpremultiply(&mut p);
+        assert_eq!(p, [0, 0, 0, 0]);
     }
 
     #[test]

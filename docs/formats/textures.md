@@ -8,13 +8,13 @@ The toolkit reads the client's pictures and writes two kinds of its own for new 
 
 | Magic | Format | Supported |
 |---|---|---|
-| `DDS ` | DirectDraw Surface | DXT1, DXT3, DXT5 and uncompressed bit-mask formats, the first mip level |
+| `DDS ` | DirectDraw Surface | DXT1 to DXT5 (DXT2 and DXT4 included) and uncompressed bit-mask formats, the first mip level |
 | `BM` | bitmap | 24 and 32 bit. Some files the client calls `.dds` are really bitmaps. |
 | anything else | Targa | uncompressed and run-length true colour, 24 and 32 bit |
 
 A size of 0 or above 16,384 is refused. A texture that is missing or cannot be decoded is shown as a magenta and black checker.
 
-A DDS with another four-character code (DXT2 and DXT4, the premultiplied-alpha variants, for example) is refused: `Item/DDS/reflection.dds` of the US EP4.5 client is DXT2 and does not preview. The file checks before files go in report such a file as `texture-unreadable` and say the game may still accept it (see [Checks before files go in](../tools/shaiya.md#checks-before-files-go-in)).
+DXT2 and DXT4 (the premultiplied-alpha variants) are read as DXT3 and DXT5 blocks, and the colour is then divided by the alpha (rounded; alpha 0 gives 0,0,0,0), so every reader of the toolkit gets straight-alpha RGBA. `Item/DDS/reflection.dds` of the US EP4.5 client is a DXT2 file and previews. A DDS with any other four-character code is refused; the file checks before files go in report such a file as `texture-unreadable` and say the game may still accept it (see [Checks before files go in](../tools/shaiya.md#checks-before-files-go-in)).
 
 ## What is written
 
