@@ -4,6 +4,8 @@ All notable changes are listed here, newest first. The format follows [Keep a Ch
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-11-20
+
 ### Shaiya Toolkit
 
 - DXT2 and DXT4 textures now preview and pass the texture check: they are read as DXT3 and DXT5 blocks and the colour is un-premultiplied. Before, such a file (`Item/DDS/reflection.dds` of the US EP4.5 client) was refused as `texture-unreadable`.
@@ -17,6 +19,10 @@ All notable changes are listed here, newest first. The format follows [Keep a Ch
 ### Fixed
 
 - A rollback of a change that wrote only loose files, interrupted by a crash, is now finished the next time the client is opened (the files it had not yet restored are restored). Before, the pending marker was dropped with "had not started", some files stayed restored and a second rollback was refused unless `--force` was given. A file changed by hand after the crash is saved first as `<name>.bak`, or `<name>.<UTC>.bak` when that name exists. A journal that already says rolled-back only has its marker removed, and a journal naming a backup path outside its folder is refused.
+
+### Documentation
+
+- The texture format page, the version matrix, the recovery pages (Undo and recovery, the Toolkit's files) and the Patch builder text of Make a patch describe the changes above; the testing page explains temp folders on exFAT.
 
 ## [0.3.0] - 2026-11-19
 

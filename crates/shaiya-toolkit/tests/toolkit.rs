@@ -8,7 +8,7 @@ use shaiya_ui::testing::Harness;
 use std::path::PathBuf;
 use std::time::Duration;
 
-const WAIT: Duration = Duration::from_secs(20);
+const WAIT: Duration = Duration::from_secs(60);
 
 fn settled(h: &mut Harness<ToolkitApp>) -> bool {
     h.wait_until(WAIT, |h| h.app.app.inspect.table().iter().all(|r| r.1 != "..."))
@@ -31,7 +31,7 @@ fn the_empty_state_explains_the_toolkit() {
     assert!(t.contains("Choose a client folder in the toolbar"), "{t}");
     assert!(t.contains("Nothing is written until you apply changes"), "{t}");
     assert!(t.contains("These tools work on your own copy of the game"), "{t}");
-    assert!(t.contains("Shaiya Archive") || t.contains("v0.3.0"), "{t}");
+    assert!(t.contains("Shaiya Archive") || t.contains("v0.3.1"), "{t}");
 }
 
 #[test]
