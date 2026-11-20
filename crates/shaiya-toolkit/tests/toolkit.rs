@@ -1487,3 +1487,87 @@ fn the_history_lists_a_change_made_outside_the_toolkit_when_the_tab_is_shown() {
     assert!(w.h.wait_until(WAIT, |h| h.app.app.apply.history().len() == 1), "showing the tab lists the journal");
     assert_eq!(w.h.app.app.apply.history()[0].0.label, "outside");
 }
+
+// ------------------------------------------------------------------------------------------------ T9 W7: map preview
+
+fn world_map_files(client: &std::path::Path) -> Vec<(String, Vec<u8>)> {
+    let a = shaiya_archive::Archive::open(client).unwrap();
+    a.index().visible().iter().map(|e| e.path.clone()).filter(|p| p.to_ascii_lowercase().starts_with("world/") && p.to_ascii_lowercase().ends_with(".wld")).map(|p| (p.clone(), a.read(&p).unwrap())).collect()
+}
+
+/// A field `.wld` of 3 x 3 corners (size 4) and a dungeon `.wld`, both built here.
+fn tiny_maps() -> (Vec<u8>, Vec<u8>) {
+    let zero_tail = |head: Vec<u8>| {
+        (0..4096)
+            .map(|n| head.iter().copied().chain(std::iter::repeat_n(0u8, n)).collect::<Vec<u8>>())
+            .find(|b| shaiya_clientdata::Wld::parse(b, "x").is_ok())
+            .expect("a zero tail parses")
+    };
+    let mut field = b"FLD\0".to_vec();
+    field.extend(4i32.to_le_bytes());
+    for i in 0..9i16 {
+        field.extend((9000 + 50 * i).to_le_bytes());
+    }
+    field.extend([0u8; 9]);
+    field.extend(0i32.to_le_bytes());
+    let mut dun = b"DUN\0".to_vec();
+    let mut name = b"dg_test.dg".to_vec();
+    name.resize(256, 0);
+    dun.extend(name);
+    (zero_tail(field), zero_tail(dun))
+}
+
+#[test]
+fn a_wld_in_the_archive_previews_as_a_map_with_its_header() {
+    let mut w = world("t9-map");
+    let (field, dungeon) = tiny_maps();
+    SahBuilder::new(0).file(b"world/12.wld", &field).file(b"world/31.wld", &dungeon).file(b"world/9.wld", b"FLD\0 broken").write_to(w.client.path());
+    w.h.frames(2);
+    let dir = w.client_dir();
+    with_cx(&mut w.h, |app, cx| app.add_client("US test", &dir, true, cx)).unwrap();
+    assert!(w.h.wait_until(WAIT, |h| h.app.app.archive.is_open()), "the archive opens");
+    w.h.frames(2);
+    with_cx(&mut w.h, |app, cx| app.archive.select_path("world/12.wld", cx));
+    assert!(preview_ready(&mut w.h));
+    w.h.frames(2);
+    assert_eq!(w.h.app.app.archive.preview_kind(), Some("map"));
+    assert!(w.h.app.app.archive.has_texture(), "the top view is uploaded as a texture");
+    let t = w.h.text();
+    assert!(t.contains("Map 12, 3 x 3 corners, 4 units") && t.contains("height from -20") && t.contains("Fit"), "{t}");
+    with_cx(&mut w.h, |app, cx| app.archive.select_path("world/31.wld", cx));
+    assert!(preview_ready(&mut w.h));
+    w.h.frames(2);
+    assert_eq!(w.h.app.app.archive.preview_kind(), Some("map"));
+    let t = w.h.text();
+    assert!(t.contains("Dungeon map: the floor is in dg_test.dg; no top view yet"), "{t}");
+    with_cx(&mut w.h, |app, cx| app.archive.select_path("world/9.wld", cx));
+    assert!(preview_ready(&mut w.h));
+    w.h.frames(2);
+    assert_eq!(w.h.app.app.archive.preview_kind(), Some("failed"), "a map that does not parse keeps the Failed preview");
+}
+
+/// Opt-in (`SHAIYA_CLIENT`, read only): every `world/*.wld` of the US client previews as a map; the split is printed.
+#[test]
+fn every_world_wld_of_the_us_client_previews_as_a_map() {
+    let Some(us) = shaiya_testkit::env_client() else {
+        eprintln!("skipped: SHAIYA_CLIENT not set");
+        return;
+    };
+    let maps = world_map_files(&us);
+    let (mut fields, mut dungeons) = (0, 0);
+    for (p, bytes) in &maps {
+        match shaiya_toolkit::preview::map_preview(bytes, p).unwrap_or_else(|e| panic!("{p}: {e}")) {
+            shaiya_toolkit::preview::PreviewData::Map { rgba, width, height, .. } if !rgba.is_empty() => {
+                assert_eq!(rgba.len(), (width * height * 4) as usize, "{p}");
+                fields += 1;
+            }
+            shaiya_toolkit::preview::PreviewData::Map { note: Some(n), .. } => {
+                assert!(n.starts_with("Dungeon map: "), "{p}: {n}");
+                dungeons += 1;
+            }
+            other => panic!("{p}: {other:?}"),
+        }
+    }
+    eprintln!("map preview: {} .wld files, {fields} fields, {dungeons} dungeon maps", maps.len());
+    assert_eq!(maps.len(), 83);
+}

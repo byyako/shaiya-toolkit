@@ -78,13 +78,27 @@ pub(crate) fn world_caps(o: &mut Observed, dir: &Path) {
     if wlds.is_empty() {
         o.set(Cap::WldParse, NA);
         o.set(Cap::WldLossless, NA);
+        o.set(Cap::WldPreview, NA);
     } else {
-        let (mut parsed, mut identical) = (0u64, 0u64);
+        let (mut parsed, mut identical, mut fields, mut dungeons) = (0u64, 0u64, 0u64, 0u64);
         for p in &wlds {
             match files.read(p) {
                 Ok(bytes) => {
                     match Wld::parse(&bytes, p) {
-                        Ok(_) => parsed += 1,
+                        Ok(w) => {
+                            parsed += 1;
+                            match &w.terrain {
+                                Some(t) => {
+                                    let (pw, ph, px) = shaiya_clientdata::render::hillshade_grey(t);
+                                    if (pw, ph) == (t.n, t.n) && px.len() == t.n * t.n * 4 {
+                                        fields += 1;
+                                    } else {
+                                        o.notes.push(format!("hillshade_grey {p}: wrong picture size"));
+                                    }
+                                }
+                                None => dungeons += 1,
+                            }
+                        }
                         Err(e) => o.notes.push(format!("Wld::parse {p}: {e}")),
                     }
                     match WldRaw::parse(&bytes, p) {
@@ -99,8 +113,11 @@ pub(crate) fn world_caps(o: &mut Observed, dir: &Path) {
         let total = wlds.len() as u64;
         o.set(Cap::WldParse, if parsed == total { O } else { F });
         o.set(Cap::WldLossless, if identical == total { O } else { F });
+        o.set(Cap::WldPreview, if fields + dungeons == total { O } else { F });
         o.numbers.push((Cap::WldParse, parsed));
         o.numbers.push((Cap::WldLossless, identical));
+        o.numbers.push((Cap::WldPreview, fields + dungeons));
+        o.facts.push(format!("map preview: {fields} fields with a picture, {dungeons} dungeon maps without terrain"));
         o.facts.push(format!("world: {total} .wld files, {parsed} parsed, {identical} written back identically"));
     }
 

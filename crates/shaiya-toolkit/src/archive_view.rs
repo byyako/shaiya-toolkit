@@ -719,16 +719,18 @@ impl ArchiveView {
                     let want = preview::encoding_by_name(&cx.settings.text_encoding);
                     self.preview.encoding = want.unwrap_or(*guess);
                 }
-                if let PreviewData::Image { width, height, rgba, .. } = &d {
-                    let name = self.preview.row.and_then(|i| self.loaded.as_ref().map(|l| l.rows[i].path.clone())).unwrap_or_default();
-                    let img = egui::ColorImage::from_rgba_unmultiplied([*width as usize, *height as usize], rgba);
-                    let tex = cx.shell.ctx().load_texture(format!("preview-{name}"), img, egui::TextureOptions::LINEAR);
-                    self.textures.retain(|(n, _)| n != &name);
-                    self.textures.push((name.clone(), tex));
-                    while self.textures.len() > 8 {
-                        drop(self.textures.remove(0));
+                if let PreviewData::Image { width, height, rgba, .. } | PreviewData::Map { width, height, rgba, .. } = &d {
+                    if !rgba.is_empty() {
+                        let name = self.preview.row.and_then(|i| self.loaded.as_ref().map(|l| l.rows[i].path.clone())).unwrap_or_default();
+                        let img = egui::ColorImage::from_rgba_unmultiplied([*width as usize, *height as usize], rgba);
+                        let tex = cx.shell.ctx().load_texture(format!("preview-{name}"), img, egui::TextureOptions::LINEAR);
+                        self.textures.retain(|(n, _)| n != &name);
+                        self.textures.push((name.clone(), tex));
+                        while self.textures.len() > 8 {
+                            drop(self.textures.remove(0));
+                        }
+                        self.preview.texture_name = Some(name);
                     }
-                    self.preview.texture_name = Some(name);
                 }
                 self.preview.data = Some(d);
             }
@@ -1319,7 +1321,7 @@ impl ArchiveView {
     }
 
     pub fn has_texture(&self) -> bool {
-        self.preview.texture_name.as_ref().is_some_and(|n| self.textures.iter().any(|(t, _)| t == n)) && matches!(self.preview.data, Some(PreviewData::Image { .. }))
+        self.preview.texture_name.as_ref().is_some_and(|n| self.textures.iter().any(|(t, _)| t == n)) && matches!(self.preview.data, Some(PreviewData::Image { .. } | PreviewData::Map { .. }))
     }
 
     // ---------------------------------------------------------------------------------------- extraction
@@ -2056,40 +2058,23 @@ impl ArchiveView {
                 if *downscaled {
                     ui.label(RichText::new(format!("shown at {width} x {height} (downscaled)")).color(pal.weak));
                 }
-                ui.horizontal(|ui| {
-                    ui.selectable_value(&mut self.preview.fit, true, "Fit");
-                    ui.selectable_value(&mut self.preview.fit, false, "1:1");
-                    ui.checkbox(&mut self.preview.alpha, "alpha");
-                });
-                if let Some(name) = &self.preview.texture_name {
-                    if let Some((_, tex)) = self.textures.iter().find(|(n, _)| n == name) {
-                        let avail = ui.available_size();
-                        let size = tex.size_vec2();
-                        let scale = if self.preview.fit { (avail.x / size.x).min(avail.y.max(100.0) / size.y).min(8.0) } else { 1.0 };
-                        let dim = size * scale;
-                        egui::ScrollArea::both().auto_shrink([false, false]).show(ui, |ui| {
-                            let (rect, _) = ui.allocate_exact_size(dim, egui::Sense::hover());
-                            let p = ui.painter();
-                            let cell: f32 = 8.0;
-                            let mut y = 0.0;
-                            let mut odd = false;
-                            while y < dim.y {
-                                let mut x = 0.0;
-                                let mut on = odd;
-                                while x < dim.x {
-                                    let c = if on { Color32::from_gray(90) } else { Color32::from_gray(60) };
-                                    let rr = egui::Rect::from_min_size(rect.min + egui::vec2(x, y), egui::vec2(cell.min(dim.x - x), cell.min(dim.y - y)));
-                                    p.rect_filled(rr, 0.0, c);
-                                    on = !on;
-                                    x += cell;
-                                }
-                                odd = !odd;
-                                y += cell;
-                            }
-                            let tint = if self.preview.alpha { Color32::WHITE } else { Color32::from_rgb(255, 255, 255) };
-                            p.image(tex.id(), rect, egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)), tint);
-                        });
-                    }
+                let tex = self.preview.texture_name.as_ref().and_then(|name| self.textures.iter().find(|(n, _)| n == name)).map(|(_, t)| t);
+                picture_view(ui, &mut self.preview.fit, Some(&mut self.preview.alpha), tex);
+            }
+            Some(PreviewData::Map { header, height_range, note, width, height, downscaled, rgba }) => {
+                ui.label(header);
+                if let Some((lo, hi)) = height_range {
+                    ui.label(format!("height from {lo:.1} to {hi:.1}"));
+                }
+                if let Some(note) = note {
+                    ui.label(RichText::new(note).color(pal.weak));
+                }
+                if *downscaled {
+                    ui.label(RichText::new(format!("shown at {width} x {height} (downscaled)")).color(pal.weak));
+                }
+                if !rgba.is_empty() {
+                    let tex = self.preview.texture_name.as_ref().and_then(|name| self.textures.iter().find(|(n, _)| n == name)).map(|(_, t)| t);
+                    picture_view(ui, &mut self.preview.fit, None, tex);
                 }
             }
             Some(PreviewData::Text { bytes, total, truncated, guess }) => {
@@ -2650,4 +2635,41 @@ fn draw_tree(ui: &mut egui::Ui, l: &Loaded, node: usize, current: &str, acts: &m
                 draw_tree(ui, l, c, current, acts);
             }
         });
+}
+
+/// A decoded picture over a checkerboard: Fit or 1:1 (and the alpha box when `alpha` is given). Used by the image and the map preview.
+fn picture_view(ui: &mut egui::Ui, fit: &mut bool, alpha: Option<&mut bool>, tex: Option<&egui::TextureHandle>) {
+    ui.horizontal(|ui| {
+        ui.selectable_value(fit, true, "Fit");
+        ui.selectable_value(fit, false, "1:1");
+        if let Some(a) = alpha {
+            ui.checkbox(a, "alpha");
+        }
+    });
+    let Some(tex) = tex else { return };
+    let avail = ui.available_size();
+    let size = tex.size_vec2();
+    let scale = if *fit { (avail.x / size.x).min(avail.y.max(100.0) / size.y).min(8.0) } else { 1.0 };
+    let dim = size * scale;
+    egui::ScrollArea::both().auto_shrink([false, false]).show(ui, |ui| {
+        let (rect, _) = ui.allocate_exact_size(dim, egui::Sense::hover());
+        let p = ui.painter();
+        let cell: f32 = 8.0;
+        let mut y = 0.0;
+        let mut odd = false;
+        while y < dim.y {
+            let mut x = 0.0;
+            let mut on = odd;
+            while x < dim.x {
+                let c = if on { Color32::from_gray(90) } else { Color32::from_gray(60) };
+                let rr = egui::Rect::from_min_size(rect.min + egui::vec2(x, y), egui::vec2(cell.min(dim.x - x), cell.min(dim.y - y)));
+                p.rect_filled(rr, 0.0, c);
+                on = !on;
+                x += cell;
+            }
+            odd = !odd;
+            y += cell;
+        }
+        p.image(tex.id(), rect, egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)), Color32::WHITE);
+    });
 }

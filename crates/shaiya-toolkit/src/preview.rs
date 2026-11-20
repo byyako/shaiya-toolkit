@@ -25,6 +25,8 @@ pub struct SdataSummary {
 pub enum PreviewData {
     Empty,
     Image { width: u32, height: u32, rgba: Vec<u8>, header: String, downscaled: bool },
+    /// A `.wld` map: the grey hillshade top view of a field (`rgba` is empty for a dungeon map, which has `note` instead).
+    Map { header: String, height_range: Option<(f32, f32)>, note: Option<String>, width: u32, height: u32, rgba: Vec<u8>, downscaled: bool },
     /// The raw bytes (decoded for display with an encoding chosen by the person).
     Text { bytes: Vec<u8>, total: u64, truncated: bool, guess: Encoding },
     /// `plain` is the decrypted bytes (or the file itself when it is not encrypted).
@@ -41,6 +43,7 @@ impl PreviewData {
         match self {
             PreviewData::Empty => "empty",
             PreviewData::Image { .. } => "image",
+            PreviewData::Map { .. } => "map",
             PreviewData::Text { .. } => "text",
             PreviewData::Sdata { .. } => "sdata",
             PreviewData::Hex { .. } => "hex",
@@ -137,6 +140,34 @@ fn shrink(w: u32, h: u32, rgba: &[u8]) -> (u32, u32, Vec<u8>) {
     (nw, nh, out)
 }
 
+/// The preview of a `.wld` map from its bytes: a field gets the grey hillshade (one pixel per corner, north up, shrunk to
+/// [`IMAGE_SIDE_MAX`]) and its height range; a dungeon map has no terrain and names its `.dg` instead. A file that does not parse
+/// is an error (the caller shows it as Failed).
+pub fn map_preview(data: &[u8], path: &str) -> shaiya_clientdata::Result<PreviewData> {
+    let wld = shaiya_clientdata::Wld::parse(data, path)?;
+    let file = path.rsplit('/').next().unwrap_or(path);
+    let id = file.rsplit_once('.').map_or(file, |(s, _)| s);
+    Ok(match &wld.terrain {
+        Some(t) => {
+            let (w, h, rgba) = shaiya_clientdata::render::hillshade_grey(t);
+            let (sw, sh, rgba) = shrink(w as u32, h as u32, &rgba);
+            PreviewData::Map {
+                header: format!("Map {id}, {} x {} corners, {} units", t.n, t.n, t.size),
+                height_range: Some(t.height_range()),
+                note: None,
+                width: sw,
+                height: sh,
+                downscaled: sw != w as u32,
+                rgba,
+            }
+        }
+        None => {
+            let note = if wld.dg.is_empty() { "Dungeon map: no dungeon file is named; no top view yet".to_string() } else { format!("Dungeon map: the floor is in {}; no top view yet", wld.dg) };
+            PreviewData::Map { header: format!("Map {id}, dungeon"), height_range: None, note: Some(note), width: 0, height: 0, rgba: Vec::new(), downscaled: false }
+        }
+    })
+}
+
 fn read_all(archive: &Archive, entry: &Entry, cap: u64, job: &Job) -> Result<Vec<u8>> {
     let n = (entry.length as u64).min(cap) as usize;
     let mut out = Vec::with_capacity(n);
@@ -195,6 +226,10 @@ pub fn make_preview(archive: &Archive, entry: &Entry, path: &str, text_all: bool
             Ok(None) => PreviewData::Sdata { summary: SdataSummary { encrypted: false, crc: None, crc_ok: None, plain_size: size, padding_zero: None, tail_zero: None }, plain: data.clone(), raw: data },
             Err(e) => PreviewData::Failed { message: e.to_string(), bytes: data.into_iter().take(64 << 10).collect(), total },
         });
+    }
+    if ext == "wld" && (head.starts_with(b"FLD\0") || head.starts_with(b"DUN\0")) {
+        let data = read_all(archive, entry, 128 << 20, job)?;
+        return Ok(map_preview(&data, path).unwrap_or_else(|e| PreviewData::Failed { message: e.to_string(), bytes: data.into_iter().take(64 << 10).collect(), total }));
     }
     let by_ext = matches!(ext.as_str(), "txt" | "ini" | "xml" | "csv" | "cfg" | "lst" | "log");
     if by_ext || looks_like_text(&head) {
@@ -358,6 +393,119 @@ mod tests {
         let e = a.index().get("t/big.txt").unwrap();
         match make_preview(&a, e, "t/big.txt", true, 0, &Job::silent()).unwrap() {
             PreviewData::Text { bytes, truncated, .. } => assert_eq!((bytes.len(), truncated), (3 << 20, false)),
+            other => panic!("{other:?}"),
+        }
+    }
+}
+
+#[cfg(test)]
+mod map_tests {
+    use super::*;
+    use shaiya_testkit::{SahBuilder, TempDir};
+
+    /// A `.wld` head followed by zeros until it parses to its last byte (every later count, name and number is 0).
+    fn zero_tail(head: Vec<u8>) -> Vec<u8> {
+        zero_tail_len(&head, 0)
+    }
+
+    /// The same, starting the search at `from` zeros (the length does not depend on the size of the terrain).
+    fn zero_tail_len(head: &[u8], from: usize) -> Vec<u8> {
+        for n in from..4096 {
+            let mut b = head.to_vec();
+            b.extend(std::iter::repeat_n(0u8, n));
+            if shaiya_clientdata::Wld::parse(&b, "x").is_ok() {
+                return b;
+            }
+        }
+        panic!("no zero tail makes a parsable .wld");
+    }
+
+    fn tail_len() -> usize {
+        let small = field_head(32);
+        zero_tail_len(&small, 0).len() - small.len()
+    }
+
+    fn field_head(size: u32) -> Vec<u8> {
+        let n = size as usize / 2 + 1;
+        let mut h = b"FLD\0".to_vec();
+        h.extend((size as i32).to_le_bytes());
+        for i in 0..n * n {
+            let (x, z) = ((i % n) as i32, (i / n) as i32);
+            h.extend(((9000 + 20 * x - 20 * z) as i16).to_le_bytes());
+        }
+        h.extend(vec![0u8; n * n]);
+        h.extend(0i32.to_le_bytes()); // no terrain textures
+        h
+    }
+
+    /// A field with a ramp: height rises towards the east and falls towards the north.
+    pub fn field_wld(size: u32) -> Vec<u8> {
+        let mut h = field_head(size);
+        let t = tail_len();
+        h.extend(std::iter::repeat_n(0u8, t));
+        assert!(shaiya_clientdata::Wld::parse(&h, "x").is_ok());
+        h
+    }
+
+    pub fn dungeon_wld(dg: &str) -> Vec<u8> {
+        let mut h = b"DUN\0".to_vec();
+        let mut name = dg.as_bytes().to_vec();
+        name.resize(256, 0);
+        h.extend(name);
+        zero_tail(h)
+    }
+
+    #[test]
+    fn a_field_previews_as_a_map_with_its_header_and_height_range() {
+        let d = TempDir::new("preview-map-field");
+        SahBuilder::new(0).file(b"world/12.wld", &field_wld(32)).write_to(d.path());
+        let a = Archive::open(d.path()).unwrap();
+        match make_preview(&a, a.index().get("world/12.wld").unwrap(), "world/12.wld", false, 0, &Job::silent()).unwrap() {
+            PreviewData::Map { header, height_range, note, width, height, rgba, downscaled } => {
+                assert_eq!(header, "Map 12, 17 x 17 corners, 32 units");
+                assert_eq!((width, height, rgba.len(), downscaled, note), (17, 17, 17 * 17 * 4, false, None));
+                let (lo, hi) = height_range.unwrap();
+                assert!((lo - (9000.0 - 20.0 * 16.0) * 0.02 + 200.0).abs() < 1e-3 && (hi - (9000.0 + 20.0 * 16.0) * 0.02 + 200.0).abs() < 1e-3, "{lo} {hi}");
+                assert!(rgba.chunks(4).all(|p| p[3] == 255 && p[0] == p[1] && p[1] == p[2]), "grey and opaque");
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_dungeon_map_names_its_floor_file_and_has_no_picture() {
+        match map_preview(&dungeon_wld("dg_cave.dg"), "world/31.wld").unwrap() {
+            PreviewData::Map { header, height_range, note, rgba, .. } => {
+                assert_eq!(header, "Map 31, dungeon");
+                assert_eq!(note.as_deref(), Some("Dungeon map: the floor is in dg_cave.dg; no top view yet"));
+                assert!(height_range.is_none() && rgba.is_empty());
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_wld_that_does_not_parse_is_failed_with_hex() {
+        let d = TempDir::new("preview-map-bad");
+        let mut bad = b"FLD\0".to_vec();
+        bad.extend(7i32.to_le_bytes()); // an odd map size
+        bad.extend([1u8; 40]);
+        SahBuilder::new(0).file(b"world/9.wld", &bad).write_to(d.path());
+        let a = Archive::open(d.path()).unwrap();
+        match make_preview(&a, a.index().get("world/9.wld").unwrap(), "world/9.wld", false, 0, &Job::silent()).unwrap() {
+            PreviewData::Failed { message, bytes, total } => assert!(!message.is_empty() && bytes.len() == 48 && total == 48),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn the_largest_map_is_shrunk_to_the_image_limit() {
+        match map_preview(&field_wld(8192), "world/1.wld").unwrap() {
+            PreviewData::Map { header, width, height, downscaled, rgba, .. } => {
+                assert_eq!(header, "Map 1, 4097 x 4097 corners, 8192 units");
+                assert!(downscaled && width <= IMAGE_SIDE_MAX && height <= IMAGE_SIDE_MAX);
+                assert_eq!(rgba.len(), (width * height * 4) as usize);
+            }
             other => panic!("{other:?}"),
         }
     }

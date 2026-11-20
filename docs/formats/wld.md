@@ -65,10 +65,11 @@ The client reads a `.wld` with no length check. A file that is too short inside 
 | `shaiya-clientdata` | `Wld` reads it into decoded names. `WldRaw` keeps every name as its raw 256 bytes and every value as read, parses and writes it back byte for byte, and recomputes the two counts above. |
 | Shaiya SVMap Editor | reads it for terrain, portals, NPCs, regions and bind areas. It writes edited copies, only when the file writes back identically, to the staging folder as `data/world/<id>.wld`. |
 | `shaiya svmap wld-check` | parses and writes back every `world/*.wld` of a client in memory and names the first byte that differs. |
+| Shaiya Toolkit | The Archive tab previews `world/<id>.wld` as a grey top view of the terrain: one pixel per corner, north at the top, lit from the north-west, with "Map <id>, <n> x <n> corners, <size> units" and the lowest and highest height. A map larger than 4096 corners a side is shown shrunk. A dungeon map has no terrain, so the preview names its `.dg` file ("Dungeon map: the floor is in <name>; no top view yet"). A file that does not parse shows its error and the first bytes as hex. |
 
 ## Verified on
 
-US EP4.5: all 83 files parse to the last byte and write back byte for byte (the version matrix rows `Wld::parse` and `wld_raw`). A game edit was checked live: a patch with a moved portal box was loaded by the game and used the new box.
+US EP4.5: all 83 files parse to the last byte and write back byte for byte (the version matrix rows `Wld::parse` and `wld_raw`). The map preview data builds for all 83 (the version matrix row "map preview data"). A game edit was checked live: a patch with a moved portal box was loaded by the game and used the new box.
 
 ## Other episodes
 

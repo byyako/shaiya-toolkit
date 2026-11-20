@@ -124,6 +124,11 @@ fn wld_raw_is_lossless() {
 }
 
 #[test]
+fn wld_map_preview_data() {
+    check(Cap::WldPreview);
+}
+
+#[test]
 fn area_txt_is_lossless() {
     check(Cap::AreaTxtRoundtrip);
 }

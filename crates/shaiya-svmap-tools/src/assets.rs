@@ -6,7 +6,8 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use shaiya_clientdata::text::AreaNames;
-use shaiya_clientdata::wld::{Terrain, Wld, CORNER_SPACING};
+use shaiya_clientdata::wld::{Terrain, Wld};
+pub use shaiya_clientdata::render::shade_rect;
 
 use crate::client_rules::ClientRules;
 
@@ -197,42 +198,6 @@ fn hillshade(rules: &ClientRules, tints: &TintCache, w: &Wld, t: &Terrain, probl
     (Picture { width: n, height: n, rgba }, tex_colours)
 }
 
-/// Colours the pixels of the corners in `rect` (`[cx0, cz0, cx1, cz1]`, inclusive) of an `n` x `n` hillshade picture from the
-/// corner heights. A terrain edit redraws only the corners it touched (and their neighbours) with this; the first picture is the
-/// same function over the whole grid, so a partial redraw gives the pixels a full one would.
-pub fn shade_rect(heights: &[i16], tex_index: &[u8], n: usize, tints: &[[u8; 3]], rect: [u32; 4], rgba: &mut [u8]) {
-    use shaiya_clientdata::wld::{HEIGHT_OFFSET, HEIGHT_SCALE};
-    if n == 0 || heights.len() != n * n || rgba.len() != n * n * 4 {
-        return;
-    }
-    let corner = |cx: usize, cz: usize| heights[cz.min(n - 1) * n + cx.min(n - 1)] as f32 * HEIGHT_SCALE + HEIGHT_OFFSET;
-    // light: from the north-west, 45 degrees up
-    let l = {
-        let v = [-0.5f32, 0.7, 0.5];
-        let len = (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt();
-        [v[0] / len, v[1] / len, v[2] / len]
-    };
-    let (x1, z1) = ((rect[2] as usize).min(n - 1), (rect[3] as usize).min(n - 1));
-    for cz in (rect[1] as usize).min(n - 1)..=z1 {
-        for cx in (rect[0] as usize).min(n - 1)..=x1 {
-            let hx = corner(cx + 1, cz) - corner(cx.saturating_sub(1), cz);
-            let hz = corner(cx, cz + 1) - corner(cx, cz.saturating_sub(1));
-            let span = 2.0 * CORNER_SPACING;
-            // surface normal of y = h(x, z): (-dh/dx, 1, -dh/dz)
-            let (nx, ny, nz) = (-hx / span, 1.0f32, -hz / span);
-            let len = (nx * nx + ny * ny + nz * nz).sqrt();
-            let lam = ((nx * l[0] + ny * l[1] + nz * l[2]) / len).max(0.0);
-            let shade = 0.30 + 0.85 * lam;
-            let ti = tex_index.get(cz * n + cx).copied().unwrap_or(0) as usize;
-            let base = tints.get(ti).copied().unwrap_or([128, 128, 128]);
-            let o = ((n - 1 - cz) * n + cx) * 4;
-            for k in 0..3 {
-                rgba[o + k] = (base[k] as f32 * shade).clamp(0.0, 255.0) as u8;
-            }
-        }
-    }
-}
-
 /// Top-down raster of the dungeon's collision mesh: cells covered by an upward-facing triangle (normal y >= cos 50 degrees)
 /// get the floor height; the picture is shaded by that height. 1 pixel = 1 world unit.
 fn dungeon_floor(points: &[[f32; 3]], indices: &[u32], size: u32) -> (Picture, Vec<f32>) {
@@ -338,6 +303,19 @@ mod tests {
         // a rectangle at the map edge stays inside the picture
         shade_rect(&h, &tex, n, &tints, [n as u32 - 3, n as u32 - 3, n as u32 + 5, n as u32 + 5], &mut pic);
         assert_eq!(pic, full);
+    }
+    /// Golden: the pixels of the hillshade over a synthetic 65 x 65 terrain with two tints. Recorded before `shade_rect` moved
+    /// into `shaiya-clientdata::render`; the move keeps the picture byte for byte.
+    #[test]
+    fn the_hillshade_of_a_synthetic_terrain_is_pixel_identical() {
+        let n = 65usize;
+        let h: Vec<i16> = (0..n * n).map(|i| (9000 + ((i % n) * 37 + (i / n) * 11 + (i * 131) % 97) as i32) as i16).collect();
+        let tex: Vec<u8> = (0..n * n).map(|i| ((i % n) / 32 % 2) as u8).collect();
+        let tints = [[200u8, 100, 50], [30, 160, 90]];
+        let mut rgba = vec![255u8; n * n * 4];
+        shade_rect(&h, &tex, n, &tints, [0, 0, n as u32 - 1, n as u32 - 1], &mut rgba);
+        let hex: String = shaiya_core::hash::sha256(&rgba).iter().map(|b| format!("{b:02x}")).collect();
+        assert_eq!(hex, "261ef5bbe3dd42bdbbad24fcadfea15ade61f057cd368bc0ae7cab736c7468fe");
     }
     #[test]
     fn floor_raster_covers_a_flat_triangle_pair() {
