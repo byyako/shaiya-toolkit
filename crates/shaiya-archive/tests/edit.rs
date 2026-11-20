@@ -567,6 +567,103 @@ fn recovery_of_an_interrupted_rollback() {
     assert!(!c.join("data.toolkit-pending").exists());
 }
 
+/// The marker `journal::rollback` writes for a loose-only change: both hashes are the (unchanged) index.
+fn loose_rollback_marker(jdir: &Path) -> Marker {
+    let j = Journal::read(jdir).unwrap();
+    Marker {
+        op: "rollback".into(),
+        label: "loose.patch".into(),
+        saf_len_before: j.saf_len_before,
+        sah_sha256_before: j.sah_sha256_after.clone(),
+        sah_sha256_after: j.sah_sha256_before.clone(),
+        journal: Some(jdir.to_path_buf()),
+        staged: vec![],
+    }
+}
+
+fn assert_loose_originals(c: &Path, targets: &Loose) {
+    for t in targets {
+        match &t.1 {
+            Some(o) => assert_eq!(&std::fs::read(c.join(t.0)).unwrap(), o, "{} is back to its original bytes", t.0),
+            None => assert!(!c.join(t.0).exists(), "{} did not exist before the change", t.0),
+        }
+    }
+}
+
+fn bak_files(c: &Path) -> Vec<String> {
+    names(c).into_iter().filter(|n| n.ends_with(".bak")).collect()
+}
+
+#[test]
+fn interrupted_loose_only_rollback_is_finished_before_any_file_was_restored() {
+    let d = TempDir::new("rb-loose-a");
+    let (c, jdir, targets, _apply_marker) = crashed_loose_only(&d);
+    let bak_before = bak_files(&c);
+    // crash after the marker, before the first restore
+    loose_rollback_marker(&jdir).write(&c).unwrap();
+    let notes = client::recover(&c).unwrap();
+    assert!(notes[0].contains("finished the interrupted rollback of loose.patch"), "{notes:?}");
+    assert!(!notes[0].contains("saved first"), "{notes:?}");
+    assert_loose_originals(&c, &targets);
+    assert!(matches!(Journal::read(&jdir).unwrap().state, State::RolledBack { .. }));
+    assert!(!c.join("data.toolkit-pending").exists());
+    assert_eq!(bak_files(&c), bak_before, "nothing was changed by hand, so nothing is saved");
+    assert!(client::recover(&c).unwrap().is_empty());
+}
+
+#[test]
+fn interrupted_loose_only_rollback_is_finished_after_one_file_was_restored() {
+    let d = TempDir::new("rb-loose-b");
+    let (c, jdir, targets, _apply_marker) = crashed_loose_only(&d);
+    let bak_before = bak_files(&c);
+    // crash after the first file went back; the others still hold the change's bytes
+    restore_original(&c, &targets[0]);
+    loose_rollback_marker(&jdir).write(&c).unwrap();
+    let notes = client::recover(&c).unwrap();
+    assert!(notes[0].contains("finished the interrupted rollback of loose.patch"), "{notes:?}");
+    assert_loose_originals(&c, &targets);
+    assert!(matches!(Journal::read(&jdir).unwrap().state, State::RolledBack { .. }));
+    assert!(!c.join("data.toolkit-pending").exists());
+    assert_eq!(bak_files(&c), bak_before, "a restored file equals its backup and is not saved again");
+    // a second rollback of the same journal is refused as before
+    assert!(journal::rollback(&c, &jdir, false, &Job::silent()).is_err());
+}
+
+#[test]
+fn interrupted_loose_only_rollback_saves_a_file_changed_by_hand() {
+    let d = TempDir::new("rb-loose-c");
+    let (c, jdir, targets, _apply_marker) = crashed_loose_only(&d);
+    restore_original(&c, &targets[0]);
+    // after the crash somebody edited the second file and the file the change had created
+    std::fs::write(c.join("extra.txt"), b"edited by hand").unwrap();
+    std::fs::write(c.join("fresh.txt"), b"fresh edited by hand").unwrap();
+    loose_rollback_marker(&jdir).write(&c).unwrap();
+    let notes = client::recover(&c).unwrap();
+    assert!(notes[0].contains("finished the interrupted rollback of loose.patch"), "{notes:?}");
+    assert!(notes[0].contains("extra.txt.bak") && notes[0].contains("fresh.txt.bak"), "the message names the saved files: {notes:?}");
+    assert_loose_originals(&c, &targets);
+    assert_eq!(std::fs::read(c.join("extra.txt.bak")).unwrap(), b"edited by hand");
+    assert_eq!(std::fs::read(c.join("fresh.txt.bak")).unwrap(), b"fresh edited by hand");
+    assert!(!c.join("notice.txt.bak").exists());
+    assert!(matches!(Journal::read(&jdir).unwrap().state, State::RolledBack { .. }));
+    assert!(!c.join("data.toolkit-pending").exists());
+}
+
+#[test]
+fn interrupted_loose_only_rollback_without_its_journal_is_refused() {
+    let d = TempDir::new("rb-loose-nojournal");
+    let (c, jdir, targets, _apply_marker) = crashed_loose_only(&d);
+    let marker = loose_rollback_marker(&jdir);
+    std::fs::remove_dir_all(&jdir).unwrap();
+    marker.write(&c).unwrap();
+    let e = client::recover(&c).unwrap_err();
+    assert!(matches!(&e, Error::Refused(m) if m.contains("journal of an interrupted rollback is missing")), "{e}");
+    assert!(c.join("data.toolkit-pending").exists(), "the marker stays until a person looks");
+    for t in &targets {
+        assert_eq!(std::fs::read(c.join(t.0)).unwrap(), t.2, "{} untouched", t.0);
+    }
+}
+
 #[test]
 fn a_foreign_change_to_the_index_blocks_further_writes() {
     let d = TempDir::new("crash-d");

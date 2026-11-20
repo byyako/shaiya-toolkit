@@ -12,6 +12,10 @@ All notable changes are listed here, newest first. The format follows [Keep a Ch
 
 - `shaiya-clientdata::texture::decode_dds` reads `DXT2` and `DXT4`; the returned `Image` is straight-alpha RGBA like for every other format.
 
+### Fixed
+
+- A rollback of a change that wrote only loose files, interrupted by a crash, is now finished the next time the client is opened (the files it had not yet restored are restored). Before, the pending marker was dropped with "had not started", some files stayed restored and a second rollback was refused. A file changed by hand after the crash is saved as `<name>.bak` first.
+
 ## [0.3.0] - 2026-11-19
 
 ### Shaiya Toolkit

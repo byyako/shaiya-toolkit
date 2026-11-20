@@ -70,7 +70,7 @@ If the power fails or the process is killed during a change, a file named **`dat
 
 - `removed the unfinished change ...`: the index had not been replaced yet; `data.saf` was cut back. Nothing changed.
 - `finished the interrupted change ...; shaiya patch history CLIENT shows it and shaiya patch rollback CLIENT can undo it`: the index was already replaced; the loose files were written and the journal marked applied.
-- `finished the interrupted rollback of ...` / `an interrupted rollback of ... had not started`.
+- `finished the interrupted rollback of ...` / `an interrupted rollback of ... had not started`. When the change wrote only loose files, an interrupted rollback is always finished; if you edited one of those files in between, it is saved as `<name>.bak` before it is overwritten and the note names it.
 
 Nothing for you to do. The same applies to compaction (`data.sah.compact`, `data.saf.compact`, `data.compact-commit`) and archive swaps (`data.swap-journal`): they are completed or discarded automatically before the next write.
 

@@ -466,13 +466,33 @@ pub(crate) fn recover_marker(dir: &Path) -> Result<Option<String>> {
             }
         }
         "rollback" => {
-            if now == m.sah_sha256_before {
+            // A rollback of a loose-only change leaves the index as it was, so the two hashes are equal and `now` matches both: the
+            // marker alone cannot say how far the restore got. The journal decides: while it still says `applied` the restore may have
+            // stopped half way, so it is finished (it is idempotent) and a file somebody changed in between is saved first.
+            let loose_only = m.sah_sha256_before == m.sah_sha256_after;
+            let journal = m.journal.clone().filter(|j| is_journal_dir(j));
+            if loose_only && now == m.sah_sha256_before {
+                let jd = journal.ok_or_else(|| Error::Refused("the journal of an interrupted rollback is missing; see data.toolkit-pending".to_string()))?;
+                let j = Journal::read(&jd)?;
+                if j.state != State::Applied {
+                    Marker::remove(dir);
+                    return Ok(Some(format!("an interrupted rollback of {} had not started; nothing was changed", m.label)));
+                }
+                let (_, saved) = finish_rollback(dir, &files, &j, true)?;
+                Marker::remove(dir);
+                let mut note = format!("finished the interrupted rollback of {}", m.label);
+                if !saved.is_empty() {
+                    let names: Vec<String> = saved.iter().map(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()).collect();
+                    note.push_str(&format!("; a file that had changed in between was saved first as {}", names.join(", ")));
+                }
+                Ok(Some(note))
+            } else if now == m.sah_sha256_before {
                 Marker::remove(dir);
                 Ok(Some(format!("an interrupted rollback of {} had not started; nothing was changed", m.label)))
             } else if now == m.sah_sha256_after {
-                let jd = m.journal.clone().filter(|j| is_journal_dir(j)).ok_or_else(|| Error::Refused("the journal of an interrupted rollback is missing; see data.toolkit-pending".to_string()))?;
+                let jd = journal.ok_or_else(|| Error::Refused("the journal of an interrupted rollback is missing; see data.toolkit-pending".to_string()))?;
                 let j = Journal::read(&jd)?;
-                finish_rollback(dir, &files, &j)?;
+                finish_rollback(dir, &files, &j, false)?;
                 Marker::remove(dir);
                 Ok(Some(format!("finished the interrupted rollback of {}", m.label)))
             } else {
@@ -484,7 +504,11 @@ pub(crate) fn recover_marker(dir: &Path) -> Result<Option<String>> {
 }
 
 /// Everything after the index is back: truncate `data.saf`, restore or delete loose files, mark the journal rolled back.
-fn finish_rollback(dir: &Path, files: &ClientFiles, j: &Journal) -> Result<RollbackReport> {
+///
+/// With `protect` (recovery of an interrupted loose-only rollback) a loose file whose bytes are neither the change's own nor the backup's
+/// is first saved with `make_backup`, because something else changed it after the crash; the saved paths are returned.
+fn finish_rollback(dir: &Path, files: &ClientFiles, j: &Journal, protect: bool) -> Result<(RollbackReport, Vec<PathBuf>)> {
+    let mut saved = Vec::new();
     truncate_to(&files.saf, j.saf_len_before)?;
     let mut rep = RollbackReport { journal: j.dir.clone(), restored_index: true, truncated_to: j.saf_len_before, ..RollbackReport::default() };
     for rec in &j.loose {
@@ -492,6 +516,17 @@ fn finish_rollback(dir: &Path, files: &ClientFiles, j: &Journal) -> Result<Rollb
             continue;
         }
         let target = join_rel(dir, &rec.rel);
+        if protect && target.is_file() {
+            let now = hash_of(&target)?;
+            let ours = rec.sha256_after.as_deref() == Some(now.as_str());
+            let backup_same = match (&rec.backup, rec.existed) {
+                (Some(b), true) => hash_of(&j.dir.join(b)).is_ok_and(|h| h == now),
+                _ => false,
+            };
+            if !ours && !backup_same {
+                saved.push(shaiya_core::fs::make_backup(&target)?);
+            }
+        }
         match (&rec.backup, rec.existed) {
             (Some(b), true) => {
                 let src = j.dir.join(b);
@@ -514,7 +549,7 @@ fn finish_rollback(dir: &Path, files: &ClientFiles, j: &Journal) -> Result<Rollb
     let mut j2 = j.clone();
     j2.state = State::RolledBack { at_utc: utc_iso(SystemTime::now()) };
     j2.write()?;
-    Ok(rep)
+    Ok((rep, saved))
 }
 
 // ---------------------------------------------------------------------------------------------- listing and rollback
@@ -606,7 +641,7 @@ pub fn rollback(client: &Path, journal_dir: &Path, force: bool, job: &Job) -> Re
     m.write(&files.dir)?;
     let old = std::fs::read(j.sah_copy()).map_err(|e| Error::io(j.sah_copy(), e))?;
     write_atomic(&files.sah, &old)?;
-    let rep = finish_rollback(&files.dir, &files, &j)?;
+    let (rep, _) = finish_rollback(&files.dir, &files, &j, false)?;
     Marker::remove(&files.dir);
     Ok(rep)
 }
