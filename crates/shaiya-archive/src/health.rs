@@ -1,7 +1,7 @@
 //! A read-only look at a client folder: the index check, dead space in `data.saf`, the journals, and the leftovers a clean-up may move.
 //!
 //! [`report`] opens files for reading only; it never writes, renames or creates anything (a test hashes every file before and after).
-//! The leftovers are offered by [`crate::cleanup`], which moves them into `shaiya-toolkit-backups/cleanup-<UTC>/`; nothing is deleted.
+//! The leftovers are offered by [`crate::cleanup`], which moves them into `shaiya-toolkit-backups/cleanup-<UTC>/`; none of them is deleted.
 
 use crate::check::check_index;
 use crate::cleanup::{self, FolderInfo};

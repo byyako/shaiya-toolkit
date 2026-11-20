@@ -1,4 +1,4 @@
-//! Clean-up of a client folder's leftovers: files are moved, never deleted, into `shaiya-toolkit-backups/cleanup-<UTC>/`, and **Put back**
+//! Clean-up of a client folder's leftovers: files are moved, not deleted, into `shaiya-toolkit-backups/cleanup-<UTC>/`, and **Put back**
 //! moves them where they were.
 //!
 //! Order of a clean-up: `client::recover`, refuse while a pending marker remains, the in-use check, a fresh [`health::report`], the folder
@@ -190,10 +190,39 @@ fn unique_folder(root: &Path) -> Result<PathBuf> {
     unreachable!()
 }
 
+/// The error for a manifest that could not be rewritten after files were already renamed: it names the cleanup folder, so the user can
+/// run Put back there (the folder's manifest still lists every file, with the states of the last successful write).
+fn manifest_update_failed(folder: &Path, e: Error) -> Error {
+    let why = match &e {
+        Error::Io { source, .. } => source.to_string(),
+        other => other.to_string(),
+    };
+    Error::io(folder.join(MANIFEST), std::io::Error::other(format!("the manifest could not be updated after files were moved ({why}); Put back in {} restores them", folder.display())))
+}
+
+/// Refuses a destination whose existing parent folders (below the client folder) include a symlink or a junction, so a Put back never
+/// writes outside the client folder through one.
+fn refuse_reparse_parents(client: &Path, rel: &str) -> Result<()> {
+    let mut p = client.to_path_buf();
+    let parts: Vec<&str> = rel.split(['/', '\\']).filter(|x| !x.is_empty()).collect();
+    for part in parts.iter().take(parts.len().saturating_sub(1)) {
+        p.push(part);
+        match std::fs::symlink_metadata(&p) {
+            Ok(m) if m.file_type().is_symlink() => {
+                return Err(Error::Refused(format!("{} is a link (symlink or junction), so {rel} is not put back through it; nothing was moved", p.display())));
+            }
+            Ok(_) => {}
+            Err(_) => break,
+        }
+    }
+    Ok(())
+}
+
 fn rename(from: &Path, to: &Path) -> Result<()> {
     if let Some(parent) = to.parent() {
         std::fs::create_dir_all(parent).map_err(|e| Error::io(parent, e))?;
     }
+    // Checked right before the rename (which would replace an existing file on Windows).
     if present(to) {
         return Err(Error::Refused(format!("{} already exists", to.display())));
     }
@@ -248,11 +277,11 @@ pub fn clean_by(client: &Path, pick: &dyn Fn(&Health) -> Result<Vec<String>>, jo
             )));
         }
         m.items[i].state = "moved".into();
-        m.write(&folder)?;
+        m.write(&folder).map_err(|e| manifest_update_failed(&folder, e))?;
         moved.push(m.items[i].from.clone());
     }
     m.state = "moved".into();
-    m.write(&folder)?;
+    m.write(&folder).map_err(|e| manifest_update_failed(&folder, e))?;
     Ok(CleanReport { folder: m.id, path: folder, moved, bytes: plan.bytes, notes })
 }
 
@@ -288,6 +317,9 @@ pub fn put_back(folder: &Path, job: &Job) -> Result<PutBackReport> {
             return Err(Error::Refused(format!("the manifest names an unsafe path ({:?} -> {:?}); nothing was moved", i.from, i.to)));
         }
     }
+    for i in m.items.iter().filter(|i| i.state != "put-back") {
+        refuse_reparse_parents(&client, &i.from)?;
+    }
     let mut report = PutBackReport::default();
     let mut conflicts = Vec::new();
     for i in m.items.iter().filter(|i| i.state != "put-back") {
@@ -306,6 +338,7 @@ pub fn put_back(folder: &Path, job: &Job) -> Result<PutBackReport> {
         }
         let (src, dest) = (folder.join(path_of(&m.items[i].to)), client.join(path_of(&m.items[i].from)));
         if present(&src) {
+            refuse_reparse_parents(&client, &m.items[i].from)?;
             rename(&src, &dest)?;
             report.restored.push(m.items[i].from.clone());
         } else if present(&dest) {
@@ -322,4 +355,18 @@ pub fn put_back(folder: &Path, job: &Job) -> Result<PutBackReport> {
         m.write(folder)?;
     }
     Ok(report)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_manifest_that_cannot_be_rewritten_names_the_cleanup_folder_and_stays_an_io_error() {
+        let folder = Path::new("client").join(DEFAULT_DIR).join("cleanup-20261120T101500Z");
+        let e = manifest_update_failed(&folder, Error::io(folder.join(MANIFEST), std::io::Error::other("disk full")));
+        let t = e.to_string();
+        assert_eq!(e.kind(), shaiya_core::ErrorKind::Io);
+        assert!(t.contains("cleanup-20261120T101500Z") && t.contains("Put back") && t.contains("disk full"), "{t}");
+    }
 }

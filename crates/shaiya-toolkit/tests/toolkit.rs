@@ -1691,6 +1691,7 @@ fn every_smod_of_the_us_client_previews_as_a_model() {
     eprintln!("model preview: {} .smod files, {pictures} with a picture, {bare} without triangles, {missing} missing texture names", paths.len());
     assert_eq!(paths.len(), 1355, "the US client's .smod count changed");
     assert_eq!(pictures + bare, paths.len());
+    assert_eq!((bare, missing), (0, 0), "every .smod of the US client gives a picture with no texture name missing");
 }
 
 // ------------------------------------------------------------------------------------------------ T9 W6: client health and clean-up
@@ -1799,6 +1800,52 @@ fn clean_up_asks_with_four_rows_moves_into_a_cleanup_folder_and_put_back_restore
     assert!(w.h.wait_until(WAIT, |h| !h.app.app.health.is_busy() && h.app.app.health.report().is_some_and(|r| r.cleanups.first().is_some_and(|c| c.to_put_back == 0))));
     let after: Vec<_> = tree(&dir).into_iter().filter(|(n, _)| !n.starts_with("shaiya-toolkit-backups/")).collect();
     assert_eq!(after, before, "every name and every byte is back");
+}
+
+#[test]
+fn changing_the_client_during_a_clean_up_or_put_back_cannot_touch_the_other_clients_folder() {
+    let mut w = open_world("t9-health-switch");
+    let dir = w.client_dir();
+    let other = TempDir::new("t9-health-switch-other");
+    synthetic(other.path());
+    // the same leftovers (and so the same ids) in both folders
+    health_leftovers(&dir);
+    health_leftovers(other.path());
+    with_cx(&mut w.h, |app, cx| app.add_client("Other", other.path(), false, cx)).unwrap();
+    let other_before = tree(other.path());
+    with_cx(&mut w.h, |app, cx| app.open_health(Some("US test"), cx));
+    assert!(health_ready(&mut w.h));
+    w.h.app.app.health.request_clean();
+    w.h.frames(3);
+    // the window is switched to the other client while the confirmation is up
+    with_cx(&mut w.h, |app, cx| app.open_health(Some("Other"), cx));
+    assert_eq!(w.h.app.app.health.client_dir(), Some(other.path()));
+    w.h.app.shell.inject_answer("toolkit-cleanup", 0);
+    assert!(w.h.wait_until(WAIT, |h| !h.app.app.health.is_busy() && dir.join("shaiya-toolkit-backups").is_dir()), "the clean-up ran on the client it was confirmed for");
+    assert!(w.h.wait_until(WAIT, |h| h.app.app.health.report().is_some()));
+    assert!(!dir.join(".n.7.shaiya-tmp").exists(), "the confirmed client's file was moved");
+    assert_eq!(tree(other.path()), other_before, "nothing in the other client's folder moved");
+    // the same for Put back: confirmed for one client, the window switched to the other
+    let folder = std::fs::read_dir(dir.join("shaiya-toolkit-backups")).unwrap().next().unwrap().unwrap().file_name().to_string_lossy().into_owned();
+    with_cx(&mut w.h, |app, cx| app.open_health(Some("US test"), cx));
+    assert!(health_ready(&mut w.h));
+    w.h.app.app.health.request_put_back(&folder);
+    w.h.frames(3);
+    with_cx(&mut w.h, |app, cx| app.open_health(Some("Other"), cx));
+    w.h.app.shell.inject_answer("toolkit-put-back", 0);
+    assert!(w.h.wait_until(WAIT, |h| !h.app.app.health.is_busy() && dir.join(".n.7.shaiya-tmp").exists()), "the put back ran on the client it was confirmed for");
+    assert_eq!(tree(other.path()), other_before, "nothing in the other client's folder moved");
+}
+
+#[test]
+fn open_health_without_a_name_opens_for_the_open_client_even_when_it_is_no_longer_saved() {
+    let mut w = open_world("t9-health-unsaved");
+    let dir = w.client_dir();
+    with_cx(&mut w.h, |_app, cx| shaiya_toolkit::clients::remove_client(cx.shell, "US test")).unwrap();
+    assert!(w.h.app.shell.shared().clients.is_empty());
+    with_cx(&mut w.h, |app, cx| app.open_health(None, cx));
+    assert_eq!(w.h.app.app.health.client_dir(), Some(dir.as_path()), "the open client, not an empty window");
+    assert!(health_ready(&mut w.h), "its report is read");
 }
 
 #[cfg(windows)]

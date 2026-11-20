@@ -265,12 +265,19 @@ impl ToolkitApp {
         }
     }
 
-    /// Opens the Health window for a saved client by name; `None` is the open client, else the first saved client that is there.
+    /// Opens the Health window for a saved client by name; `None` is the open client (even when it is no longer in the saved list), else
+    /// the first saved client that is there.
     pub fn open_health(&mut self, name: Option<&str>, cx: &mut ToolkitCx<'_>) {
+        if name.is_none() {
+            if let Some(c) = &self.current {
+                let (n, d) = (c.name.clone(), c.dir.clone());
+                self.health.open_for(&n, d, cx);
+                return;
+            }
+        }
         let saved = cx.shell.shared().clients.clone();
-        let wanted = name.map(str::to_string).or_else(|| self.current.as_ref().map(|c| c.name.clone()));
-        let pick = match wanted {
-            Some(n) => saved.iter().find(|c| c.name.eq_ignore_ascii_case(&n)),
+        let pick = match name {
+            Some(n) => saved.iter().find(|c| c.name.eq_ignore_ascii_case(n)),
             None => saved.iter().find(|c| has_sah(Path::new(&c.path))),
         };
         match pick {

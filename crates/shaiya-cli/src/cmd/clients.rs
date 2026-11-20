@@ -41,7 +41,7 @@ pub enum Cmd {
     ///
     /// Example: shaiya clients health us
     Health(HealthArgs),
-    /// Move leftovers into shaiya-toolkit-backups/cleanup-UTC (nothing is deleted), or put them back
+    /// Move leftovers into shaiya-toolkit-backups/cleanup-UTC (none of them is deleted), or put them back
     ///
     /// Kinds: sah-bak, stray-temp, swap-pair, editor-backup, editor-first-copy.
     ///

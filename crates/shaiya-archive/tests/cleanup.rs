@@ -253,6 +253,42 @@ fn put_back_refuses_what_is_not_a_cleanup_folder_or_names_an_unsafe_path() {
     assert!(folder.join("x").exists());
 }
 
+/// Makes `link` a directory link to `target`: a symlink where that is allowed, on Windows else a junction (which needs an NTFS volume).
+/// False when this system or volume cannot make either (the test then says so and stops).
+fn make_dir_link(link: &Path, target: &Path) -> bool {
+    #[cfg(windows)]
+    {
+        if std::os::windows::fs::symlink_dir(target, link).is_ok() {
+            return true;
+        }
+        std::process::Command::new("cmd").args(["/C", "mklink", "/J"]).arg(link).arg(target).output().is_ok_and(|o| o.status.success())
+    }
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(target, link).is_ok()
+    }
+}
+
+#[cfg(any(windows, unix))]
+#[test]
+fn put_back_refuses_a_destination_below_a_link_and_moves_nothing() {
+    let d = client();
+    let outside = TempDir::new("w6-outside");
+    if !make_dir_link(&d.path().join("sub"), outside.path()) {
+        eprintln!("skipped: this volume cannot make a symlink or junction");
+        return;
+    }
+    let folder = d.path().join(DEFAULT_DIR).join("cleanup-20261106T000000Z");
+    let item = cleanup::Item { group: "g".into(), kind: "stray-temp".into(), from: "sub/x.txt".into(), to: "sub/x.txt".into(), bytes: 1, state: "moved".into() };
+    std::fs::create_dir_all(&folder).unwrap();
+    Manifest { id: "cleanup-20261106T000000Z".into(), created_utc: String::new(), tool: String::new(), state: "moved".into(), items: vec![item] }.write(&folder).unwrap();
+    write(&folder.join("sub/x.txt"), b"x");
+    let r = cleanup::put_back(&folder, &Job::silent()).unwrap_err();
+    assert!(matches!(r, Error::Refused(_)) && r.to_string().contains("link"), "{r}");
+    assert!(folder.join("sub/x.txt").exists(), "the file stays in the cleanup folder");
+    assert!(std::fs::read_dir(outside.path()).unwrap().next().is_none(), "nothing was written through the link");
+}
+
 #[test]
 fn clean_refuses_an_id_that_is_not_offered_and_a_pending_change_and_moves_nothing() {
     let d = client();

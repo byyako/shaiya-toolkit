@@ -77,7 +77,7 @@ pub fn start_jobs() -> Vec<StartJob> {
         StartJob {
             key: "client-health",
             title: "Check a client folder's health",
-            line: "See the index check, unused space in data.saf, journals and leftover files, and move leftovers aside (nothing is deleted; Put back undoes it).",
+            line: "See the index check, unused space in data.saf, journals and leftover files, and move leftovers aside (none of them is deleted; Put back undoes it).",
             button: "Open Health",
             action: StartAction::Health,
         },
