@@ -435,6 +435,7 @@ fn table(ctx: &Ctx, a: &TableArgs) -> Result<i32> {
             return Err(Error::Refused(format!("{} exists; use --force to replace it", out_path.display())));
         }
         shaiya_core::fs::write_atomic(&out_path, shaiya_sdata::csv(shown).as_bytes())?;
+        trust_label(&t.layout.provenance());
         if t.sheets.len() > 1 && sheet.is_none() {
             note(ctx, &format!("note: this file has {} tables; wrote {}. Use --section for: {}", t.sheets.len(), shown.name, t.sheets.iter().map(|x| x.name.as_str()).collect::<Vec<_>>().join(", ")));
         }
@@ -455,7 +456,7 @@ fn table(ctx: &Ctx, a: &TableArgs) -> Result<i32> {
     let mut w = out();
     outln!(w, "{name}: layout {} ({}), names read as {}", t.layout.variant, t.layout.table.name(), shaiya_sdata::encoding_name(enc));
     outln!(w, "  The layout was {}", shaiya_sdata::FIT_NOTE);
-    note(ctx, &t.layout.provenance());
+    trust_label(&t.layout.provenance());
     for s in &t.sheets {
         if sheet.is_some_and(|x| !std::ptr::eq(x, s)) {
             continue;
@@ -463,4 +464,9 @@ fn table(ctx: &Ctx, a: &TableArgs) -> Result<i32> {
         outln!(w, "  {}: {} rows, {} columns: {}", s.name, num(s.rows.len() as u64), s.columns.len(), s.columns.iter().map(|c| c.name.as_str()).collect::<Vec<_>>().join(", "));
     }
     Ok(0)
+}
+
+/// The FIT-ONLY / Loader-verified line says how far the columns can be trusted, so `--quiet` does not hide it.
+fn trust_label(text: &str) {
+    eprintln!("{text}");
 }

@@ -12,7 +12,7 @@ All notable changes are listed here, newest first. The format follows [Keep a Ch
 
 ### shaiya (CLI)
 
-- `sdata table` prints the same sentence on stderr (the FIT-ONLY one, or "Loader-verified on: <clients>."), and its JSON gains `status` (`loader-verified` or `fit-only`), `loader_verified_on` and `fit_only_on` next to `chosen_by` (also in the `--csv --json` summary). The existing keys are unchanged.
+- `sdata table` prints the same sentence on stderr (the FIT-ONLY one, or "Loader-verified on: <clients>."; also with `--csv` and with `--quiet`), and its JSON gains `status` (`loader-verified` or `fit-only`), `loader_verified_on` and `fit_only_on` next to `chosen_by` (also in the `--csv --json` summary). The existing keys are unchanged.
 
 ### Libraries
 

@@ -284,6 +284,15 @@ fn table_says_fit_only_or_loader_verified() {
     let j = json(&sh(&w.data, &["sdata", "table", p(&f), "--json"]));
     assert_eq!((j["layout"].as_str(), j["chosen_by"].as_str(), j["status"].as_str()), (Some("monster-36"), Some("fit"), Some("fit-only")));
     assert_eq!((&j["loader_verified_on"], &j["fit_only_on"]), (&serde_json::json!([]), &serde_json::json!(["kr-ep8", "fawkes-v68"])));
+    // the label is also printed when the table goes to a CSV file, and under -q
+    let csv0 = w.tmp.path().join("m36-text.csv");
+    let o = sh(&w.data, &["sdata", "table", p(&f), "--csv", p(&csv0)]);
+    assert_eq!(code(&o), 0, "{}", err(&o));
+    assert!(err(&o).contains("FIT-ONLY: this layout reads the whole file"), "{}", err(&o));
+    let o = sh(&w.data, &["-q", "sdata", "table", p(&f)]);
+    assert!(err(&o).contains("FIT-ONLY: this layout reads the whole file"), "{}", err(&o));
+    let o = sh(&w.data, &["-q", "sdata", "table", p(&v)]);
+    assert!(err(&o).contains("Loader-verified on: us-108"), "{}", err(&o));
     // the CSV summary document carries the same keys
     let csv = w.tmp.path().join("m36.csv");
     let j = json(&sh(&w.data, &["sdata", "table", p(&f), "--csv", p(&csv), "--json"]));
