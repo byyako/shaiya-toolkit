@@ -1,7 +1,12 @@
-//! Pictures made from parsed client data, without a GUI: the terrain hillshade. The SVMap Editor and the toolkit's Archive
-//! preview both call this code, so a map looks the same in both.
+//! Pictures made from parsed client data, without a GUI: the terrain hillshade and the textured model picture. The SVMap Editor
+//! and the toolkit's Archive preview both call this code, so a map and a model look the same in both.
 
+use crate::smod::Smod;
+use crate::texture::Image;
 use crate::wld::{Terrain, CORNER_SPACING, HEIGHT_OFFSET, HEIGHT_SCALE};
+
+/// A point or vector in model space (x, y, z).
+pub type V3 = [f32; 3];
 
 /// The neutral tint of [`hillshade_grey`].
 pub const GREY_TINT: [u8; 3] = [200, 200, 200];
@@ -52,9 +57,346 @@ pub fn hillshade_grey(t: &Terrain) -> (usize, usize, Vec<u8>) {
     (n, n, rgba)
 }
 
+// ------------------------------------------------------------------------------------------------------------------ images
+
+/// Textures for the 3D view and the model picture are capped at this many texels a side (halved until they fit).
+pub const MAX_TEXTURE: u32 = 256;
+
+/// An RGBA image with its mip chain (`mips[0]` is the full size; every level is half the one before, down to 1 x 1).
+pub struct MipImage {
+    pub width: u32,
+    pub height: u32,
+    pub mips: Vec<Vec<u8>>,
+}
+
+/// Averages 2 x 2 blocks (alpha included); odd edges reuse the last row / column.
+pub fn half(w: u32, h: u32, rgba: &[u8]) -> (u32, u32, Vec<u8>) {
+    let (nw, nh) = ((w / 2).max(1), (h / 2).max(1));
+    let mut out = vec![0u8; (nw * nh * 4) as usize];
+    for y in 0..nh {
+        for x in 0..nw {
+            let (x0, y0) = ((x * 2).min(w - 1), (y * 2).min(h - 1));
+            let (x1, y1) = ((x * 2 + 1).min(w - 1), (y * 2 + 1).min(h - 1));
+            for c in 0..4 {
+                let s = |xx: u32, yy: u32| rgba[((yy * w + xx) * 4) as usize + c] as u32;
+                out[((y * nw + x) * 4) as usize + c] = ((s(x0, y0) + s(x1, y0) + s(x0, y1) + s(x1, y1) + 2) / 4) as u8;
+            }
+        }
+    }
+    (nw, nh, out)
+}
+
+/// Full mip chain of an image.
+pub fn mip_chain(w: u32, h: u32, rgba: Vec<u8>) -> Vec<Vec<u8>> {
+    let mut mips = vec![rgba];
+    let (mut cw, mut ch) = (w, h);
+    while cw > 1 || ch > 1 {
+        let (nw, nh, next) = half(cw, ch, mips.last().unwrap());
+        mips.push(next);
+        cw = nw;
+        ch = nh;
+    }
+    mips
+}
+
+/// A texture for the 3D view: capped at [`MAX_TEXTURE`] (halved until it fits), with mips.
+pub fn mip_image_capped(img: &Image) -> MipImage {
+    let (mut w, mut h, mut rgba) = (img.width, img.height, img.rgba.clone());
+    while w > MAX_TEXTURE || h > MAX_TEXTURE {
+        let (nw, nh, next) = half(w, h, &rgba);
+        w = nw;
+        h = nh;
+        rgba = next;
+    }
+    MipImage { width: w, height: h, mips: mip_chain(w, h, rgba) }
+}
+
+// ------------------------------------------------------------------------------------------------------------------ model picture
+
+/// Size of the model picture, points.
+pub const PREVIEW_SIZE: [f32; 2] = [240.0, 220.0];
+/// The picture is rendered at this many pixels per point (egui's linear filter then smooths the edges).
+pub const PICTURE_SCALE: f32 = 2.0;
+/// At most this many triangles are rendered and this many edges drawn as the wire.
+pub const PREVIEW_TRIS: usize = 60_000;
+pub const PREVIEW_EDGES: usize = 90_000;
+
+/// A rendered model picture, RGBA (row 0 = top, alpha 0 where nothing was drawn), and what was drawn.
+pub struct ModelPicture {
+    pub width: usize,
+    pub height: usize,
+    pub rgba: Vec<u8>,
+    /// Pixels that show a texel of a texture the client has.
+    pub textured_px: usize,
+    /// Pixels drawn plain grey (a module without a texture name, or a texture that could not be read).
+    pub plain_px: usize,
+}
+
+/// The fixed view of the preview (35 degrees yaw, 25 degrees pitch, orthographic) fitted into [`PREVIEW_SIZE`].
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PreviewFit {
+    pub mid: [f32; 2],
+    pub scale: f32,
+}
+
+/// Model space to view space: x right, y up, z away from the viewer, who looks down from above (a rotation, so nothing is
+/// mirrored: the far side of the model is higher in the picture, and a higher point is nearer).
+pub fn preview_view(v: V3) -> V3 {
+    let (sy, cy) = 35f32.to_radians().sin_cos();
+    let (sp, cp) = 25f32.to_radians().sin_cos();
+    let x = v[0] * cy + v[2] * sy;
+    let z = -v[0] * sy + v[2] * cy;
+    [x, v[1] * cp + z * sp, -v[1] * sp + z * cp]
+}
+
+impl PreviewFit {
+    /// The fit of model-space points into the picture with an 8 point margin; `None` without points.
+    pub fn of(points: impl Iterator<Item = V3>) -> Option<PreviewFit> {
+        let (mut lo, mut hi) = ([f32::MAX; 2], [f32::MIN; 2]);
+        for p in points {
+            let v = preview_view(p);
+            if !(v[0].is_finite() && v[1].is_finite()) {
+                continue;
+            }
+            lo = [lo[0].min(v[0]), lo[1].min(v[1])];
+            hi = [hi[0].max(v[0]), hi[1].max(v[1])];
+        }
+        if lo[0] > hi[0] {
+            return None;
+        }
+        let scale = ((PREVIEW_SIZE[0] - 16.0) / (hi[0] - lo[0]).max(0.01)).min((PREVIEW_SIZE[1] - 16.0) / (hi[1] - lo[1]).max(0.01));
+        Some(PreviewFit { mid: [(lo[0] + hi[0]) * 0.5, (lo[1] + hi[1]) * 0.5], scale })
+    }
+
+    /// A model-space point in picture points (origin top left), with its view depth.
+    pub fn to_points(self, v: V3) -> [f32; 3] {
+        let q = preview_view(v);
+        [PREVIEW_SIZE[0] * 0.5 + (q[0] - self.mid[0]) * self.scale, PREVIEW_SIZE[1] * 0.5 - (q[1] - self.mid[1]) * self.scale, q[2]]
+    }
+}
+
+/// One triangle to render: model-space corners and texture coordinates, and the index of its texture (`None`: plain grey).
+pub struct PreviewTri {
+    pub pos: [V3; 3],
+    pub uv: [[f32; 2]; 3],
+    pub tex: Option<usize>,
+}
+
+/// Renders triangles into a picture of [`PREVIEW_SIZE`] times [`PICTURE_SCALE`]: a depth buffer, the texel of the right mip
+/// level (texture coordinates repeat, as on the GPU), texels with alpha under one half cut out like the 3D view does, and a
+/// flat light from the upper left on both faces. The projection is orthographic, so texture coordinates interpolate linearly.
+/// Then the wire: every edge, one pixel wide, blended over the surface where no nearer surface hides it (hidden lines left
+/// out, so the wire marks the shape without covering the textures).
+pub fn render_picture(tris: &[PreviewTri], textures: &[MipImage], edges: &[[V3; 2]], fit: PreviewFit) -> ModelPicture {
+    let (w, h) = ((PREVIEW_SIZE[0] * PICTURE_SCALE) as usize, (PREVIEW_SIZE[1] * PICTURE_SCALE) as usize);
+    let mut rgba = vec![0u8; w * h * 4];
+    let mut depth = vec![f32::MAX; w * h];
+    // what each pixel shows: 0 nothing, 1 texture, 2 plain
+    let mut kind = vec![0u8; w * h];
+    let light = {
+        let l = [-0.4f32, 0.6, -0.7];
+        let n = (l[0] * l[0] + l[1] * l[1] + l[2] * l[2]).sqrt();
+        [l[0] / n, l[1] / n, l[2] / n]
+    };
+    for t in tris {
+        let p = t.pos.map(|v| {
+            let q = fit.to_points(v);
+            [q[0] * PICTURE_SCALE, q[1] * PICTURE_SCALE, q[2]]
+        });
+        if p.iter().flatten().any(|c| !c.is_finite()) {
+            continue;
+        }
+        let area = (p[1][0] - p[0][0]) * (p[2][1] - p[0][1]) - (p[2][0] - p[0][0]) * (p[1][1] - p[0][1]);
+        if area.abs() < 1e-6 {
+            continue;
+        }
+        // the light: a face normal in view space, turned towards the viewer (-z)
+        let v = t.pos.map(preview_view);
+        let (a, b) = ([v[1][0] - v[0][0], v[1][1] - v[0][1], v[1][2] - v[0][2]], [v[2][0] - v[0][0], v[2][1] - v[0][1], v[2][2] - v[0][2]]);
+        let mut n = [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+        let nl = (n[0] * n[0] + n[1] * n[1] + n[2] * n[2]).sqrt().max(1e-12);
+        if n[2] > 0.0 {
+            n = [-n[0], -n[1], -n[2]];
+        }
+        let lit = 0.5 + 0.6 * ((n[0] * light[0] + n[1] * light[1] + n[2] * light[2]) / nl).clamp(0.0, 1.0);
+        // the mip level: texels per pixel over the triangle
+        let tex = t.tex.and_then(|i| textures.get(i)).filter(|m| !m.mips.is_empty());
+        let level = tex.map_or(0, |m| {
+            let (u, q) = (t.uv, [m.width as f32, m.height as f32]);
+            let uv_area = ((u[1][0] - u[0][0]) * (u[2][1] - u[0][1]) - (u[2][0] - u[0][0]) * (u[1][1] - u[0][1])).abs() * q[0] * q[1];
+            let ratio = uv_area / area.abs();
+            if ratio.is_finite() && ratio > 1.0 { ((0.5 * ratio.log2()) as usize).min(m.mips.len() - 1) } else { 0 }
+        });
+        let x0 = p.iter().map(|c| c[0]).fold(f32::MAX, f32::min).floor().max(0.0) as usize;
+        let x1 = (p.iter().map(|c| c[0]).fold(f32::MIN, f32::max).ceil() as isize).min(w as isize - 1);
+        let y0 = p.iter().map(|c| c[1]).fold(f32::MAX, f32::min).floor().max(0.0) as usize;
+        let y1 = (p.iter().map(|c| c[1]).fold(f32::MIN, f32::max).ceil() as isize).min(h as isize - 1);
+        if x1 < 0 || y1 < 0 {
+            continue;
+        }
+        for y in y0..=y1 as usize {
+            for x in x0..=x1 as usize {
+                let (px, py) = (x as f32 + 0.5, y as f32 + 0.5);
+                let e = |i: usize, j: usize| (p[j][0] - p[i][0]) * (py - p[i][1]) - (p[j][1] - p[i][1]) * (px - p[i][0]);
+                let (w0, w1, w2) = (e(1, 2) / area, e(2, 0) / area, e(0, 1) / area);
+                if w0 < 0.0 || w1 < 0.0 || w2 < 0.0 {
+                    continue;
+                }
+                let z = w0 * p[0][2] + w1 * p[1][2] + w2 * p[2][2];
+                let at = y * w + x;
+                if z >= depth[at] {
+                    continue;
+                }
+                let (texel, k) = match tex {
+                    Some(m) => {
+                        let (lw, lh) = ((m.width >> level).max(1) as usize, (m.height >> level).max(1) as usize);
+                        let u = w0 * t.uv[0][0] + w1 * t.uv[1][0] + w2 * t.uv[2][0];
+                        let v = w0 * t.uv[0][1] + w1 * t.uv[1][1] + w2 * t.uv[2][1];
+                        let tx = ((u.rem_euclid(1.0) * lw as f32) as usize).min(lw - 1);
+                        let ty = ((v.rem_euclid(1.0) * lh as f32) as usize).min(lh - 1);
+                        let s = &m.mips[level][(ty * lw + tx) * 4..][..4];
+                        if s[3] < 128 {
+                            continue;
+                        }
+                        ([s[0], s[1], s[2]], 1)
+                    }
+                    None => ([170, 170, 170], 2),
+                };
+                depth[at] = z;
+                kind[at] = k;
+                let o = &mut rgba[at * 4..][..4];
+                for c in 0..3 {
+                    o[c] = (texel[c] as f32 * lit).round().clamp(0.0, 255.0) as u8;
+                }
+                o[3] = 255;
+            }
+        }
+    }
+    let textured_px = kind.iter().filter(|k| **k == 1).count();
+    let plain_px = kind.iter().filter(|k| **k == 2).count();
+    // an edge lies on its own surface, so it may be a little behind the depth there: two points of depth
+    let bias = 2.0 / fit.scale.max(1e-6);
+    let wire = [170u8, 200, 230];
+    let mut on_wire = vec![false; w * h];
+    for e in edges {
+        let (a, b) = (fit.to_points(e[0]), fit.to_points(e[1]));
+        let (a, b) = ([a[0] * PICTURE_SCALE, a[1] * PICTURE_SCALE, a[2]], [b[0] * PICTURE_SCALE, b[1] * PICTURE_SCALE, b[2]]);
+        if a.iter().chain(&b).any(|c| !c.is_finite()) {
+            continue;
+        }
+        let steps = (b[0] - a[0]).abs().max((b[1] - a[1]).abs()).ceil().clamp(1.0, 4096.0) as usize;
+        for i in 0..=steps {
+            let t = i as f32 / steps as f32;
+            let (x, y) = (a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t);
+            if x < 0.0 || y < 0.0 || x >= w as f32 || y >= h as f32 {
+                continue;
+            }
+            let at = y as usize * w + x as usize;
+            if !on_wire[at] && a[2] + (b[2] - a[2]) * t <= depth[at] + bias {
+                on_wire[at] = true;
+            }
+        }
+    }
+    for (at, _) in on_wire.iter().enumerate().filter(|(_, on)| **on) {
+        let o = &mut rgba[at * 4..][..4];
+        if o[3] == 0 {
+            // over nothing (a see-through part, or a model that shows nothing): the wire alone, half strong
+            o.copy_from_slice(&[wire[0], wire[1], wire[2], 140]);
+        } else {
+            for c in 0..3 {
+                o[c] = ((o[c] as u32 * 3 + wire[c] as u32 * 2) / 5) as u8;
+            }
+        }
+    }
+    ModelPicture { width: w, height: h, rgba, textured_px, plain_px }
+}
+
+/// The Models window's and the Archive preview's picture of a model: the rendered picture, the model's visible edges for a
+/// wire, and what could not be textured.
+#[derive(Default)]
+pub struct ModelPreview {
+    /// Model-space edge pairs, at most [`PREVIEW_EDGES`].
+    pub edges: Vec<[V3; 2]>,
+    /// The rendered picture; `None` when the model has no faces (a dungeon piece) or none that name valid vertices.
+    pub picture: Option<ModelPicture>,
+    /// Textures the model names that could not be read (each once); their triangles are drawn plain grey.
+    pub missing: Vec<String>,
+    /// Textures with see-through texels (alpha under one half: leaves, fences, railings), which the picture cuts out.
+    pub see_through: Vec<String>,
+    /// Textures without a single opaque texel: the game draws nothing there (collision boxes), so neither does the picture.
+    pub invisible: Vec<String>,
+    /// Modules in the file.
+    pub modules: usize,
+    /// Triangles in the file (all modules).
+    pub triangles: usize,
+    /// Distinct texture names the modules give (read or missing).
+    pub textures: usize,
+}
+
+/// The preview of a parsed model: every distinct texture name is asked of `tex` once (the trimmed name; `None` = it cannot be
+/// read), at most [`PREVIEW_TRIS`] triangles are rendered and at most [`PREVIEW_EDGES`] edges drawn as the wire. A module without a
+/// texture name, or whose texture is missing, is drawn plain grey.
+pub fn model_picture(sm: &Smod, tex: &mut dyn FnMut(&str) -> Option<Image>) -> ModelPreview {
+    let mut edges = Vec::new();
+    let mut tris = Vec::new();
+    let mut textures = Vec::new();
+    let mut missing = Vec::new();
+    let (mut see_through, mut invisible) = (Vec::new(), Vec::new());
+    let mut tex_of: std::collections::HashMap<String, Option<usize>> = std::collections::HashMap::new();
+    for m in &sm.modules {
+        let name = m.texture.trim();
+        let ti = if name.is_empty() {
+            None
+        } else {
+            *tex_of.entry(name.to_ascii_lowercase()).or_insert_with(|| match tex(name) {
+                Some(i) => {
+                    let opaque = i.rgba.as_chunks::<4>().0.iter().filter(|p| p[3] >= 128).count();
+                    if opaque * 4 < i.rgba.len() {
+                        see_through.push(name.to_string());
+                    }
+                    if opaque == 0 {
+                        invisible.push(name.to_string());
+                    }
+                    textures.push(mip_image_capped(&i));
+                    Some(textures.len() - 1)
+                }
+                None => {
+                    missing.push(name.to_string());
+                    None
+                }
+            })
+        };
+        for f in &m.faces {
+            if tris.len() >= PREVIEW_TRIS {
+                break;
+            }
+            if let (Some(a), Some(b), Some(c)) = (m.vertices.get(f[0] as usize), m.vertices.get(f[1] as usize), m.vertices.get(f[2] as usize)) {
+                tris.push(PreviewTri { pos: [a.pos, b.pos, c.pos], uv: [a.uv, b.uv, c.uv], tex: ti });
+            }
+        }
+    }
+    let mut seen = std::collections::HashSet::new();
+    'all: for (k, m) in sm.modules.iter().enumerate() {
+        for f in &m.faces {
+            for (a, b) in [(f[0], f[1]), (f[1], f[2]), (f[2], f[0])] {
+                let (Some(pa), Some(pb)) = (m.vertices.get(a as usize), m.vertices.get(b as usize)) else { continue };
+                if seen.insert((a.min(b), a.max(b), k)) {
+                    edges.push([pa.pos, pb.pos]);
+                    if edges.len() >= PREVIEW_EDGES {
+                        break 'all;
+                    }
+                }
+            }
+        }
+    }
+    let picture = if tris.is_empty() { None } else { PreviewFit::of(tris.iter().flat_map(|t| t.pos)).map(|fit| render_picture(&tris, &textures, &edges, fit)) };
+    ModelPreview { edges, picture, missing, see_through, invisible, modules: sm.modules.len(), triangles: sm.modules.iter().map(|m| m.faces.len()).sum(), textures: tex_of.len() }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::smod::{SmodModule, SmodVertex};
 
     fn terrain(n: usize, f: impl Fn(usize, usize) -> i16) -> Terrain {
         Terrain { size: (n as u32 - 1) * 2, n, heights: (0..n * n).map(|i| f(i % n, i / n)).collect(), tex_index: vec![0; n * n] }
@@ -77,5 +419,81 @@ mod tests {
         let (w, h, px) = hillshade_grey(&t);
         assert_eq!((w, h, px.len()), (5, 5, 5 * 5 * 4));
         assert!(px.chunks(4).all(|p| p[3] == 255 && p[0] == p[1] && p[1] == p[2]));
+    }
+
+    #[test]
+    fn mips_halve_to_one_pixel_and_big_images_are_capped() {
+        let rgba: Vec<u8> = (0..8 * 4 * 4).map(|i| (i % 251) as u8).collect();
+        let sizes: Vec<usize> = mip_chain(8, 4, rgba).iter().map(|l| l.len() / 4).collect();
+        assert_eq!(sizes, vec![32, 8, 2, 1]);
+        let m = mip_image_capped(&Image { width: 1024, height: 512, rgba: vec![200; 1024 * 512 * 4] });
+        assert_eq!((m.width, m.height, m.mips.len()), (256, 128, 9));
+        assert!(m.mips.iter().all(|l| l.iter().all(|v| *v == 200)));
+    }
+
+    /// Two vertices-and-faces quads of a box face: `corners` in order around the face.
+    fn face(m: &mut SmodModule, corners: [V3; 4]) {
+        let base = m.vertices.len() as u16;
+        for (c, uv) in corners.iter().zip([[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]]) {
+            m.vertices.push(SmodVertex { pos: *c, normal: [0.0, 1.0, 0.0], colour: 0xFFFF_FFFF, uv });
+        }
+        m.faces.push([base, base + 1, base + 2]);
+        m.faces.push([base, base + 2, base + 3]);
+    }
+
+    /// A 4 x 4 x 4 box, as three modules: the top and the two sides facing along x with the texture "wall.tga", the two sides
+    /// along z and the bottom with a texture that does not exist, and one extra triangle without a texture name.
+    fn box_smod() -> Smod {
+        let module = |texture: &str| SmodModule { texture: texture.to_string(), vertices: Vec::new(), faces: Vec::new() };
+        let (mut a, mut b, mut c) = (module(" wall.tga "), module("gone.tga"), module(""));
+        face(&mut a, [[0.0, 4.0, 0.0], [4.0, 4.0, 0.0], [4.0, 4.0, 4.0], [0.0, 4.0, 4.0]]);
+        face(&mut a, [[0.0, 0.0, 0.0], [0.0, 0.0, 4.0], [0.0, 4.0, 4.0], [0.0, 4.0, 0.0]]);
+        face(&mut a, [[4.0, 0.0, 0.0], [4.0, 4.0, 0.0], [4.0, 4.0, 4.0], [4.0, 0.0, 4.0]]);
+        face(&mut b, [[0.0, 0.0, 0.0], [4.0, 0.0, 0.0], [4.0, 4.0, 0.0], [0.0, 4.0, 0.0]]);
+        face(&mut b, [[0.0, 0.0, 4.0], [0.0, 4.0, 4.0], [4.0, 4.0, 4.0], [4.0, 0.0, 4.0]]);
+        face(&mut b, [[0.0, 0.0, 0.0], [0.0, 0.0, 4.0], [4.0, 0.0, 4.0], [4.0, 0.0, 0.0]]);
+        c.vertices.extend([[1.0f32, 1.0, 1.0], [2.0, 1.0, 1.0], [1.0, 2.0, 1.0]].map(|pos| SmodVertex { pos, normal: [0.0; 3], colour: 0xFFFF_FFFF, uv: [0.0; 2] }));
+        c.faces.push([0, 1, 2]);
+        Smod { centre: [2.0; 3], min: [0.0; 3], max: [4.0; 3], modules: vec![a, b, c], box2: ([0.0; 3], [4.0; 3]), collision: Vec::new() }
+    }
+
+    #[test]
+    fn a_box_model_gets_a_textured_picture_and_names_its_missing_texture() {
+        let sm = box_smod();
+        let mut asked = Vec::new();
+        let p = model_picture(&sm, &mut |n| {
+            asked.push(n.to_string());
+            (n == "wall.tga").then(|| Image { width: 2, height: 2, rgba: [200, 50, 50, 255].repeat(4) })
+        });
+        assert_eq!(asked, ["wall.tga", "gone.tga"], "each name once, trimmed, and never the empty name");
+        assert_eq!((p.modules, p.triangles, p.textures), (3, 13, 2));
+        assert_eq!((p.missing.as_slice(), p.see_through.len(), p.invisible.len()), (&["gone.tga".to_string()][..], 0, 0));
+        assert_eq!(p.edges.len(), 5 * 3 + 5 * 3 + 3, "four sides and a diagonal per quad, three for the lone triangle");
+        let pic = p.picture.expect("a picture");
+        assert_eq!((pic.width, pic.height), ((PREVIEW_SIZE[0] * PICTURE_SCALE) as usize, (PREVIEW_SIZE[1] * PICTURE_SCALE) as usize));
+        assert!(pic.textured_px > 500, "the textured sides show: {}", pic.textured_px);
+        assert!(pic.plain_px > 500, "the missing texture is plain grey: {}", pic.plain_px);
+        assert!(pic.rgba.as_chunks::<4>().0.iter().any(|px| px[3] == 255 && px[0] > px[2]), "the texture's red shows");
+    }
+
+    #[test]
+    fn a_see_through_and_an_invisible_texture_are_listed() {
+        let sm = box_smod();
+        let p = model_picture(&sm, &mut |n| match n {
+            "wall.tga" => Some(Image { width: 2, height: 1, rgba: vec![9, 9, 9, 255, 9, 9, 9, 0] }),
+            _ => Some(Image { width: 1, height: 1, rgba: vec![1, 1, 1, 0] }),
+        });
+        assert_eq!((p.see_through, p.invisible, p.missing.len()), (vec!["wall.tga".to_string(), "gone.tga".to_string()], vec!["gone.tga".to_string()], 0));
+    }
+
+    #[test]
+    fn a_model_without_faces_has_no_picture() {
+        let mut sm = box_smod();
+        for m in &mut sm.modules {
+            m.faces.clear();
+        }
+        let p = model_picture(&sm, &mut |_| None);
+        assert!(p.picture.is_none() && p.edges.is_empty());
+        assert_eq!((p.modules, p.triangles), (3, 0));
     }
 }

@@ -218,3 +218,8 @@ fn performance_on_the_us_client() {
         println!("SHA-256 of data.saf: {} in {:.1} s = {:.0} MB/s ({})", shaiya_core::hash::to_hex(&h), s, size as f64 / 1e6 / s, size);
     }
 }
+
+#[test]
+fn smod_model_preview_data() {
+    check(Cap::ModelPreview);
+}

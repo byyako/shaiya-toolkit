@@ -345,9 +345,9 @@ mod tests {
     /// wire; no model draws the hint.
     #[test]
     fn textured_preview_uploads_once() {
-        let tri = pu::PreviewTri { pos: [[0.0, 0.0, 0.0], [4.0, 0.0, 0.0], [0.0, 4.0, 0.0]], uv: [[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]], tex: None };
+        let tri = shaiya_clientdata::render::PreviewTri { pos: [[0.0, 0.0, 0.0], [4.0, 0.0, 0.0], [0.0, 4.0, 0.0]], uv: [[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]], tex: None };
         let fit = pu::PreviewFit::of(tri.pos.into_iter()).unwrap();
-        let picture = Some(pu::render_picture(std::slice::from_ref(&tri), &[], &[[tri.pos[0], tri.pos[1]]], fit));
+        let picture = Some(shaiya_clientdata::render::render_picture(std::slice::from_ref(&tri), &[], &[[tri.pos[0], tri.pos[1]]], fit));
         let mut pv = pu::Preview { edges: vec![[tri.pos[0], tri.pos[1]]], bounds: None, picture, missing: Vec::new(), see_through: Vec::new(), invisible: Vec::new(), tex: None };
         let rect = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(pu::PREVIEW_SIZE[0], pu::PREVIEW_SIZE[1]));
         let ctx = egui::Context::default();

@@ -27,6 +27,9 @@ pub enum PreviewData {
     Image { width: u32, height: u32, rgba: Vec<u8>, header: String, downscaled: bool },
     /// A `.wld` map: the grey hillshade top view of a field (`rgba` is empty for a dungeon map, which has `note` instead).
     Map { header: String, height_range: Option<(f32, f32)>, note: Option<String>, width: u32, height: u32, rgba: Vec<u8>, downscaled: bool },
+    /// A `.smod` model: the textured, lit picture of the Models window of the SVMap Editor (`rgba` is empty when the model has no
+    /// triangles). `header` is the counts line; the lists name the textures by what the picture does with them.
+    Model { header: String, missing: Vec<String>, see_through: Vec<String>, invisible: Vec<String>, width: u32, height: u32, rgba: Vec<u8> },
     /// The raw bytes (decoded for display with an encoding chosen by the person).
     Text { bytes: Vec<u8>, total: u64, truncated: bool, guess: Encoding },
     /// `plain` is the decrypted bytes (or the file itself when it is not encrypted).
@@ -44,6 +47,7 @@ impl PreviewData {
             PreviewData::Empty => "empty",
             PreviewData::Image { .. } => "image",
             PreviewData::Map { .. } => "map",
+            PreviewData::Model { .. } => "model",
             PreviewData::Text { .. } => "text",
             PreviewData::Sdata { .. } => "sdata",
             PreviewData::Hex { .. } => "hex",
@@ -168,6 +172,34 @@ pub fn map_preview(data: &[u8], path: &str) -> shaiya_clientdata::Result<Preview
     })
 }
 
+/// The preview of a `.smod` model from its bytes: the picture of the SVMap Editor's Models window (`shaiya_clientdata::render`).
+/// Each texture a module names is looked up in `archive` under `Entity/Texture` by the editor's rule (the name as written, else
+/// the same stem as `.dds`, else as `.tga`); one that is not there or does not decode is counted as missing and drawn plain grey.
+/// A file that does not parse is an error (the caller shows it as Failed).
+pub fn model_preview(archive: &Archive, data: &[u8], path: &str, job: &Job) -> shaiya_clientdata::Result<PreviewData> {
+    let sm = shaiya_clientdata::Smod::parse(data, path)?;
+    let p = shaiya_clientdata::render::model_picture(&sm, &mut |name| {
+        if job.check().is_err() {
+            return None;
+        }
+        let found = shaiya_clientdata::texture_candidates("Entity/Texture", name).into_iter().find_map(|c| archive.index().get(&c).map(|e| (c, e)));
+        let (c, e) = found?;
+        shaiya_clientdata::texture::decode(&archive.read_entry(e).ok()?, &c).ok()
+    });
+    let n = |n: usize, one: &str, many: &str| shaiya_inspect::counted(n as u64, one, many);
+    let header = format!("{}, {}, {} ({} missing)", n(p.modules, "module", "modules"), n(p.triangles, "triangle", "triangles"), n(p.textures, "texture", "textures"), p.missing.len());
+    let (width, height, rgba) = match p.picture {
+        Some(pic) => (pic.width as u32, pic.height as u32, pic.rgba),
+        None => (0, 0, Vec::new()),
+    };
+    Ok(PreviewData::Model { header, missing: p.missing, see_through: p.see_through, invisible: p.invisible, width, height, rgba })
+}
+
+/// Model formats the client reads that this toolkit has no picture for yet (the format is not documented): they stay as hex.
+pub fn undocumented_model_format(path: &str) -> bool {
+    matches!(ext_of(path).as_str(), "3dc" | "3do")
+}
+
 fn read_all(archive: &Archive, entry: &Entry, cap: u64, job: &Job) -> Result<Vec<u8>> {
     let n = (entry.length as u64).min(cap) as usize;
     let mut out = Vec::with_capacity(n);
@@ -227,9 +259,18 @@ pub fn make_preview(archive: &Archive, entry: &Entry, path: &str, text_all: bool
             Err(e) => PreviewData::Failed { message: e.to_string(), bytes: data.into_iter().take(64 << 10).collect(), total },
         });
     }
-    if ext == "wld" && (head.starts_with(b"FLD\0") || head.starts_with(b"DUN\0")) {
+    if ext == "wld" {
         let data = read_all(archive, entry, 128 << 20, job)?;
         return Ok(map_preview(&data, path).unwrap_or_else(|e| PreviewData::Failed { message: e.to_string(), bytes: data.into_iter().take(64 << 10).collect(), total }));
+    }
+    if ext == "smod" {
+        let data = read_all(archive, entry, 128 << 20, job)?;
+        let made = model_preview(archive, &data, path, job);
+        job.check()?;
+        return Ok(match made {
+            Ok(p) => p,
+            Err(e) => PreviewData::Failed { message: e.to_string(), bytes: data.into_iter().take(64 << 10).collect(), total },
+        });
     }
     let by_ext = matches!(ext.as_str(), "txt" | "ini" | "xml" | "csv" | "cfg" | "lst" | "log");
     if by_ext || looks_like_text(&head) {
@@ -506,6 +547,142 @@ mod map_tests {
                 assert!(downscaled && width <= IMAGE_SIDE_MAX && height <= IMAGE_SIDE_MAX);
                 assert_eq!(rgba.len(), (width * height * 4) as usize);
             }
+            other => panic!("{other:?}"),
+        }
+    }
+}
+
+#[cfg(test)]
+mod map_note_tests {
+    use super::map_tests::dungeon_wld;
+    use super::*;
+    use shaiya_testkit::{SahBuilder, TempDir};
+
+    #[test]
+    fn a_dungeon_map_without_a_dungeon_file_says_so() {
+        match map_preview(&dungeon_wld(""), "world/32.wld").unwrap() {
+            PreviewData::Map { header, note, rgba, .. } => {
+                assert_eq!(header, "Map 32, dungeon");
+                assert_eq!(note.as_deref(), Some("Dungeon map: no dungeon file is named; no top view yet"));
+                assert!(rgba.is_empty());
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn every_wld_that_does_not_parse_is_failed_whatever_its_first_bytes_are() {
+        let d = TempDir::new("preview-map-bad-head");
+        SahBuilder::new(0).file(b"world/1.wld", b"just some words, not a map").file(b"world/2.wld", &[0u8; 8]).write_to(d.path());
+        let a = Archive::open(d.path()).unwrap();
+        for p in ["world/1.wld", "world/2.wld"] {
+            match make_preview(&a, a.index().get(p).unwrap(), p, false, 0, &Job::silent()).unwrap() {
+                PreviewData::Failed { message, bytes, total } => assert!(!message.is_empty() && bytes.len() as u64 == total, "{p}"),
+                other => panic!("{p}: {other:?}"),
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod model_tests {
+    use super::*;
+    use shaiya_testkit::{tga_stub, SahBuilder, TempDir};
+
+    /// A `.smod` file: modules of (texture name, face corners as quads).
+    fn smod_bytes(modules: &[(&str, Vec<[[f32; 3]; 4]>)]) -> Vec<u8> {
+        let mut d = Vec::new();
+        let f = |d: &mut Vec<u8>, v: f32| d.extend_from_slice(&v.to_le_bytes());
+        for v in [2.0f32, 2.0, 2.0] {
+            f(&mut d, v);
+        }
+        d.extend_from_slice(&0i32.to_le_bytes());
+        for v in [0.0f32, 0.0, 0.0, 4.0, 4.0, 4.0] {
+            f(&mut d, v);
+        }
+        d.extend_from_slice(&(modules.len() as i32).to_le_bytes());
+        for (tex, quads) in modules {
+            let name = format!("{tex}\0");
+            d.extend_from_slice(&(name.len() as i32).to_le_bytes());
+            d.extend_from_slice(name.as_bytes());
+            d.extend_from_slice(&((quads.len() * 4) as i32).to_le_bytes());
+            for q in quads {
+                for (p, uv) in q.iter().zip([[0.0f32, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]]) {
+                    for v in p {
+                        f(&mut d, *v);
+                    }
+                    for v in [0.0f32, 1.0, 0.0] {
+                        f(&mut d, v);
+                    }
+                    d.extend_from_slice(&0xFFFF_FFFFu32.to_le_bytes());
+                    f(&mut d, uv[0]);
+                    f(&mut d, uv[1]);
+                }
+            }
+            d.extend_from_slice(&((quads.len() * 2) as i32).to_le_bytes());
+            for k in 0..quads.len() as u16 {
+                for i in [0u16, 1, 2, 0, 2, 3] {
+                    d.extend_from_slice(&(k * 4 + i).to_le_bytes());
+                }
+            }
+        }
+        for v in [0.0f32, 0.0, 0.0, 4.0, 4.0, 4.0] {
+            f(&mut d, v);
+        }
+        d.extend_from_slice(&0i32.to_le_bytes());
+        d
+    }
+
+    /// A 4 x 4 x 4 box in three modules: the top (texture "top.tga", stored as is), the two sides along x (named "side.dds",
+    /// stored as `side.tga`) and the two sides along z (texture "gone.tga", not in the archive).
+    fn box_bytes() -> Vec<u8> {
+        smod_bytes(&[
+            ("top.tga", vec![[[0.0, 4.0, 0.0], [4.0, 4.0, 0.0], [4.0, 4.0, 4.0], [0.0, 4.0, 4.0]]]),
+            ("gone.tga", vec![[[0.0, 0.0, 0.0], [4.0, 0.0, 0.0], [4.0, 4.0, 0.0], [0.0, 4.0, 0.0]], [[0.0, 0.0, 4.0], [0.0, 4.0, 4.0], [4.0, 4.0, 4.0], [4.0, 0.0, 4.0]]]),
+            ("side.dds", vec![[[0.0, 0.0, 0.0], [0.0, 0.0, 4.0], [0.0, 4.0, 4.0], [0.0, 4.0, 0.0]], [[4.0, 0.0, 0.0], [4.0, 4.0, 0.0], [4.0, 4.0, 4.0], [4.0, 0.0, 4.0]]]),
+        ])
+    }
+
+    #[test]
+    fn a_box_model_previews_with_counts_and_names_the_missing_texture() {
+        let d = TempDir::new("preview-model");
+        let tga = tga_stub(8, 8);
+        SahBuilder::new(0).file(b"Entity/Building/box.smod", &box_bytes()).file(b"Entity/Texture/top.tga", &tga).file(b"Entity/Texture/side.tga", &tga).write_to(d.path());
+        let a = Archive::open(d.path()).unwrap();
+        let p = "Entity/Building/box.smod";
+        match make_preview(&a, a.index().get(p).unwrap(), p, false, 0, &Job::silent()).unwrap() {
+            PreviewData::Model { header, missing, see_through, invisible, width, height, rgba } => {
+                assert_eq!(header, "3 modules, 10 triangles, 3 textures (1 missing)");
+                assert_eq!((missing, see_through.len(), invisible.len()), (vec!["gone.tga".to_string()], 0, 0), "side.dds is found as side.tga");
+                assert_eq!((width, height, rgba.len()), (480, 440, 480 * 440 * 4));
+                assert!(rgba.chunks(4).any(|px| px[3] == 255), "something is drawn");
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_model_that_does_not_parse_is_failed_with_hex_and_other_model_formats_stay_hex() {
+        let d = TempDir::new("preview-model-bad");
+        SahBuilder::new(0).file(b"m/bad.smod", b"short").file(b"m/a.3DC", &[1u8, 2, 3, 0, 0, 0, 9, 9]).file(b"m/b.3do", &[7u8; 20]).write_to(d.path());
+        let a = Archive::open(d.path()).unwrap();
+        assert!(matches!(make_preview(&a, a.index().get("m/bad.smod").unwrap(), "m/bad.smod", false, 0, &Job::silent()).unwrap(), PreviewData::Failed { .. }));
+        for p in ["m/a.3DC", "m/b.3do"] {
+            assert!(matches!(make_preview(&a, a.index().get(p).unwrap(), p, false, 0, &Job::silent()).unwrap(), PreviewData::Hex { .. }), "{p}");
+            assert!(undocumented_model_format(p), "{p}");
+        }
+        assert!(!undocumented_model_format("Entity/Building/box.smod") && !undocumented_model_format("a/b.bin"));
+    }
+
+    #[test]
+    fn a_model_without_triangles_has_a_header_and_no_picture() {
+        let d = TempDir::new("preview-model-empty");
+        let bytes = smod_bytes(&[("top.tga", Vec::new())]);
+        SahBuilder::new(0).file(b"Entity/Building/e.smod", &bytes).write_to(d.path());
+        let a = Archive::open(d.path()).unwrap();
+        let p = "Entity/Building/e.smod";
+        match make_preview(&a, a.index().get(p).unwrap(), p, false, 0, &Job::silent()).unwrap() {
+            PreviewData::Model { header, rgba, missing, .. } => assert_eq!((header.as_str(), rgba.len(), missing.len()), ("1 module, 0 triangles, 1 texture (1 missing)", 0, 1)),
             other => panic!("{other:?}"),
         }
     }

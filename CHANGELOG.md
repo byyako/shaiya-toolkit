@@ -8,7 +8,8 @@ All notable changes are listed here, newest first. The format follows [Keep a Ch
 
 - The SData table view says where its layout comes from. A table read with a layout that no client's own loader was read for shows "FIT-ONLY: this layout reads the whole file, but it was not read from any client's own loader. Columns are named by position; values may be split wrongly."; a table read with a loader-verified layout shows "Loader-verified on: <clients>" after the existing note. The Archive tab's View table is the same window.
 - New FIT-ONLY table layouts read files that were shown as hex before: `Item.SData` of kr-ep8 and fawkes-v68 (`item-134`), `Monster.SData` of kr-ep8 and fawkes-v68 (`monster-36`) and `NpcQuest.SData` of kr-ep8 and fawkes-v68 (`npcquest-287`). Their columns are named by position.
-- The Archive tab previews `world/<id>.wld` maps: a field shows a grey hillshade top view (north up) with "Map <id>, <n> x <n> corners, <size> units" and its height range; a dungeon map shows "Dungeon map: the floor is in <name>; no top view yet". A `.wld` that does not parse shows the existing error with hex.
+- The Archive tab previews `world/<id>.wld` maps: a field shows a grey hillshade top view (north up) with "Map <id>, <n> x <n> corners, <size> units" and its height range; a dungeon map shows "Dungeon map: the floor is in <name>; no top view yet". A `.wld` that does not parse shows the existing error with hex, whatever its first bytes are.
+- The Archive tab previews `.smod` models: the textured, lit picture of the SVMap Editor's Models window with "N modules, N triangles, N textures (N missing)", textures looked up in the same archive under `Entity/Texture`; a missing texture is named and drawn grey. `.3DC` and `.3DO` models stay hex and say "no preview (format not documented yet)".
 
 ### shaiya (CLI)
 
@@ -19,6 +20,7 @@ All notable changes are listed here, newest first. The format follows [Keep a Ch
 - `shaiya-sdata`: every layout file has a required `evidence` object (`loader`, `fit_only`: client ids); `parse_layout` refuses a layout without it. `Layout` gains `evidence`, `status()`, `provenance()` and `provenance_json()`; new `Evidence`, `Status` and `FIT_ONLY_NOTE`. Three layouts are added (`item-134`, `monster-36`, `npcquest-287`); `skill-9` also reads kr-ep8's `NpcSkill` file.
 - `shaiya-sdata` `Table::to_json` gains `status`, `loader_verified_on` and `fit_only_on`.
 - `shaiya-clientdata`: new `render` module with `shade_rect` (moved from `shaiya-svmap-tools`, which re-exports it; the editor's pictures are unchanged) and `hillshade_grey`.
+- `shaiya-clientdata` `render` also holds the model picture moved out of the SVMap Editor (`render_picture`, `PreviewFit`, `PreviewTri`, `ModelPicture`, `MipImage`, `mip_chain`, `mip_image_capped`) and the new `model_picture`, which builds the preview of a parsed `Smod`; `texture_candidates` lists the paths a texture name can have. The editor's Models-window pictures are unchanged.
 
 ### Documentation
 

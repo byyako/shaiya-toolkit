@@ -1570,4 +1570,125 @@ fn every_world_wld_of_the_us_client_previews_as_a_map() {
     }
     eprintln!("map preview: {} .wld files, {fields} fields, {dungeons} dungeon maps", maps.len());
     assert_eq!(maps.len(), 83);
+    assert_eq!((fields, dungeons), (29, 54), "the split of the US client's maps changed");
+}
+
+// ------------------------------------------------------------------------------------------------ T9 W8: model preview
+
+/// A `.smod` of one textured quad (texture "top.tga", stored in the archive) and one quad with a missing texture.
+fn tiny_model() -> Vec<u8> {
+    let mut d = Vec::new();
+    let f = |d: &mut Vec<u8>, v: f32| d.extend_from_slice(&v.to_le_bytes());
+    for v in [2.0f32, 0.0, 2.0] {
+        f(&mut d, v);
+    }
+    d.extend_from_slice(&0i32.to_le_bytes());
+    for v in [0.0f32, 0.0, 0.0, 4.0, 4.0, 4.0] {
+        f(&mut d, v);
+    }
+    d.extend_from_slice(&2i32.to_le_bytes());
+    for (tex, y) in [("top.tga", 0.0f32), ("gone.tga", 4.0)] {
+        let name = format!("{tex}\0");
+        d.extend_from_slice(&(name.len() as i32).to_le_bytes());
+        d.extend_from_slice(name.as_bytes());
+        d.extend_from_slice(&4i32.to_le_bytes());
+        for (p, uv) in [[0.0f32, y, 0.0], [4.0, y, 0.0], [4.0, y, 4.0], [0.0, y, 4.0]].iter().zip([[0.0f32, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]]) {
+            for v in p {
+                f(&mut d, *v);
+            }
+            for v in [0.0f32, 1.0, 0.0] {
+                f(&mut d, v);
+            }
+            d.extend_from_slice(&0xFFFF_FFFFu32.to_le_bytes());
+            f(&mut d, uv[0]);
+            f(&mut d, uv[1]);
+        }
+        d.extend_from_slice(&2i32.to_le_bytes());
+        for i in [0u16, 1, 2, 0, 2, 3] {
+            d.extend_from_slice(&i.to_le_bytes());
+        }
+    }
+    for v in [0.0f32, 0.0, 0.0, 4.0, 4.0, 4.0] {
+        f(&mut d, v);
+    }
+    d.extend_from_slice(&0i32.to_le_bytes());
+    d
+}
+
+#[test]
+fn a_smod_in_the_archive_previews_as_a_model_and_other_model_formats_stay_hex() {
+    let mut w = world("t9-model");
+    SahBuilder::new(0)
+        .file(b"Entity/Building/tiny.smod", &tiny_model())
+        .file(b"Entity/Texture/top.tga", &shaiya_testkit::tga_stub(8, 8))
+        .file(b"Entity/Building/x.3DC", &[1u8, 2, 3, 4, 5, 6, 7, 8])
+        .write_to(w.client.path());
+    w.h.frames(2);
+    let dir = w.client_dir();
+    with_cx(&mut w.h, |app, cx| app.add_client("US test", &dir, true, cx)).unwrap();
+    assert!(w.h.wait_until(WAIT, |h| h.app.app.archive.is_open()), "the archive opens");
+    w.h.frames(2);
+    with_cx(&mut w.h, |app, cx| app.archive.select_path("Entity/Building/tiny.smod", cx));
+    assert!(preview_ready(&mut w.h));
+    w.h.frames(2);
+    assert_eq!(w.h.app.app.archive.preview_kind(), Some("model"));
+    assert!(w.h.app.app.archive.has_texture(), "the picture is uploaded as a texture");
+    let t = w.h.text();
+    assert!(t.contains("2 modules, 4 triangles, 2 textures (1 missing)") && t.contains("gone.tga"), "{t}");
+    with_cx(&mut w.h, |app, cx| app.archive.select_path("Entity/Building/x.3DC", cx));
+    assert!(preview_ready(&mut w.h));
+    w.h.frames(2);
+    assert_eq!(w.h.app.app.archive.preview_kind(), Some("hex"));
+    assert!(w.h.text().contains("no preview (format not documented yet)"));
+}
+
+#[test]
+fn a_dungeon_map_after_a_field_does_not_keep_the_fields_picture() {
+    let mut w = world("t9-map-stale");
+    let (field, dungeon) = tiny_maps();
+    SahBuilder::new(0).file(b"world/12.wld", &field).file(b"world/31.wld", &dungeon).write_to(w.client.path());
+    w.h.frames(2);
+    let dir = w.client_dir();
+    with_cx(&mut w.h, |app, cx| app.add_client("US test", &dir, true, cx)).unwrap();
+    assert!(w.h.wait_until(WAIT, |h| h.app.app.archive.is_open()), "the archive opens");
+    w.h.frames(2);
+    with_cx(&mut w.h, |app, cx| app.archive.select_path("world/12.wld", cx));
+    assert!(preview_ready(&mut w.h));
+    w.h.frames(2);
+    assert!(w.h.app.app.archive.has_texture());
+    with_cx(&mut w.h, |app, cx| app.archive.select_path("world/31.wld", cx));
+    assert!(preview_ready(&mut w.h));
+    w.h.frames(2);
+    assert_eq!(w.h.app.app.archive.preview_kind(), Some("map"));
+    assert!(!w.h.app.app.archive.has_texture(), "a dungeon map has no picture, so no texture");
+}
+
+/// Opt-in (`SHAIYA_CLIENT`, read only): every `.smod` of the US client previews as a model without error; the counts are printed.
+#[test]
+fn every_smod_of_the_us_client_previews_as_a_model() {
+    let Some(us) = shaiya_testkit::env_client() else {
+        eprintln!("skipped: SHAIYA_CLIENT not set");
+        return;
+    };
+    let a = shaiya_archive::Archive::open(&us).unwrap();
+    let paths: Vec<String> = a.index().visible().iter().map(|e| e.path.clone()).filter(|p| p.to_ascii_lowercase().ends_with(".smod")).collect();
+    let (mut pictures, mut bare, mut missing) = (0, 0, 0);
+    for p in &paths {
+        let bytes = a.read(p).unwrap();
+        match shaiya_toolkit::preview::model_preview(&a, &bytes, p, &shaiya_core::Job::silent()).unwrap_or_else(|e| panic!("{p}: {e}")) {
+            shaiya_toolkit::preview::PreviewData::Model { rgba, missing: m, width, height, .. } => {
+                if rgba.is_empty() {
+                    bare += 1;
+                } else {
+                    assert_eq!(rgba.len(), width as usize * height as usize * 4, "{p}");
+                    pictures += 1;
+                }
+                missing += m.len();
+            }
+            other => panic!("{p}: {other:?}"),
+        }
+    }
+    eprintln!("model preview: {} .smod files, {pictures} with a picture, {bare} without triangles, {missing} missing texture names", paths.len());
+    assert_eq!(paths.len(), 1355, "the US client's .smod count changed");
+    assert_eq!(pictures + bare, paths.len());
 }

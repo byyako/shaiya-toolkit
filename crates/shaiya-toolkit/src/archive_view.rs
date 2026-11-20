@@ -719,7 +719,8 @@ impl ArchiveView {
                     let want = preview::encoding_by_name(&cx.settings.text_encoding);
                     self.preview.encoding = want.unwrap_or(*guess);
                 }
-                if let PreviewData::Image { width, height, rgba, .. } | PreviewData::Map { width, height, rgba, .. } = &d {
+                self.preview.texture_name = None;
+                if let PreviewData::Image { width, height, rgba, .. } | PreviewData::Map { width, height, rgba, .. } | PreviewData::Model { width, height, rgba, .. } = &d {
                     if !rgba.is_empty() {
                         let name = self.preview.row.and_then(|i| self.loaded.as_ref().map(|l| l.rows[i].path.clone())).unwrap_or_default();
                         let img = egui::ColorImage::from_rgba_unmultiplied([*width as usize, *height as usize], rgba);
@@ -1321,7 +1322,7 @@ impl ArchiveView {
     }
 
     pub fn has_texture(&self) -> bool {
-        self.preview.texture_name.as_ref().is_some_and(|n| self.textures.iter().any(|(t, _)| t == n)) && matches!(self.preview.data, Some(PreviewData::Image { .. } | PreviewData::Map { .. }))
+        self.preview.texture_name.as_ref().is_some_and(|n| self.textures.iter().any(|(t, _)| t == n)) && matches!(self.preview.data, Some(PreviewData::Image { .. } | PreviewData::Map { .. } | PreviewData::Model { .. }))
     }
 
     // ---------------------------------------------------------------------------------------- extraction
@@ -2077,6 +2078,24 @@ impl ArchiveView {
                     picture_view(ui, &mut self.preview.fit, None, tex);
                 }
             }
+            Some(PreviewData::Model { header, missing, see_through, invisible, rgba, .. }) => {
+                ui.label(header);
+                if !missing.is_empty() {
+                    ui.label(RichText::new(format!("texture not in the archive, drawn grey: {}", missing.join(", "))).color(pal.warning));
+                }
+                if !see_through.is_empty() {
+                    ui.label(RichText::new(format!("see-through texels are cut out: {}", see_through.join(", "))).color(pal.weak));
+                }
+                if !invisible.is_empty() {
+                    ui.label(RichText::new(format!("not drawn (no opaque texel): {}", invisible.join(", "))).color(pal.weak));
+                }
+                if rgba.is_empty() {
+                    ui.label(RichText::new("no triangles to draw").color(pal.weak));
+                } else {
+                    let tex = self.preview.texture_name.as_ref().and_then(|name| self.textures.iter().find(|(n, _)| n == name)).map(|(_, t)| t);
+                    picture_view(ui, &mut self.preview.fit, None, tex);
+                }
+            }
             Some(PreviewData::Text { bytes, total, truncated, guess }) => {
                 ui.horizontal(|ui| {
                     let mut chosen = self.preview.encoding;
@@ -2143,6 +2162,10 @@ impl ArchiveView {
                 hex_view(ui, bytes, 0);
             }
             Some(PreviewData::Hex { bytes, base, total }) => {
+                let path = self.preview.row.and_then(|i| self.loaded.as_ref().map(|l| l.rows[i].path.clone())).unwrap_or_default();
+                if preview::undocumented_model_format(&path) {
+                    ui.label(RichText::new("no preview (format not documented yet)").color(pal.weak));
+                }
                 if *total > bytes.len() as u64 {
                     ui.label(RichText::new(format!("showing {} from offset {}", human_size(bytes.len() as u64), base)).color(pal.weak));
                 }

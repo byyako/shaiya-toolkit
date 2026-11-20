@@ -50,6 +50,18 @@ pub struct ClientSource {
     reported: Mutex<HashSet<String>>,
 }
 
+/// The paths a texture `name` can have under `dir`, in the order they are tried: the name as a `.wld`/`.dg`/`.smod` gives it, then
+/// the same name as `.dds`, then as `.tga` (the cleaned `data.sah` keeps the `.tga` textures as `.dds`, while the files still name
+/// `.tga`). Empty for an empty name. Both [`ClientSource::find_texture`] and the toolkit's model preview use it.
+pub fn texture_candidates(dir: &str, name: &str) -> Vec<String> {
+    let name = name.trim();
+    if name.is_empty() {
+        return Vec::new();
+    }
+    let stem = name.rsplit_once('.').map_or(name, |(s, _)| s);
+    [name.to_string(), format!("{stem}.dds"), format!("{stem}.tga")].into_iter().map(|c| format!("{dir}/{c}")).collect()
+}
+
 impl ClientSource {
     /// `dir` holds `data.sah` + `data.saf` (archive mode) or the extracted folders (`world/`, `Monster/`, ...).
     pub fn open(dir: &Path) -> Result<ClientSource> {
@@ -273,12 +285,7 @@ impl ClientSource {
     /// The path of a texture the client has under `dir`: the name as a `.wld`/`.dg` gives it, else the same name with the other
     /// texture extension (the cleaned `data.sah` keeps the `.tga` textures as `.dds`, while the files still name `.tga`).
     pub fn find_texture(&self, dir: &str, name: &str) -> Option<String> {
-        let name = name.trim();
-        if name.is_empty() {
-            return None;
-        }
-        let stem = name.rsplit_once('.').map_or(name, |(s, _)| s);
-        [name.to_string(), format!("{stem}.dds"), format!("{stem}.tga")].into_iter().map(|c| format!("{dir}/{c}")).find(|p| self.exists(p))
+        texture_candidates(dir, name).into_iter().find(|p| self.exists(p))
     }
 
     /// [`texture`](Self::texture) by the name a map file gives, with the extension fallback of [`find_texture`](Self::find_texture).

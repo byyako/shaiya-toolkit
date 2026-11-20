@@ -43,203 +43,9 @@ pub struct Preview {
     pub tex: Option<egui::TextureHandle>,
 }
 
-/// Size of the Models window's picture, points.
-pub const PREVIEW_SIZE: [f32; 2] = [240.0, 220.0];
-/// The picture is rendered at this many pixels per point (egui's linear filter then smooths the edges).
-const PICTURE_SCALE: f32 = 2.0;
-/// At most this many triangles are rendered and this many edges drawn as the wire.
-const PREVIEW_TRIS: usize = 60_000;
-pub const PREVIEW_EDGES: usize = 90_000;
-
-/// A rendered model picture, RGBA (row 0 = top, alpha 0 where nothing was drawn), and what was drawn.
-pub struct Picture {
-    pub width: usize,
-    pub height: usize,
-    pub rgba: Vec<u8>,
-    /// Pixels that show a texel of a texture the client has.
-    pub textured_px: usize,
-    /// Pixels drawn plain grey (a module without a texture name, or a texture that could not be read).
-    pub plain_px: usize,
-}
-
-/// The fixed view of the preview (35 degrees yaw, 25 degrees pitch, orthographic) fitted into [`PREVIEW_SIZE`].
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct PreviewFit {
-    pub mid: [f32; 2],
-    pub scale: f32,
-}
-
-/// Model space to view space: x right, y up, z away from the viewer, who looks down from above (a rotation, so nothing is
-/// mirrored: the far side of the model is higher in the picture, and a higher point is nearer).
-pub fn preview_view(v: V3) -> V3 {
-    let (sy, cy) = 35f32.to_radians().sin_cos();
-    let (sp, cp) = 25f32.to_radians().sin_cos();
-    let x = v[0] * cy + v[2] * sy;
-    let z = -v[0] * sy + v[2] * cy;
-    [x, v[1] * cp + z * sp, -v[1] * sp + z * cp]
-}
-
-impl PreviewFit {
-    /// The fit of model-space points into the picture with an 8 point margin; `None` without points.
-    pub fn of(points: impl Iterator<Item = V3>) -> Option<PreviewFit> {
-        let (mut lo, mut hi) = ([f32::MAX; 2], [f32::MIN; 2]);
-        for p in points {
-            let v = preview_view(p);
-            if !(v[0].is_finite() && v[1].is_finite()) {
-                continue;
-            }
-            lo = [lo[0].min(v[0]), lo[1].min(v[1])];
-            hi = [hi[0].max(v[0]), hi[1].max(v[1])];
-        }
-        if lo[0] > hi[0] {
-            return None;
-        }
-        let scale = ((PREVIEW_SIZE[0] - 16.0) / (hi[0] - lo[0]).max(0.01)).min((PREVIEW_SIZE[1] - 16.0) / (hi[1] - lo[1]).max(0.01));
-        Some(PreviewFit { mid: [(lo[0] + hi[0]) * 0.5, (lo[1] + hi[1]) * 0.5], scale })
-    }
-
-    /// A model-space point in picture points (origin top left), with its view depth.
-    pub fn to_points(self, v: V3) -> [f32; 3] {
-        let q = preview_view(v);
-        [PREVIEW_SIZE[0] * 0.5 + (q[0] - self.mid[0]) * self.scale, PREVIEW_SIZE[1] * 0.5 - (q[1] - self.mid[1]) * self.scale, q[2]]
-    }
-}
-
-/// One triangle to render: model-space corners and texture coordinates, and the index of its texture (`None`: plain grey).
-pub struct PreviewTri {
-    pub pos: [V3; 3],
-    pub uv: [[f32; 2]; 3],
-    pub tex: Option<usize>,
-}
-
-/// Renders triangles into a picture of [`PREVIEW_SIZE`] times [`PICTURE_SCALE`]: a depth buffer, the texel of the right mip
-/// level (texture coordinates repeat, as on the GPU), texels with alpha under one half cut out like the 3D view does, and a
-/// flat light from the upper left on both faces. The projection is orthographic, so texture coordinates interpolate linearly.
-/// Then the wire: every edge, one pixel wide, blended over the surface where no nearer surface hides it (hidden lines left
-/// out, so the wire marks the shape without covering the textures).
-pub fn render_picture(tris: &[PreviewTri], textures: &[crate::scene3d::MipImage], edges: &[[V3; 2]], fit: PreviewFit) -> Picture {
-    let (w, h) = ((PREVIEW_SIZE[0] * PICTURE_SCALE) as usize, (PREVIEW_SIZE[1] * PICTURE_SCALE) as usize);
-    let mut rgba = vec![0u8; w * h * 4];
-    let mut depth = vec![f32::MAX; w * h];
-    // what each pixel shows: 0 nothing, 1 texture, 2 plain
-    let mut kind = vec![0u8; w * h];
-    let light = {
-        let l = [-0.4f32, 0.6, -0.7];
-        let n = (l[0] * l[0] + l[1] * l[1] + l[2] * l[2]).sqrt();
-        [l[0] / n, l[1] / n, l[2] / n]
-    };
-    for t in tris {
-        let p = t.pos.map(|v| {
-            let q = fit.to_points(v);
-            [q[0] * PICTURE_SCALE, q[1] * PICTURE_SCALE, q[2]]
-        });
-        if p.iter().flatten().any(|c| !c.is_finite()) {
-            continue;
-        }
-        let area = (p[1][0] - p[0][0]) * (p[2][1] - p[0][1]) - (p[2][0] - p[0][0]) * (p[1][1] - p[0][1]);
-        if area.abs() < 1e-6 {
-            continue;
-        }
-        // the light: a face normal in view space, turned towards the viewer (-z)
-        let v = t.pos.map(preview_view);
-        let (a, b) = ([v[1][0] - v[0][0], v[1][1] - v[0][1], v[1][2] - v[0][2]], [v[2][0] - v[0][0], v[2][1] - v[0][1], v[2][2] - v[0][2]]);
-        let mut n = [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
-        let nl = (n[0] * n[0] + n[1] * n[1] + n[2] * n[2]).sqrt().max(1e-12);
-        if n[2] > 0.0 {
-            n = [-n[0], -n[1], -n[2]];
-        }
-        let lit = 0.5 + 0.6 * ((n[0] * light[0] + n[1] * light[1] + n[2] * light[2]) / nl).clamp(0.0, 1.0);
-        // the mip level: texels per pixel over the triangle
-        let tex = t.tex.and_then(|i| textures.get(i)).filter(|m| !m.mips.is_empty());
-        let level = tex.map_or(0, |m| {
-            let (u, q) = (t.uv, [m.width as f32, m.height as f32]);
-            let uv_area = ((u[1][0] - u[0][0]) * (u[2][1] - u[0][1]) - (u[2][0] - u[0][0]) * (u[1][1] - u[0][1])).abs() * q[0] * q[1];
-            let ratio = uv_area / area.abs();
-            if ratio.is_finite() && ratio > 1.0 { ((0.5 * ratio.log2()) as usize).min(m.mips.len() - 1) } else { 0 }
-        });
-        let x0 = p.iter().map(|c| c[0]).fold(f32::MAX, f32::min).floor().max(0.0) as usize;
-        let x1 = (p.iter().map(|c| c[0]).fold(f32::MIN, f32::max).ceil() as isize).min(w as isize - 1);
-        let y0 = p.iter().map(|c| c[1]).fold(f32::MAX, f32::min).floor().max(0.0) as usize;
-        let y1 = (p.iter().map(|c| c[1]).fold(f32::MIN, f32::max).ceil() as isize).min(h as isize - 1);
-        if x1 < 0 || y1 < 0 {
-            continue;
-        }
-        for y in y0..=y1 as usize {
-            for x in x0..=x1 as usize {
-                let (px, py) = (x as f32 + 0.5, y as f32 + 0.5);
-                let e = |i: usize, j: usize| (p[j][0] - p[i][0]) * (py - p[i][1]) - (p[j][1] - p[i][1]) * (px - p[i][0]);
-                let (w0, w1, w2) = (e(1, 2) / area, e(2, 0) / area, e(0, 1) / area);
-                if w0 < 0.0 || w1 < 0.0 || w2 < 0.0 {
-                    continue;
-                }
-                let z = w0 * p[0][2] + w1 * p[1][2] + w2 * p[2][2];
-                let at = y * w + x;
-                if z >= depth[at] {
-                    continue;
-                }
-                let (texel, k) = match tex {
-                    Some(m) => {
-                        let (lw, lh) = ((m.width >> level).max(1) as usize, (m.height >> level).max(1) as usize);
-                        let u = w0 * t.uv[0][0] + w1 * t.uv[1][0] + w2 * t.uv[2][0];
-                        let v = w0 * t.uv[0][1] + w1 * t.uv[1][1] + w2 * t.uv[2][1];
-                        let tx = ((u.rem_euclid(1.0) * lw as f32) as usize).min(lw - 1);
-                        let ty = ((v.rem_euclid(1.0) * lh as f32) as usize).min(lh - 1);
-                        let s = &m.mips[level][(ty * lw + tx) * 4..][..4];
-                        if s[3] < 128 {
-                            continue;
-                        }
-                        ([s[0], s[1], s[2]], 1)
-                    }
-                    None => ([170, 170, 170], 2),
-                };
-                depth[at] = z;
-                kind[at] = k;
-                let o = &mut rgba[at * 4..][..4];
-                for c in 0..3 {
-                    o[c] = (texel[c] as f32 * lit).round().clamp(0.0, 255.0) as u8;
-                }
-                o[3] = 255;
-            }
-        }
-    }
-    let textured_px = kind.iter().filter(|k| **k == 1).count();
-    let plain_px = kind.iter().filter(|k| **k == 2).count();
-    // an edge lies on its own surface, so it may be a little behind the depth there: two points of depth
-    let bias = 2.0 / fit.scale.max(1e-6);
-    let wire = [170u8, 200, 230];
-    let mut on_wire = vec![false; w * h];
-    for e in edges {
-        let (a, b) = (fit.to_points(e[0]), fit.to_points(e[1]));
-        let (a, b) = ([a[0] * PICTURE_SCALE, a[1] * PICTURE_SCALE, a[2]], [b[0] * PICTURE_SCALE, b[1] * PICTURE_SCALE, b[2]]);
-        if a.iter().chain(&b).any(|c| !c.is_finite()) {
-            continue;
-        }
-        let steps = (b[0] - a[0]).abs().max((b[1] - a[1]).abs()).ceil().clamp(1.0, 4096.0) as usize;
-        for i in 0..=steps {
-            let t = i as f32 / steps as f32;
-            let (x, y) = (a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t);
-            if x < 0.0 || y < 0.0 || x >= w as f32 || y >= h as f32 {
-                continue;
-            }
-            let at = y as usize * w + x as usize;
-            if !on_wire[at] && a[2] + (b[2] - a[2]) * t <= depth[at] + bias {
-                on_wire[at] = true;
-            }
-        }
-    }
-    for (at, _) in on_wire.iter().enumerate().filter(|(_, on)| **on) {
-        let o = &mut rgba[at * 4..][..4];
-        if o[3] == 0 {
-            // over nothing (a see-through part, or a model that shows nothing): the wire alone, half strong
-            o.copy_from_slice(&[wire[0], wire[1], wire[2], 140]);
-        } else {
-            for c in 0..3 {
-                o[c] = ((o[c] as u32 * 3 + wire[c] as u32 * 2) / 5) as u8;
-            }
-        }
-    }
-    Picture { width: w, height: h, rgba, textured_px, plain_px }
-}
+// The picture code lives in `shaiya_clientdata::render` (the Archive preview of the toolkit uses it too); the editor keeps its old
+// names for it.
+pub use shaiya_clientdata::render::{ModelPicture as Picture, PreviewFit, PREVIEW_SIZE};
 
 #[derive(Default)]
 pub struct PlaceUi {
@@ -331,63 +137,13 @@ impl PlaceUi {
 pub fn build_preview(src: Option<&ClientSource>, list: PlaceList, name: &str) -> Option<Preview> {
     let src = src?;
     let bounds = place::load_bounds(src, list, name);
-    let mut edges = Vec::new();
-    let mut tris = Vec::new();
-    let mut textures = Vec::new();
-    let mut missing = Vec::new();
-    let (mut see_through, mut invisible) = (Vec::new(), Vec::new());
+    let mut p = shaiya_clientdata::render::ModelPreview::default();
     if list != PlaceList::Dungeon {
         if let Ok(sm) = src.smod(list.folder().rsplit('/').next().unwrap_or("Building"), name) {
-            let mut tex_of: std::collections::HashMap<String, Option<usize>> = std::collections::HashMap::new();
-            for m in &sm.modules {
-                let tex = if m.texture.trim().is_empty() {
-                    None
-                } else {
-                    *tex_of.entry(m.texture.trim().to_ascii_lowercase()).or_insert_with(|| match src.texture_flex("Entity/Texture", &m.texture) {
-                        Ok(i) => {
-                            let opaque = i.rgba.as_chunks::<4>().0.iter().filter(|p| p[3] >= 128).count();
-                            if opaque * 4 < i.rgba.len() {
-                                see_through.push(m.texture.trim().to_string());
-                            }
-                            if opaque == 0 {
-                                invisible.push(m.texture.trim().to_string());
-                            }
-                            textures.push(crate::scene3d::mip_image_capped(&i));
-                            Some(textures.len() - 1)
-                        }
-                        Err(_) => {
-                            missing.push(m.texture.trim().to_string());
-                            None
-                        }
-                    })
-                };
-                for f in &m.faces {
-                    if tris.len() >= PREVIEW_TRIS {
-                        break;
-                    }
-                    if let (Some(a), Some(b), Some(c)) = (m.vertices.get(f[0] as usize), m.vertices.get(f[1] as usize), m.vertices.get(f[2] as usize)) {
-                        tris.push(PreviewTri { pos: [a.pos, b.pos, c.pos], uv: [a.uv, b.uv, c.uv], tex });
-                    }
-                }
-            }
-            let mut seen = std::collections::HashSet::new();
-            'all: for (k, m) in sm.modules.iter().enumerate() {
-                for f in &m.faces {
-                    for (a, b) in [(f[0], f[1]), (f[1], f[2]), (f[2], f[0])] {
-                        let (Some(pa), Some(pb)) = (m.vertices.get(a as usize), m.vertices.get(b as usize)) else { continue };
-                        if seen.insert((a.min(b), a.max(b), k)) {
-                            edges.push([pa.pos, pb.pos]);
-                            if edges.len() >= PREVIEW_EDGES {
-                                break 'all;
-                            }
-                        }
-                    }
-                }
-            }
+            p = shaiya_clientdata::render::model_picture(&sm, &mut |t| src.texture_flex("Entity/Texture", t).ok());
         }
     }
-    let picture = if tris.is_empty() { None } else { PreviewFit::of(tris.iter().flat_map(|t| t.pos)).map(|fit| render_picture(&tris, &textures, &edges, fit)) };
-    Some(Preview { edges, bounds, picture, missing, see_through, invisible, tex: None })
+    Some(Preview { edges: p.edges, bounds, picture: p.picture, missing: p.missing, see_through: p.see_through, invisible: p.invisible, tex: None })
 }
 
 // ---------------------------------------------------------------------------------------------------------------- picking
@@ -600,6 +356,7 @@ pub fn overlay_3d(o: &mut OverlayGeo, doc: &Doc, ui: &mut PlaceUi, src: Option<&
 #[cfg(test)]
 mod tests {
     use super::*;
+    use shaiya_clientdata::render::{preview_view, render_picture, PreviewTri};
     use crate::testutil::paired_doc;
     use shaiya_clientdata::wld_raw::RawPlaced;
     use shaiya_clientdata::wld_raw::{name_text, WldRaw};
@@ -845,6 +602,67 @@ mod tests {
         let wire_px = |p: &Picture| p.rgba.as_chunks::<4>().0.iter().zip(bare.rgba.as_chunks::<4>().0.iter()).filter(|(a, b)| a != b).count();
         assert!(wire_px(&over) > 20 && wire_px(&under) == 0, "{} {}", wire_px(&over), wire_px(&under));
         assert_eq!(over.textured_px, bare.textured_px, "the wire does not change what the surface shows");
+    }
+
+    /// The renderer moved out of the editor into `shaiya_clientdata::render`: the pictures of the synthetic cases (a textured quad,
+    /// a repeated one, mip levels, a cut-out, depth, plain grey, a wire over and under a floor) must stay byte for byte what they
+    /// were. The hash was recorded from the editor's own `render_picture` before the move.
+    #[test]
+    fn the_pictures_of_the_synthetic_quads_are_byte_identical_to_before_the_move() {
+        let mut rgba = Vec::new();
+        for y in 0..8 {
+            for x in 0..8 {
+                rgba.extend_from_slice(if (x / 4 + y / 4) % 2 == 0 { &[255, 0, 0, 255] } else { &[0, 0, 255, 255] });
+            }
+        }
+        let mut cut = rgba.clone();
+        for y in 0..8 {
+            for x in 4..8 {
+                cut[(y * 8 + x) * 4 + 3] = 0;
+            }
+        }
+        let tex = |rgba: Vec<u8>| crate::scene3d::MipImage { width: 8, height: 8, mips: crate::scene3d::mip_chain(8, 8, rgba) };
+        let away = [preview_view([1.0, 0.0, 0.0])[2], preview_view([0.0, 1.0, 0.0])[2], preview_view([0.0, 0.0, 1.0])[2]];
+        let quad = |z: f32, uvmax: f32, tex: Option<usize>| {
+            let at = |x: f32, y: f32| [x + away[0] * z, y + away[1] * z, away[2] * z];
+            let (a, b, c, d) = (at(0.0, 0.0), at(4.0, 0.0), at(4.0, 4.0), at(0.0, 4.0));
+            let (ua, ub, uc, ud) = ([0.0, 0.0], [uvmax, 0.0], [uvmax, uvmax], [0.0, uvmax]);
+            [PreviewTri { pos: [a, b, c], uv: [ua, ub, uc], tex }, PreviewTri { pos: [a, c, d], uv: [ua, uc, ud], tex }]
+        };
+        let textures = [tex(rgba), tex(cut)];
+        let one = quad(0.0, 1.0, Some(0));
+        let fit = PreviewFit::of(one.iter().flat_map(|t| t.pos)).unwrap();
+        let mut both: Vec<PreviewTri> = quad(5.0, 1.0, None).into();
+        both.extend(quad(0.0, 1.0, Some(0)));
+        let edge = [[[0.5, 0.5, 0.5], [3.5, 3.5, 0.5]], [[0.0, 0.0, 0.0], [4.0, 0.0, 0.0]]];
+        let floor = |y: f32| {
+            let (a, b, c, d) = ([0.0, y, 0.0], [4.0, y, 0.0], [4.0, y, 4.0], [0.0, y, 4.0]);
+            [PreviewTri { pos: [a, b, c], uv: [[0.0; 2]; 3], tex: Some(0) }, PreviewTri { pos: [a, c, d], uv: [[0.0; 2]; 3], tex: Some(0) }]
+        };
+        let white = crate::scene3d::MipImage { width: 1, height: 1, mips: vec![vec![255, 255, 255, 255]] };
+        let floor_fit = PreviewFit::of(floor(0.0).iter().flat_map(|t| t.pos)).unwrap();
+        let pictures = [
+            render_picture(&one, &textures, &[], fit),
+            render_picture(&quad(0.0, 2.0, Some(0)), &textures, &[], fit),
+            render_picture(&quad(0.0, 8.0, Some(0)), &textures, &[], fit),
+            render_picture(&quad(0.0, 1.0, Some(1)), &textures, &[], fit),
+            render_picture(&both, &textures, &[], fit),
+            render_picture(&quad(0.0, 1.0, None), &textures, &[], fit),
+            render_picture(&one, &textures, &edge, fit),
+            render_picture(&floor(0.0), std::slice::from_ref(&white), &[], floor_fit),
+            render_picture(&floor(0.0), std::slice::from_ref(&white), &[[[1.5, 0.5, 1.5], [2.5, 0.5, 2.5]]], floor_fit),
+            render_picture(&floor(0.0), std::slice::from_ref(&white), &[[[1.5, -0.5, 1.5], [2.5, -0.5, 2.5]]], floor_fit),
+        ];
+        let mut all = Vec::new();
+        for p in &pictures {
+            all.extend((p.width as u64).to_le_bytes());
+            all.extend((p.height as u64).to_le_bytes());
+            all.extend((p.textured_px as u64).to_le_bytes());
+            all.extend((p.plain_px as u64).to_le_bytes());
+            all.extend(&p.rgba);
+        }
+        let hash = shaiya_core::hash::to_hex(&shaiya_core::hash::sha256(&all));
+        assert_eq!(hash, "b7310fc6bf5723bd6f7f346316f0477891f4d34f64a027783ac53a497c272ff3", "the pictures changed");
     }
 
     /// Every building, shape and tree of the client (`SHAIYA_CLIENT`): the Models window's picture shows real texels wherever

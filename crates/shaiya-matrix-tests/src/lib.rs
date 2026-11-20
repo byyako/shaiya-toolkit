@@ -64,6 +64,7 @@ pub enum Cap {
     WldParse,
     WldLossless,
     WldPreview,
+    ModelPreview,
     AreaTxtRoundtrip,
     NpcQuestGates,
     MapNameIds,
@@ -75,7 +76,7 @@ pub enum Cap {
     SdataAutoPicks,
 }
 
-pub const CAPS: [Cap; 28] = [
+pub const CAPS: [Cap; 29] = [
     Cap::IndexParse,
     Cap::ToBytesIdentical,
     Cap::InspectSah,
@@ -96,6 +97,7 @@ pub const CAPS: [Cap; 28] = [
     Cap::WldParse,
     Cap::WldLossless,
     Cap::WldPreview,
+    Cap::ModelPreview,
     Cap::AreaTxtRoundtrip,
     Cap::NpcQuestGates,
     Cap::MapNameIds,
@@ -140,6 +142,7 @@ impl Cap {
             Cap::WldParse => "clientdata `Wld::parse`, every `world/*.wld`",
             Cap::WldLossless => "`wld_raw` writes every `.wld` back byte-identical",
             Cap::WldPreview => "map preview data of every `world/*.wld` (`render::hillshade_grey` for a field, no terrain for a dungeon)",
+            Cap::ModelPreview => "model preview data of every `.smod` (`render::model_picture`: modules, triangles, textures looked up under `Entity/Texture`)",
             Cap::AreaTxtRoundtrip => "`area_txt` writes every `world/*.txt` back byte-identical",
             Cap::NpcQuestGates => "gatekeepers: 3 gates each, map ids 0..=255, finite positions",
             Cap::MapNameIds => "sysmsg has text for the distinct map-name message ids of the EP4.5 table",
@@ -163,7 +166,7 @@ use Cell::{Fails as F, FitOnly as FO, NotAvailable as NA, Ok as O, Plain as P};
 ///
 /// Note: the 9 EP8 `DB*Data` binary-header files of kr-ep8 and fawkes-v68 do not survive `seed::unwrap` + CRC
 /// (the SEED rows of those two clients may need `Fails` once a run shows it); a run that disagrees must be reported, not forced to pass.
-pub const EXPECTED: [[Cell; 9]; 28] = [
+pub const EXPECTED: [[Cell; 9]; 29] = [
     /* IndexParse       */ [O, O, O, O, O, O, O, O, O],
     /* ToBytesIdentical */ [O, O, O, O, O, O, O, O, O],
     /* InspectSah       */ [O, O, O, O, O, O, O, O, O],
@@ -184,6 +187,7 @@ pub const EXPECTED: [[Cell; 9]; 28] = [
     /* WldParse               */ [O, NA, NA, NA, NA, NA, NA, NA, NA],
     /* WldLossless            */ [O, NA, NA, NA, NA, NA, NA, NA, NA],
     /* WldPreview             */ [O, NA, NA, NA, NA, NA, NA, NA, NA],
+    /* ModelPreview           */ [O, NA, NA, NA, NA, NA, NA, NA, NA],
     /* AreaTxtRoundtrip       */ [O, NA, NA, NA, NA, NA, NA, NA, NA],
     /* NpcQuestGates          */ [O, O, O, NA, O, O, F, F, O],
     /* MapNameIds             */ [O, O, O, NA, O, O, O, O, O],
@@ -197,11 +201,11 @@ pub const EXPECTED: [[Cell; 9]; 28] = [
 /// The numbers the T1 rows assert (the "OK 19,939" style cells of docs/version-matrix.md), in `CLIENTS` order; `None` = a plain "OK" cell.
 /// `ArchiveVisibleCount`: files minus shadowed. `ArchiveCheckIndex`: the `shadowed` warnings of the index-only check. `ArchiveFreeList`:
 /// free-list entries (preserved by an in-place edit). `ArchiveDataEnd`: `max(offset + length)`, asserted where the table gives it.
-/// `WldParse`/`WldLossless`/`WldPreview`: `.wld` files parsed / written back identically / given a map preview (a grey picture for a field, none for a dungeon). `AreaTxtRoundtrip`: `world/*.txt` identical. `NpcQuestGates`: gatekeepers.
+/// `WldParse`/`WldLossless`/`WldPreview`: `.wld` files parsed / written back identically / given a map preview (a grey picture for a field, none for a dungeon). `AreaTxtRoundtrip`: `world/*.txt` identical. `NpcQuestGates`: gatekeepers. `ModelPreview`: `.smod` files whose preview data is built (every module and triangle counted, textures looked up by the editor's rule).
 /// `MapNameIds`: ids of the map-name table that have text in sysmsg. `SdataItemFits`/`SdataSkillFits`/`SdataMonsterFits`/`SdataNpcQuestFits`:
 /// records of `Item/Item.SData`, `Character/Skill.SData`, `Monster/Monster.SData` and `Npc/NpcQuest.SData` (its quests) read by their layout;
 /// a `FIT-ONLY` cell is a layout that reads the file but was not read from that client's loader. `SdataAutoPicks`: SData files that exactly one layout reads (the rest are raw).
-pub const NUMBERS: [(Cap, [Option<u64>; 9]); 15] = [
+pub const NUMBERS: [(Cap, [Option<u64>; 9]); 16] = [
     (Cap::ArchiveVisibleCount, [Some(19_939), Some(21_523), Some(23_533), Some(24_745), Some(24_599), Some(30_340), Some(34_418), Some(48_118), Some(20_418)]),
     (Cap::ArchiveCheckIndex, [Some(0), Some(0), Some(0), Some(0), Some(0), Some(0), Some(1), Some(1), Some(0)]),
     (Cap::ArchiveFreeList, [Some(0), Some(0), Some(507), Some(500), Some(500), Some(0), Some(0), Some(630), Some(500)]),
@@ -209,6 +213,7 @@ pub const NUMBERS: [(Cap, [Option<u64>; 9]); 15] = [
     (Cap::WldParse, [Some(83), None, None, None, None, None, None, None, None]),
     (Cap::WldLossless, [Some(83), None, None, None, None, None, None, None, None]),
     (Cap::WldPreview, [Some(83), None, None, None, None, None, None, None, None]),
+    (Cap::ModelPreview, [Some(1355), None, None, None, None, None, None, None, None]),
     (Cap::AreaTxtRoundtrip, [Some(33), None, None, None, None, None, None, None, None]),
     (Cap::NpcQuestGates, [Some(61), Some(61), Some(72), None, Some(72), Some(106), None, None, Some(61)]),
     (Cap::MapNameIds, [Some(47), Some(47), Some(47), None, Some(47), Some(47), Some(47), Some(47), Some(44)]),
@@ -234,7 +239,7 @@ pub fn expected(client: &str, cap: Cap) -> Option<Cell> {
 #[derive(Clone, Debug)]
 pub struct Observed {
     pub client: String,
-    pub cells: [Cell; 28],
+    pub cells: [Cell; 29],
     /// Measured numbers of the T1 rows (see [`NUMBERS`]).
     pub numbers: Vec<(Cap, u64)>,
     /// Counts and other facts printed with the table (not asserted).
@@ -300,7 +305,7 @@ fn by_name<'a>(files: &'a [(String, Vec<u8>)], tail: &str) -> Option<&'a (String
 
 /// Measures one client folder.
 pub fn observe(client: &str, dir: &Path) -> Observed {
-    let mut o = Observed { client: client.to_string(), cells: [NA; 28], numbers: Vec::new(), facts: Vec::new(), sah_files: None, sah_millis: None, sdata_files: 0, sdata_bytes: 0, notes: Vec::new(), unlisted: Vec::new() };
+    let mut o = Observed { client: client.to_string(), cells: [NA; 29], numbers: Vec::new(), facts: Vec::new(), sah_files: None, sah_millis: None, sdata_files: 0, sdata_bytes: 0, notes: Vec::new(), unlisted: Vec::new() };
     let set = |o: &mut Observed, cap: Cap, c: Cell| o.cells[CAPS.iter().position(|x| *x == cap).expect("cap")] = c;
 
     // the index

@@ -27,6 +27,7 @@ Client ids: `us-108` (US patch level 108), and the eight test clients `ru-ep3`, 
 | clientdata `Wld::parse`, every `world/*.wld` | OK 83 | n/a | n/a | n/a | n/a | n/a | n/a | n/a | n/a |
 | `wld_raw` writes every `.wld` back byte-identical | OK 83 | n/a | n/a | n/a | n/a | n/a | n/a | n/a | n/a |
 | map preview data of every `world/*.wld` (`render::hillshade_grey` for a field, no terrain for a dungeon) | OK 83 | n/a | n/a | n/a | n/a | n/a | n/a | n/a | n/a |
+| model preview data of every `.smod` (`render::model_picture`: modules, triangles, textures looked up under `Entity/Texture`) | OK 1,355 | n/a | n/a | n/a | n/a | n/a | n/a | n/a | n/a |
 | `area_txt` writes every `world/*.txt` back byte-identical | OK 33 | n/a | n/a | n/a | n/a | n/a | n/a | n/a | n/a |
 | gatekeepers: 3 gates each, map ids 0..=255, finite positions (the number is the count of gatekeepers) | OK 61 | OK 61 | OK 72 | n/a | OK 72 | OK 106 | fails | fails | OK 61 |
 | sysmsg has text for the distinct map-name message ids of the EP4.5 table (the number is the message ids with text, of 47) | OK 47 | OK 47 | OK 47 | n/a | OK 47 | OK 47 | OK 47 | OK 47 | OK 44 |
@@ -54,6 +55,7 @@ Reading the table:
 - The two `_stub` rows edit a copy of each client's real index against an empty `data.saf`, so no client file is changed and no client contents are needed. Archive operations that need a full `data.saf` (check with the data file, extract, compaction, swap) are covered by synthetic tests and, for one client you supply yourself, by the opt-in tests in [dev/testing.md](dev/testing.md#opt-in-variables).
 - World files are not part of the eight test clients (they hold SData files and `sysmsg-uni.txt` only), so the `.wld` and `world/*.txt` rows are `n/a` there; only the US client's full `data.saf` measures them.
 - The map preview row counts the `.wld` files whose preview data is built: a field gives a grey picture of its terrain, a dungeon map has no terrain and no picture. The split of the 83 files is printed by the matrix run and the toolkit's opt-in test.
+- The model preview row counts the `.smod` files whose preview data is built: all 1,355 of the US client give a picture, with 0 texture names missing. The matrix run and the toolkit's opt-in test print the counts. The 29 fields and 54 dungeons of the map row are asserted too.
 - The gatekeeper row is `fails` where `NpcQuest::parse` fails (kr-ep8, fawkes-v68), and `n/a` where there is no file (ru-ep54). The gates were not measured on those two clients: `NpcQuest::parse` fails first there (the layout differs from the original generation's), so the gate row says `fails`.
 - The map-name row measures the presence of text for the distinct map-name message ids of the EP4.5 table (47 message ids covering 67 map ids), not its correctness; the cn-ep4 sysmsg lacks text for three of them.
 

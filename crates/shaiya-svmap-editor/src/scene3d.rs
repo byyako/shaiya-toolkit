@@ -13,8 +13,8 @@ use crate::math3d::V3;
 /// Cells per terrain chunk side (a chunk is 65 x 65 corners and one draw call).
 pub const CHUNK_CELLS: usize = 64;
 pub const CHUNK_VERTS: usize = (CHUNK_CELLS + 1) * (CHUNK_CELLS + 1);
-/// Terrain textures are resampled to one square size so they fit one texture array; dungeon textures are capped at this.
-pub const MAX_TEXTURE: u32 = 256;
+// The image types and the mip code live in `shaiya_clientdata::render` (the model picture of the Archive preview uses them too).
+pub use shaiya_clientdata::render::{mip_chain, mip_image_capped, MipImage};
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
@@ -28,13 +28,6 @@ pub struct Chunk {
     pub verts: Vec<TerrainVertex>,
     pub min: V3,
     pub max: V3,
-}
-
-/// An RGBA image with its mip chain (`mips[0]` is the full size; every level is half the one before, down to 1 x 1).
-pub struct MipImage {
-    pub width: u32,
-    pub height: u32,
-    pub mips: Vec<Vec<u8>>,
 }
 
 pub struct TerrainData {
@@ -260,36 +253,6 @@ pub struct SceneData {
 
 // ------------------------------------------------------------------------------------------------------------------ images
 
-/// Averages 2 x 2 blocks (alpha included); odd edges reuse the last row / column.
-fn half(w: u32, h: u32, rgba: &[u8]) -> (u32, u32, Vec<u8>) {
-    let (nw, nh) = ((w / 2).max(1), (h / 2).max(1));
-    let mut out = vec![0u8; (nw * nh * 4) as usize];
-    for y in 0..nh {
-        for x in 0..nw {
-            let (x0, y0) = ((x * 2).min(w - 1), (y * 2).min(h - 1));
-            let (x1, y1) = ((x * 2 + 1).min(w - 1), (y * 2 + 1).min(h - 1));
-            for c in 0..4 {
-                let s = |xx: u32, yy: u32| rgba[((yy * w + xx) * 4) as usize + c] as u32;
-                out[((y * nw + x) * 4) as usize + c] = ((s(x0, y0) + s(x1, y0) + s(x0, y1) + s(x1, y1) + 2) / 4) as u8;
-            }
-        }
-    }
-    (nw, nh, out)
-}
-
-/// Full mip chain of an image.
-pub fn mip_chain(w: u32, h: u32, rgba: Vec<u8>) -> Vec<Vec<u8>> {
-    let mut mips = vec![rgba];
-    let (mut cw, mut ch) = (w, h);
-    while cw > 1 || ch > 1 {
-        let (nw, nh, next) = half(cw, ch, mips.last().unwrap());
-        mips.push(next);
-        cw = nw;
-        ch = nh;
-    }
-    mips
-}
-
 /// Bilinear resample to `nw` x `nh`.
 fn resample(w: u32, h: u32, rgba: &[u8], nw: u32, nh: u32) -> Vec<u8> {
     if (w, h) == (nw, nh) {
@@ -313,18 +276,6 @@ fn resample(w: u32, h: u32, rgba: &[u8], nw: u32, nh: u32) -> Vec<u8> {
         }
     }
     out
-}
-
-/// A texture for the 3D view: capped at [`MAX_TEXTURE`] (halved until it fits), with mips.
-pub fn mip_image_capped(img: &Image) -> MipImage {
-    let (mut w, mut h, mut rgba) = (img.width, img.height, img.rgba.clone());
-    while w > MAX_TEXTURE || h > MAX_TEXTURE {
-        let (nw, nh, next) = half(w, h, &rgba);
-        w = nw;
-        h = nh;
-        rgba = next;
-    }
-    MipImage { width: w, height: h, mips: mip_chain(w, h, rgba) }
 }
 
 fn solid(w: u32, h: u32, c: [u8; 4]) -> MipImage {

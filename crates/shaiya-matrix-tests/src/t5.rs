@@ -113,12 +113,47 @@ pub(crate) fn world_caps(o: &mut Observed, dir: &Path) {
         let total = wlds.len() as u64;
         o.set(Cap::WldParse, if parsed == total { O } else { F });
         o.set(Cap::WldLossless, if identical == total { O } else { F });
-        o.set(Cap::WldPreview, if fields + dungeons == total { O } else { F });
+        // the US client's 83 maps are 29 fields and 54 dungeons (docs/formats/wld.md); a change is noticed here
+        o.set(Cap::WldPreview, if fields + dungeons == total && (total != 83 || (fields, dungeons) == (29, 54)) { O } else { F });
         o.numbers.push((Cap::WldParse, parsed));
         o.numbers.push((Cap::WldLossless, identical));
         o.numbers.push((Cap::WldPreview, fields + dungeons));
         o.facts.push(format!("map preview: {fields} fields with a picture, {dungeons} dungeon maps without terrain"));
         o.facts.push(format!("world: {total} .wld files, {parsed} parsed, {identical} written back identically"));
+    }
+
+    // every `.smod`: the preview data of the Archive tab (modules, triangles, textures under Entity/Texture, one picture)
+    let smods: Vec<&String> = list.iter().filter(|p| ends_with_ci(p, ".smod")).collect();
+    if smods.is_empty() {
+        o.set(Cap::ModelPreview, NA);
+    } else {
+        let (mut built, mut pictures, mut bare, mut missing) = (0u64, 0u64, 0u64, 0usize);
+        let mut cache: std::collections::HashMap<String, Option<shaiya_clientdata::Image>> = std::collections::HashMap::new();
+        for p in &smods {
+            match files.read(p).map_err(|e| e.to_string()).and_then(|b| shaiya_clientdata::Smod::parse(&b, p).map_err(|e| e.to_string())) {
+                Ok(sm) => {
+                    let m = shaiya_clientdata::render::model_picture(&sm, &mut |name| {
+                        cache
+                            .entry(name.to_ascii_lowercase())
+                            .or_insert_with(|| {
+                                shaiya_clientdata::texture_candidates("Entity/Texture", name).into_iter().find(|c| files.read(c).is_ok()).and_then(|c| shaiya_clientdata::texture::decode(&files.read(&c).ok()?, &c).ok())
+                            })
+                            .clone()
+                    });
+                    built += 1;
+                    if m.picture.is_some() {
+                        pictures += 1;
+                    } else {
+                        bare += 1;
+                    }
+                    missing += m.missing.len();
+                }
+                Err(e) => o.notes.push(format!("model preview {p}: {e}")),
+            }
+        }
+        o.set(Cap::ModelPreview, if built == smods.len() as u64 { O } else { F });
+        o.numbers.push((Cap::ModelPreview, built));
+        o.facts.push(format!("model preview: {built} .smod files, {pictures} with a picture, {bare} without triangles, {missing} missing texture names"));
     }
 
     // every `world/*.txt`

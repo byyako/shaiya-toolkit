@@ -31,12 +31,13 @@ A placement's `dir` is the model's forward axis (+z) and `up` its +y axis. The m
 |---|---|
 | `shaiya-clientdata` `Smod` | parses it; `placement_basis` builds the rotation of a placement |
 | Shaiya SVMap Editor | the box used to pick a placement (turned with it), the 3D view, and the Models window, which draws a textured picture of a model on the CPU. A model the client cannot read gets a small stand-in box. |
+| Shaiya Toolkit | The Archive tab previews an `.smod` with the same picture as the Models window (the code is shared in `shaiya-clientdata`): textured, lit, drawn orthographically from above and in front, with the visible edges as a thin wire. The line above it reads "N modules, N triangles, N textures (N missing)". A texture is looked up in the same archive under `Entity/Texture` by the name the module gives, else the same name ending `.dds`, else ending `.tga`; one that is not found or does not decode is named and its triangles are drawn plain grey. A file that does not parse shows its error and the first bytes as hex. |
 
 The file is only read.
 
 ## Verified on
 
-US EP4.5: 1,355 of 1,355 models parse to the last byte in the original check, and every textured module of the 1,219 buildings, shapes and trees in the client finds and decodes its texture.
+US EP4.5: 1,355 of 1,355 models parse to the last byte in the original check, and every textured module of the 1,219 buildings, shapes and trees in the client finds and decodes its texture. The model preview data builds for every `.smod` of the archive (the version matrix row "model preview data").
 
 ## Other episodes
 
