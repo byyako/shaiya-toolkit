@@ -171,12 +171,12 @@ fn version_forms() {
     let o = run(&["version"]);
     assert_eq!(o.status.code(), Some(0));
     let line = text(&o.stdout);
-    assert!(line.starts_with("shaiya 0.3.1 (git "), "{line}");
+    assert!(line.starts_with("shaiya 0.3.2 (git "), "{line}");
     assert!(line.trim_end().ends_with(')'), "{line}");
     assert_eq!(text(&run(&["-V"]).stdout), line);
     let o = run(&["version", "--json"]);
     let v: serde_json::Value = serde_json::from_slice(&o.stdout).unwrap();
-    assert_eq!(v["version"], "0.3.1");
+    assert_eq!(v["version"], "0.3.2");
     assert!(v["git"].as_str().is_some_and(|g| !g.is_empty()));
     assert!(v["target"].as_str().is_some_and(|t| t.contains('-')));
     // global flags work before and after the command

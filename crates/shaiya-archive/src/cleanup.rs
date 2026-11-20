@@ -209,7 +209,7 @@ fn refuse_reparse_parents(client: &Path, rel: &str) -> Result<()> {
         p.push(part);
         match std::fs::symlink_metadata(&p) {
             Ok(m) if m.file_type().is_symlink() => {
-                return Err(Error::Refused(format!("{} is a link (symlink or junction), so {rel} is not put back through it; nothing was moved", p.display())));
+                return Err(Error::Refused(format!("{} is a link (symlink or junction), so {rel} is not put back through it", p.display())));
             }
             Ok(_) => {}
             Err(_) => break,
