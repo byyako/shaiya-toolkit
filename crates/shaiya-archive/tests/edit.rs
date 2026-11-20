@@ -707,6 +707,57 @@ fn a_journal_with_an_unsafe_backup_path_is_refused_and_nothing_is_copied() {
 }
 
 #[test]
+fn rolling_back_a_journal_with_an_unsafe_backup_path_changes_nothing() {
+    let d = TempDir::new("rb-badbackup-normal");
+    let c = d.path().join("c");
+    make_client(&c);
+    let root = c.join(journal::DEFAULT_DIR);
+    std::fs::write(c.join("my.txt"), b"before").unwrap();
+    let plan = EditPlan { puts: vec![put("a/one.txt", b"1", PutMode::AddOnly)], loose: vec![stage(&c, "my.txt", b"after")], label: "one".into(), ..EditPlan::default() };
+    edit::apply_in_place(&c, &plan, &opts(&root), &Job::silent()).unwrap();
+    let jdir = journal::list(&c, &root).unwrap()[0].0.dir.clone();
+    let mut j = Journal::read(&jdir).unwrap();
+    let rec = j.loose.iter_mut().find(|l| l.rel == "my.txt").unwrap();
+    rec.backup = Some("../evil.bin".into());
+    j.write().unwrap();
+    std::fs::write(jdir.parent().unwrap().join("evil.bin"), b"outside the journal").unwrap();
+    let sah = std::fs::read(c.join("data.sah")).unwrap();
+    let saf = std::fs::read(c.join("data.saf")).unwrap();
+    let files_before = names(&c);
+    for force in [false, true] {
+        let e = journal::rollback(&c, &jdir, force, &Job::silent()).unwrap_err();
+        assert!(matches!(&e, Error::Refused(m) if m.contains("unsafe backup path") && m.contains("nothing was changed")), "{e}");
+        assert_eq!(std::fs::read(c.join("data.sah")).unwrap(), sah);
+        assert_eq!(std::fs::read(c.join("data.saf")).unwrap(), saf);
+        assert_eq!(std::fs::read(c.join("my.txt")).unwrap(), b"after");
+        assert!(!c.join("data.toolkit-pending").exists(), "no marker was written");
+        assert!(matches!(Journal::read(&jdir).unwrap().state, State::Applied));
+        assert_eq!(names(&c), files_before, "no file was added or saved");
+    }
+    // writes are not blocked afterwards
+    assert!(client::recover(&c).unwrap().is_empty());
+}
+
+#[test]
+fn an_existing_bak_name_makes_recovery_save_under_a_utc_name() {
+    let d = TempDir::new("rb-loose-utc-bak");
+    let (c, jdir, targets, _apply_marker) = crashed_loose_only(&d);
+    restore_original(&c, &targets[0]);
+    std::fs::write(c.join("extra.txt"), b"edited by hand").unwrap();
+    std::fs::write(c.join("extra.txt.bak"), b"older backup").unwrap();
+    loose_rollback_marker(&jdir).write(&c).unwrap();
+    let notes = client::recover(&c).unwrap();
+    assert_eq!(std::fs::read(c.join("extra.txt.bak")).unwrap(), b"older backup", "the existing backup is never overwritten");
+    let utc: Vec<String> = bak_files(&c).into_iter().filter(|n| n.starts_with("extra.txt.") && n != "extra.txt.bak").collect();
+    assert_eq!(utc.len(), 1, "{:?}", names(&c));
+    let stamp = &utc[0]["extra.txt.".len()..utc[0].len() - ".bak".len()];
+    assert!(stamp.len() == 16 && stamp.ends_with('Z') && stamp.as_bytes()[8] == b'T', "{stamp}");
+    assert_eq!(std::fs::read(c.join(&utc[0])).unwrap(), b"edited by hand");
+    assert!(notes[0].contains(&utc[0]), "the note names the UTC-named file: {notes:?}");
+    assert_loose_originals(&c, &targets);
+}
+
+#[test]
 fn a_foreign_change_to_the_index_blocks_further_writes() {
     let d = TempDir::new("crash-d");
     let (c, _jdir, _before, _after, marker) = crashed_apply(&d);

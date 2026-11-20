@@ -509,8 +509,8 @@ pub(crate) fn recover_marker(dir: &Path) -> Result<Option<String>> {
 /// is first saved with `make_backup`, because something else changed it after the crash; the saved paths are returned.
 fn finish_rollback(dir: &Path, files: &ClientFiles, j: &Journal, protect: bool) -> Result<(RollbackReport, Vec<PathBuf>)> {
     let mut saved = Vec::new();
-    if let Some(bad) = j.loose.iter().filter_map(|r| r.backup.as_deref()).find(|b| !safe_rel(b)) {
-        return Err(Error::Refused(format!("the journal {} names an unsafe backup path ({bad:?}); nothing was changed", j.id)));
+    if let Some(bad) = unsafe_backup(j) {
+        return Err(Error::Refused(format!("the journal {} names an unsafe backup path ({bad:?}); no loose file was touched", j.id)));
     }
     truncate_to(&files.saf, j.saf_len_before)?;
     let mut rep = RollbackReport { journal: j.dir.clone(), restored_index: true, truncated_to: j.saf_len_before, ..RollbackReport::default() };
@@ -564,12 +564,20 @@ fn read_all(root: &Path) -> Vec<Journal> {
     v
 }
 
+/// The first backup path in the journal that could leave the journal folder, if any.
+fn unsafe_backup(j: &Journal) -> Option<&str> {
+    j.loose.iter().filter_map(|r| r.backup.as_deref()).find(|b| !safe_rel(b))
+}
+
 fn status(files: &ClientFiles, j: &Journal, all: &[Journal], force: bool) -> Rollback {
     let blocked = |s: &str| Rollback::Blocked(s.to_string());
     match &j.state {
         State::RolledBack { .. } => return blocked("already rolled back"),
         State::Pending => return blocked("this change did not finish; open the client again so the toolkit can recover it"),
         State::Applied => {}
+    }
+    if let Some(bad) = unsafe_backup(j) {
+        return Rollback::Blocked(format!("the journal names an unsafe backup path ({bad:?}); nothing was changed"));
     }
     if let Some(newer) = all.iter().filter(|o| o.id > j.id && o.state == State::Applied).map(|o| o.id.clone()).next_back() {
         return Rollback::Blocked(format!("roll back {newer} first"));
