@@ -753,7 +753,7 @@ fn the_start_page_lists_the_jobs_and_its_buttons_open_the_right_place() {
     assert!(t.contains("These tools work on your own copy of the game"), "the own-copy statement stays: {t}");
     // later work packages add their rows here
     let keys: Vec<&str> = shaiya_toolkit::start::start_jobs().iter().map(|j| j.key).collect();
-    assert_eq!(keys, ["add-client", "change-files", "make-patch", "publish-patch", "apply-patches", "sdata-tables"]);
+    assert_eq!(keys, ["add-client", "change-files", "make-patch", "publish-patch", "apply-patches", "sdata-tables", "client-health"]);
     for j in shaiya_toolkit::start::start_jobs() {
         assert!(t.contains(j.title) && t.contains(j.button), "{} is drawn: {t}", j.key);
     }
@@ -1691,4 +1691,143 @@ fn every_smod_of_the_us_client_previews_as_a_model() {
     eprintln!("model preview: {} .smod files, {pictures} with a picture, {bare} without triangles, {missing} missing texture names", paths.len());
     assert_eq!(paths.len(), 1355, "the US client's .smod count changed");
     assert_eq!(pictures + bare, paths.len());
+}
+
+// ------------------------------------------------------------------------------------------------ T9 W6: client health and clean-up
+
+fn tree(dir: &std::path::Path) -> Vec<(String, Vec<u8>)> {
+    fn walk(base: &std::path::Path, dir: &std::path::Path, v: &mut Vec<(String, Vec<u8>)>) {
+        for e in std::fs::read_dir(dir).unwrap().flatten() {
+            let p = e.path();
+            if p.is_dir() {
+                walk(base, &p, v);
+            } else {
+                v.push((p.strip_prefix(base).unwrap().to_string_lossy().replace('\\', "/"), std::fs::read(&p).unwrap()));
+            }
+        }
+    }
+    let mut v = Vec::new();
+    walk(dir, dir, &mut v);
+    v.sort();
+    v
+}
+
+fn health_leftovers(dir: &std::path::Path) {
+    std::fs::write(dir.join("data.sah.bak"), b"old index").unwrap();
+    std::fs::write(dir.join(".n.7.shaiya-tmp"), b"half").unwrap();
+    std::fs::write(dir.join("data.20261101T101010Z.sah"), b"s1").unwrap();
+    std::fs::write(dir.join("data.20261101T101010Z.saf"), b"s2").unwrap();
+}
+
+fn health_ready(h: &mut Harness<ToolkitApp>) -> bool {
+    h.wait_until(WAIT, |h| h.app.app.health.report().is_some())
+}
+
+#[test]
+fn the_health_window_only_looks_and_lists_the_leftovers_with_what_is_ticked() {
+    let mut w = open_world("t9-health-look");
+    let dir = w.client_dir();
+    health_leftovers(&dir);
+    let before = tree(&dir);
+    with_cx(&mut w.h, |app, cx| app.open_health(None, cx));
+    assert_eq!(w.h.app.app.health.client_dir(), Some(dir.as_path()), "without a name it is the open client");
+    assert!(health_ready(&mut w.h), "the report arrives");
+    w.h.frames(3);
+    let t = w.h.text().to_string();
+    assert!(t.contains("Client health") && t.contains("This only looks"), "{t}");
+    assert!(t.contains("Index: SAH version 0, 7 files") && t.contains("0 problems and 0 warnings"), "{t}");
+    assert!(t.contains("data.saf:") && t.contains("dead space") && t.contains("Journals: 0"), "{t}");
+    assert!(t.contains("sah-bak") && t.contains("stray-temp") && t.contains("swap-pair") && t.contains("Clean up..."), "{t}");
+    // only what no undo, swap back or uninstall may need is ticked
+    assert_eq!(w.h.app.app.health.selected(), ["stray-temp:.n.7.shaiya-tmp"]);
+    assert_eq!(tree(&dir), before, "looking changed nothing");
+    // the links ask the tabs for their own confirmations
+    w.h.app.app.health.ask_compact();
+    w.h.frames(5);
+    assert_eq!(w.h.app.app.tab, Tab::Archive);
+    assert!(w.h.text().contains("Compact data.saf of US test"), "{}", w.h.text());
+    w.h.app.shell.inject_answer("toolkit-exclusive", 1);
+    w.h.frames(3);
+    w.h.app.app.health.ask_prune();
+    w.h.frames(5);
+    assert_eq!(w.h.app.app.tab, Tab::Apply);
+    assert!(w.h.text().contains("Prune history"), "{}", w.h.text());
+    w.h.app.shell.inject_answer("toolkit-prune", 1);
+    w.h.frames(3);
+    assert_eq!(tree(&dir), before, "cancelling both changed nothing");
+}
+
+#[test]
+fn clean_up_asks_with_four_rows_moves_into_a_cleanup_folder_and_put_back_restores() {
+    let mut w = open_world("t9-health-clean");
+    let dir = w.client_dir();
+    health_leftovers(&dir);
+    let before = tree(&dir);
+    with_cx(&mut w.h, |app, cx| app.open_health(Some("US test"), cx));
+    assert!(health_ready(&mut w.h));
+    w.h.app.app.health.set_selected("sah-bak:data.sah.bak", true);
+    w.h.app.app.health.request_clean();
+    w.h.frames(3);
+    let t = w.h.text().to_string();
+    for label in ["Changes", "Writes", "Undo", "Game"] {
+        assert!(t.contains(label), "the {label} row: {t}");
+    }
+    assert!(t.contains("moves 2 files") && t.contains("Put back in Health") && t.contains("nothing is copied or deleted"), "{t}");
+    // Cancel changes nothing
+    w.h.app.shell.inject_answer("toolkit-cleanup", 1);
+    w.h.frames(3);
+    assert_eq!(tree(&dir), before);
+    assert!(!w.h.app.app.health.is_busy());
+    // Clean up
+    w.h.app.app.health.request_clean();
+    w.h.frames(3);
+    w.h.app.shell.inject_answer("toolkit-cleanup", 0);
+    assert!(w.h.wait_until(WAIT, |h| !h.app.app.health.is_busy() && h.app.app.health.report().is_some_and(|r| r.cleanups.len() == 1)), "the clean-up ran and the report was read again");
+    assert!(!dir.join("data.sah.bak").exists() && !dir.join(".n.7.shaiya-tmp").exists());
+    assert!(dir.join("data.20261101T101010Z.sah").exists(), "what was not ticked stays");
+    let folder = w.h.app.app.health.report().unwrap().cleanups[0].name.clone();
+    assert!(dir.join("shaiya-toolkit-backups").join(&folder).join("manifest.json").is_file());
+    assert!(w.h.wait_until(WAIT, |h| h.app.app.archive.is_open()), "the archive is open again");
+    w.h.frames(3);
+    assert!(w.h.text().contains(&folder) && w.h.text().contains("Put back..."), "{}", w.h.text());
+    // Put back
+    w.h.app.app.health.request_put_back(&folder);
+    w.h.frames(3);
+    let t = w.h.text().to_string();
+    assert!(t.contains("Put back") && t.contains("moves 2 files back to where they were"), "{t}");
+    w.h.app.shell.inject_answer("toolkit-put-back", 0);
+    assert!(w.h.wait_until(WAIT, |h| !h.app.app.health.is_busy() && h.app.app.health.report().is_some_and(|r| r.cleanups.first().is_some_and(|c| c.to_put_back == 0))));
+    let after: Vec<_> = tree(&dir).into_iter().filter(|(n, _)| !n.starts_with("shaiya-toolkit-backups/")).collect();
+    assert_eq!(after, before, "every name and every byte is back");
+}
+
+#[cfg(windows)]
+#[test]
+fn clean_up_stops_while_another_program_holds_data_saf() {
+    let mut w = open_world("t9-health-busy");
+    let dir = w.client_dir();
+    health_leftovers(&dir);
+    with_cx(&mut w.h, |app, cx| app.open_health(Some("US test"), cx));
+    assert!(health_ready(&mut w.h));
+    w.h.app.app.health.request_clean();
+    w.h.frames(3);
+    let held = std::fs::File::open(dir.join("data.saf")).unwrap();
+    w.h.app.shell.inject_answer("toolkit-cleanup", 0);
+    assert!(w.h.wait_until(WAIT, |h| !h.app.app.health.is_busy() && h.app.app.health.last.as_deref().is_some_and(|t| t.contains("The clean-up stopped"))));
+    assert!(dir.join(".n.7.shaiya-tmp").exists() && !dir.join("shaiya-toolkit-backups").exists(), "nothing was moved");
+    drop(held);
+    w.h.app.shell.inject_answer("toolkit-error", 0);
+    w.h.frames(2);
+}
+
+#[test]
+fn the_start_page_health_row_opens_the_window() {
+    let mut h = Harness::<ToolkitApp>::bare();
+    h.frames(3);
+    let t = h.text().to_string();
+    assert!(t.contains("Check a client folder's health") && t.contains("Open Health"), "{t}");
+    with_cx(&mut h, |app, cx| app.run_start(shaiya_toolkit::start::StartAction::Health, cx));
+    h.frames(3);
+    assert!(h.app.app.health.open);
+    assert!(h.text().contains("Client health") && h.text().contains("No client folders yet"), "{}", h.text());
 }

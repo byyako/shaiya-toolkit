@@ -99,3 +99,130 @@ fn every_group_and_command_has_help() {
     let o = sh(&w.data, &["--help"]);
     assert!(out(&o).trim_end().ends_with("other output goes only where you say."), "{}", out(&o));
 }
+
+// ------------------------------------------------------------------------------------------------ T9 W6: health and clean-up
+
+fn with_leftovers(w: &World) {
+    write(&w.client.join("data.sah.bak"), b"old index");
+    write(&w.client.join(".n.7.shaiya-tmp"), b"half");
+    write(&w.client.join("data.20261101T101010Z.sah"), b"s1");
+    write(&w.client.join("data.20261101T101010Z.saf"), b"s2");
+}
+
+#[test]
+fn health_reports_read_only_with_the_exit_codes_of_the_spec() {
+    let w = world();
+    save_client(&w, "us");
+    let o = sh(&w.data, &["clients", "health", "us"]);
+    assert_eq!(code(&o), 0, "{}{}", out(&o), err(&o));
+    assert!(out(&o).contains("healthy: nothing to report") && out(&o).contains("SAH version 0, 7 files, 0 problems"), "{}", out(&o));
+    with_leftovers(&w);
+    let before = snapshot(&w.client);
+    let o = sh(&w.data, &["clients", "health", "@us"]);
+    assert_eq!(code(&o), 1, "{}", out(&o));
+    let t = out(&o);
+    assert!(t.contains("sah-bak") && t.contains("stray-temp") && t.contains("swap-pair") && t.contains("not pre-selected") && t.contains("3 findings to look at"), "{t}");
+    let v = json(&sh(&w.data, &["clients", "health", "us", "--json"]));
+    assert_eq!((v["healthy"].as_bool(), v["findings"].as_u64()), (Some(false), Some(3)));
+    assert_eq!(v["leftovers"].as_array().unwrap().len(), 3);
+    assert_eq!((v["leftovers"][1]["kind"].as_str(), v["leftovers"][1]["pre_selected"].as_bool()), (Some("stray-temp"), Some(true)));
+    assert_eq!(v["index"]["files"], 7);
+    assert!(v["dead_space"]["dead_bytes"].is_u64() && v["journals"]["count"] == 0);
+    // a folder path works like a name
+    assert_eq!(code(&sh(&w.data, &["clients", "health", p(&w.client)])), 1);
+    assert_eq!(snapshot(&w.client), before, "health wrote nothing");
+    // unreadable: no data.sah, an unknown name, a damaged index
+    let empty = w.tmp.path().join("empty");
+    std::fs::create_dir_all(&empty).unwrap();
+    assert_eq!(code(&sh(&w.data, &["clients", "health", p(&empty)])), 3);
+    assert_eq!(code(&sh(&w.data, &["clients", "health", "nobody"])), 3);
+    write(&empty.join("data.sah"), b"not an index");
+    assert_eq!(code(&sh(&w.data, &["clients", "health", p(&empty)])), 3);
+}
+
+#[test]
+fn clean_dry_run_moves_and_puts_back_with_the_exit_codes_of_the_spec() {
+    let w = world();
+    save_client(&w, "us");
+    with_leftovers(&w);
+    let before = snapshot(&w.client);
+    // dry run: says what, changes nothing
+    let o = sh(&w.data, &["clients", "clean", "us", "--move", "stray-temp,sah-bak", "--dry-run"]);
+    assert_eq!(code(&o), 0, "{}", err(&o));
+    assert!(out(&o).contains("would move stray-temp") && out(&o).contains("would move sah-bak") && !out(&o).contains("swap-pair") && out(&o).contains("nothing was changed"), "{}", out(&o));
+    let v = json(&sh(&w.data, &["clients", "clean", "us", "--move", "swap-pair", "--dry-run", "--json"]));
+    assert_eq!((v["dry_run"].as_bool(), v["files"].as_u64()), (Some(true), Some(2)));
+    assert_eq!(snapshot(&w.client), before);
+    assert!(!w.client.join("shaiya-toolkit-backups").exists());
+    // the real run
+    let o = sh(&w.data, &["clients", "clean", "us", "--move", "stray-temp", "--move", "sah-bak", "--json"]);
+    assert_eq!(code(&o), 0, "{}", err(&o));
+    let v = json(&o);
+    assert_eq!(v["moved"].as_array().unwrap().len(), 2);
+    let folder = std::path::PathBuf::from(v["path"].as_str().unwrap());
+    assert!(folder.join("data.sah.bak").is_file() && !w.client.join("data.sah.bak").exists() && w.client.join("data.20261101T101010Z.sah").exists());
+    assert!(folder.join("manifest.json").is_file());
+    assert_eq!(code(&sh(&w.data, &["clients", "health", "us"])), 1, "the swap pair is still there");
+    // put back: a taken destination is exit 4 and nothing moves
+    write(&w.client.join("data.sah.bak"), b"new");
+    let o = sh(&w.data, &["clients", "clean", "--put-back", p(&folder)]);
+    assert_eq!(code(&o), 4, "{}", err(&o));
+    assert!(err(&o).contains("data.sah.bak") && folder.join("data.sah.bak").exists());
+    std::fs::remove_file(w.client.join("data.sah.bak")).unwrap();
+    let o = sh(&w.data, &["clients", "clean", "--put-back", p(&folder)]);
+    assert_eq!(code(&o), 0, "{}", err(&o));
+    assert!(out(&o).contains("put back 2 files"), "{}", out(&o));
+    assert_eq!(snapshot(&w.client).iter().filter(|(n, _)| !n.starts_with("shaiya-toolkit-backups/")).cloned().collect::<Vec<_>>(), before);
+}
+
+#[test]
+fn clean_refuses_with_exit_4_and_usage_errors_are_exit_2() {
+    let w = world();
+    save_client(&w, "us");
+    with_leftovers(&w);
+    write(&w.client.join("data.sah.svmap-editor"), b"first");
+    write(&w.client.join("svmap-editor-install.json"), b"{}");
+    // the editor's backups are not offered while its record exists
+    let o = sh(&w.data, &["clients", "clean", "us", "--move", "editor-first-copy"]);
+    assert_eq!(code(&o), 4, "{}", err(&o));
+    assert!(err(&o).contains("svmap-editor-install.json") && w.client.join("data.sah.svmap-editor").exists());
+    // a pending marker recovery cannot settle
+    write(&w.client.join("data.toolkit-pending"), b"garbage");
+    let o = sh(&w.data, &["clients", "clean", "us", "--move", "stray-temp"]);
+    assert_eq!(code(&o), 4, "{}", err(&o));
+    assert!(w.client.join(".n.7.shaiya-tmp").exists() && !w.client.join("shaiya-toolkit-backups").exists());
+    // usage
+    assert_eq!(code(&sh(&w.data, &["clients", "clean", "us"])), 2);
+    assert_eq!(code(&sh(&w.data, &["clients", "clean", "us", "--move", "everything"])), 2);
+    assert_eq!(code(&sh(&w.data, &["clients", "clean", "us", "--move", "swap-pair", "--put-back", "x"])), 2);
+}
+
+#[cfg(windows)]
+#[test]
+fn clean_is_exit_4_while_data_saf_is_held_open() {
+    let w = world();
+    save_client(&w, "us");
+    with_leftovers(&w);
+    let held = std::fs::File::open(w.client.join("data.saf")).unwrap();
+    let o = sh(&w.data, &["clients", "clean", "us", "--move", "stray-temp"]);
+    assert_eq!(code(&o), 4, "{}", err(&o));
+    assert!(err(&o).contains("data.saf") && w.client.join(".n.7.shaiya-tmp").exists());
+    drop(held);
+    assert_eq!(code(&sh(&w.data, &["clients", "clean", "us", "--move", "stray-temp"])), 0);
+}
+
+#[test]
+fn put_back_says_so_with_exit_3_when_a_file_is_in_neither_place() {
+    let w = world();
+    save_client(&w, "us");
+    with_leftovers(&w);
+    let v = json(&sh(&w.data, &["clients", "clean", "us", "--move", "sah-bak,stray-temp", "--json"]));
+    let folder = std::path::PathBuf::from(v["path"].as_str().unwrap());
+    std::fs::remove_file(folder.join("data.sah.bak")).unwrap();
+    let o = sh(&w.data, &["clients", "clean", "--put-back", p(&folder), "--json"]);
+    assert_eq!(code(&o), 3, "{}", err(&o));
+    assert!(err(&o).contains("data.sah.bak"), "{}", err(&o));
+    let v = json(&o);
+    assert_eq!((v["put_back"]["restored"].as_array().unwrap().len(), v["put_back"]["missing"].as_array().unwrap().len()), (1, 1));
+    assert!(w.client.join(".n.7.shaiya-tmp").exists());
+}

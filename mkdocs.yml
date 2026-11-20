@@ -73,6 +73,7 @@ nav:
       - Make a patch: guides/make-a-patch.md
       - SData files: guides/sdata-files.md
       - Undo and recovery: guides/undo-and-recovery.md
+      - Client health and clean-up: guides/client-health.md
   - Formats:
       - Overview: formats/README.md
       - Archive: formats/archive.md

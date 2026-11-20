@@ -14,6 +14,7 @@ Except the journal folder and the files written next to a loose target (`.shaiya
 | `data.sah.compact`, `data.saf.compact`, `data.compact-commit` | the client folder | the new archive pair and the commit marker of a compaction | `archive compact --in-place`, Shaiya Toolkit's Compact | the compaction; recovery |
 | `data.swap-journal` | the client folder | the four planned renames of an archive swap | `archive swap`, Shaiya Toolkit's "Use another archive pair" | the swap; recovery |
 | `data.<stamp>.sah`, `data.<stamp>.saf` (with `-1`, `-2` ... after the stamp when that name is taken) | the client folder | the client's own pair, kept by a swap | the same swap | nothing |
+| `shaiya-toolkit-backups/cleanup-<stamp>/` | beside the journals | a **cleanup folder**: leftovers that a clean-up moved aside, with `manifest.json` | Shaiya Toolkit's Health > Clean up..., `shaiya clients clean --move` | nothing deletes it; Put back moves the files out again and the folder stays |
 | `.<name>.<pid>.shaiya-tmp` | next to the file being written | a temporary file for an atomic write | every atomic write of the toolkit | the write, on success or failure |
 | `<name>.new` | next to the target | a loose file the patch was told not to overwrite | `shaiya patch apply --protect NAME` | a rollback of that patch |
 | `<name>.bak` (`<name>.<stamp>.bak` when `<name>.bak` already exists, then with `-1`, `-2` ... after the stamp) | next to the file | the original of a file changed in place | `sdata ... --in-place`; a forced rollback, for each loose file you changed | nothing |
@@ -81,7 +82,32 @@ A swap writes `data.swap-journal` (one line per rename: the old path, a tab, the
 
 ## Temporary files and `.new`
 
-Atomic writes go to `.<name>.<pid>.shaiya-tmp` in the folder of the target, are flushed, and are renamed over it. A failed or cancelled write removes the temporary file. A process that is killed leaves it. Shaiya Toolkit sweeps `*.shaiya-tmp` files older than a day from its own data folders, not from client folders. A patch apply also writes `.update.saf.<pid>.shaiya-tmp`, the unpacked archive data of the patch, and removes it when it ends.
+Atomic writes go to `.<name>.<pid>.shaiya-tmp` in the folder of the target, are flushed, and are renamed over it. A failed or cancelled write removes the temporary file. A process that is killed leaves it. Shaiya Toolkit sweeps `*.shaiya-tmp` files older than a day from its own data folders, not from client folders. A patch apply also writes `.update.saf.<pid>.shaiya-tmp`, the unpacked archive data of the patch, and removes it when it ends. [Client health](../guides/client-health.md) lists a leftover `*.shaiya-tmp` file as a stray one only when no pending marker names it (the marker's `staged` entries are the files recovery still needs); a clean-up moves it into a cleanup folder instead of deleting it.
+
+## Cleanup folders: `shaiya-toolkit-backups/cleanup-<UTC stamp>/`
+
+A clean-up ([Client health](../guides/client-health.md)) moves leftover files out of the client folder into a new folder `cleanup-<UTC stamp>/` next to the journals. Each file keeps its path relative to the client folder. The folder holds the moved files and `manifest.json`. A cleanup folder has no `journal.txt`, so it is not a journal: it is not listed by `patch history`, not counted as a change, and `prune` leaves it alone.
+
+`manifest.json` is written atomically (a temporary file, then a rename) **before** the first file is moved, with every file `planned`, and is written again after each rename. Keys:
+
+| Key | Meaning |
+|---|---|
+| `format` | `1` |
+| `id` | the folder name |
+| `created_utc`, `tool` | when (ISO 8601 UTC) and `shaiya <version>` |
+| `state` | `moving` while the clean-up runs or was interrupted, `moved` when it finished, `put-back` once every file was put back |
+| `items` (array) | one object per file, below |
+
+| Item key | Meaning |
+|---|---|
+| `group` | the leftover this file belongs to (`<kind>:<first file>`; a swap pair has two files in one group) |
+| `kind` | `sah-bak`, `stray-temp`, `swap-pair`, `editor-backup` or `editor-first-copy` |
+| `from` | the path in the client folder, `/` separated |
+| `to` | the path inside the cleanup folder |
+| `bytes` | the size when it was moved |
+| `state` | `planned` (listed, the rename may or may not have happened), `moved` or `put-back` |
+
+Put back reads the manifest: it refuses (moving nothing) when a `from` name is already taken or a path is not a plain relative path, and otherwise renames each file that is in the cleanup folder back, writing the manifest after each. A file that is not in the cleanup folder but is in place already counts as in place (a `planned` file whose rename never happened); a file found in neither place is reported. Only renames are used, within the client folder; nothing is copied or deleted.
 
 A patch's loose file that you protect (`patch apply --protect NAME`) is written as `NAME.new` and the original is left alone; Shaiya Toolkit's Apply does not protect any name.
 

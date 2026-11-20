@@ -35,6 +35,8 @@ All of them skip with a message (`skipped: SHAIYA_CLIENT not set`) when unset, s
 SHAIYA_CLIENT=D:\clients\us SHAIYA_SCRATCH=D:\scratch cargo test -p shaiya-matrix-tests --test us_copy -- --nocapture --test-threads=1
 ```
 
+Client health (`--test health`): with `SHAIYA_CLIENT` and/or `SHAIYA_TEST_CLIENTS` it runs the read-only report on every present client and prints the numbers (`HEALTH <client>: ...`); the folder's entries must be unchanged afterwards. With `SHAIYA_SCRATCH` as well, it copies each client's `data.sah` and an empty `data.saf` into a new folder under the scratch folder, adds one leftover of each kind, cleans up, puts back, compares names and bytes, and removes the copy.
+
 ## Temp folders on exFAT
 
 Tests write to `TMP` / `TEMP`. When those point at an exFAT drive, replacing a file while another handle on it is still open fails with "Access is denied" on Windows (observed: `write_new_drops_shadowed_entries_and_the_free_list_and_verifies` failed 10 of 10 runs before it closed its reader of the output pair first). A test that replaces a file must drop every handle on it before the replace.

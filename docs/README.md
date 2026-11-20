@@ -23,7 +23,7 @@ US, RU, FR, CN, Phoenix, KR episode 8 and Fawkes v68. What works on which client
 
 - [getting-started.md](getting-started.md): five minutes from inspecting a file to building a patch on a copy and undoing it.
 - Formats: [overview of every format page](formats/README.md).
-- Guides: [modding files](guides/mod-files.md), [making patches](guides/make-a-patch.md), [SData files](guides/sdata-files.md), [undo and recovery](guides/undo-and-recovery.md).
+- Guides: [modding files](guides/mod-files.md), [making patches](guides/make-a-patch.md), [SData files](guides/sdata-files.md), [undo and recovery](guides/undo-and-recovery.md), [client health and clean-up](guides/client-health.md).
 - [faq.md](faq.md): the common errors.
 
 ## All pages
@@ -37,6 +37,7 @@ US, RU, FR, CN, Phoenix, KR episode 8 and Fawkes v68. What works on which client
 | [guides/make-a-patch.md](guides/make-a-patch.md) | Operators: build, sign, test on a copy, publish `psNNNN.patch` |
 | [guides/sdata-files.md](guides/sdata-files.md) | Decrypt and encrypt SData around an editor, `--like`, unencrypted clients |
 | [guides/undo-and-recovery.md](guides/undo-and-recovery.md) | Journals, rollback, what blocks it, the pending marker, swap back |
+| [guides/client-health.md](guides/client-health.md) | What Health reports about a client folder, the leftovers, moving them aside and putting them back |
 | [version-matrix.md](version-matrix.md) | What parses on which client |
 | [formats/README.md](formats/README.md) | Overview of every format page: what reads and writes it, where it was verified, and the extensions nobody has documented yet |
 | [formats/archive.md](formats/archive.md) | `data.sah` / `data.saf`: layout, names, hashing, shadowing, free list, versions 0 and 1, offsets past 4 GiB, compaction |
@@ -59,7 +60,7 @@ US, RU, FR, CN, Phoenix, KR episode 8 and Fawkes v68. What works on which client
 | [formats/tacticszone-zon.md](formats/tacticszone-zon.md) | `TacticsZone.zon`: header, areas with map id and type |
 | [formats/mobs-psv.md](formats/mobs-psv.md) | Afterglow's `mobs.psv`: the monster id column |
 | [formats/svmap-editor-files.md](formats/svmap-editor-files.md) | The files the editor defines: CSV export, install record, index backups, new-map note file, UTC stamp |
-| [formats/toolkit-files.md](formats/toolkit-files.md) | The toolkit's own files in a client folder: journals, the pending marker, `data.sah.bak`, compaction and swap files, temporary files |
+| [formats/toolkit-files.md](formats/toolkit-files.md) | The toolkit's own files in a client folder: journals, the pending marker, `data.sah.bak`, compaction and swap files, temporary files, cleanup folders |
 | [tools/shaiya.md](tools/shaiya.md) | The `shaiya` command line: every command (`info`, `archive`, `patch`, `sdata`, `svmap`, `clients`, `version`), flags, exit codes, JSON |
 | [tools/svmap-editor.md](tools/svmap-editor.md) | Shaiya SVMap Editor: the user guide (also the editor's Help), what it writes, verified episodes, workflows, rules, shortcuts |
 | [tools/toolkit.md](tools/toolkit.md) | Shaiya Toolkit: the six tabs, client folders, pending changes, prompts, keyboard |

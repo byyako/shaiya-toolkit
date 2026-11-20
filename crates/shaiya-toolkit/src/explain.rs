@@ -4,6 +4,7 @@
 //! applied, the `Plan`s of the patches that are applied, a `Journal` that is rolled back) and returns text. They read file sizes from
 //! the client folder; they write nothing.
 
+use shaiya_archive::cleanup;
 use shaiya_archive::client::ClientFiles;
 use shaiya_archive::edit::EditReport;
 use shaiya_archive::journal::{self, Journal};
@@ -171,6 +172,30 @@ pub fn prune_rows(all: &[Journal], keep: usize) -> Rows {
     let writes = if ids.is_empty() { format!("nothing in {}\\", journal::DEFAULT_DIR) } else { format!("{}\\ loses {}", journal::DEFAULT_DIR, listed(&ids)) };
     let undo = "no undo: the deleted journals cannot be brought back, so those changes can no longer be rolled back".to_string();
     rows(changes, writes, undo, "not involved: only backup folders are deleted, no game file is touched".to_string())
+}
+
+/// "Clean up" (Health view). `plan` is the plan [`shaiya_archive::cleanup::clean`] moves (one object feeds both).
+pub fn cleanup_rows(plan: &cleanup::Plan) -> Rows {
+    let names: Vec<String> = plan.items.iter().flat_map(|l| l.files.clone()).collect();
+    let changes = format!("moves {} ({}) out of the client folder: {}", counted(plan.files as u64, "file", "files"), human_size(plan.bytes), listed(&names));
+    let writes = format!(
+        "a new folder {}\\cleanup-<UTC>\\ in the client folder, with manifest.json written before the first move; each file is renamed into it on the same drive, nothing is copied or deleted",
+        journal::DEFAULT_DIR
+    );
+    let undo = "Put back in Health (File > Manage client folders > Health), cleanup-<UTC>".to_string();
+    rows(changes, writes, undo, game_text(cfg!(windows)))
+}
+
+/// "Put back" one cleanup folder. `manifest` is the manifest [`shaiya_archive::cleanup::put_back`] works from.
+pub fn put_back_rows(manifest: &cleanup::Manifest) -> Rows {
+    let names: Vec<String> = manifest.items.iter().filter(|i| i.state != "put-back").map(|i| i.from.clone()).collect();
+    let changes = format!("moves {} back to where {}: {}", counted(names.len() as u64, "file", "files"), if names.len() == 1 { "it was" } else { "they were" }, listed(&names));
+    let writes = format!(
+        "files are renamed inside the client folder; manifest.json in {} is updated as they go. A name that is already taken stops the whole Put back before anything moves",
+        manifest.id
+    );
+    let undo = "Clean up... moves them out again".to_string();
+    rows(changes, writes, undo, "not involved: no data.sah or data.saf is opened or replaced".to_string())
 }
 
 /// "Use another archive pair" (swap). `other` is the folder or `.sah` that goes in.
@@ -400,6 +425,27 @@ mod tests {
         let o = PublishOptions { check_version: Some(4), new_check_version: true, ..Default::default() };
         let changed = plan_publish(&[patch], &dest, &o, &Job::silent()).unwrap();
         assert!(text(&publish_rows(&changed), "Changes").contains("every player is told to reinstall the game"));
+    }
+
+    #[test]
+    fn cleanup_and_put_back_rows_name_the_files_and_the_way_back() {
+        use shaiya_archive::cleanup::{Item, Manifest, Plan};
+        use shaiya_archive::health::{Kind, Leftover};
+        let l = |kind: Kind, files: &[&str], bytes: u64| Leftover { kind, id: format!("{}:{}", kind.name(), files[0]), files: files.iter().map(|f| f.to_string()).collect(), bytes, pre_selected: false, note: String::new() };
+        let plan = Plan { items: vec![l(Kind::SahBak, &["data.sah.bak"], 2048), l(Kind::SwapPair, &["data.x.sah", "data.x.saf"], 2048)], files: 3, bytes: 4096 };
+        let r = cleanup_rows(&plan);
+        assert_eq!(labels(&r), ["Changes", "Writes", "Undo", "Game"]);
+        let c = text(&r, "Changes");
+        assert!(c.contains("3 files") && c.contains("4.1 KB") && c.contains("data.sah.bak, data.x.sah, data.x.saf"), "{c}");
+        let w = text(&r, "Writes");
+        assert!(w.contains("shaiya-toolkit-backups\\cleanup-<UTC>\\") && w.contains("manifest.json") && w.contains("nothing is copied or deleted"), "{w}");
+        assert!(text(&r, "Undo").contains("Put back in Health") && text(&r, "Undo").contains("cleanup-<UTC>"));
+        let item = |from: &str, state: &str| Item { group: from.into(), kind: "stray-temp".into(), from: from.into(), to: from.into(), bytes: 1, state: state.into() };
+        let m = Manifest { id: "cleanup-20261101T000000Z".into(), created_utc: String::new(), tool: String::new(), state: "moved".into(), items: vec![item("a", "moved"), item("b", "put-back")] };
+        let r = put_back_rows(&m);
+        assert_eq!(labels(&r), ["Changes", "Writes", "Undo", "Game"]);
+        assert!(text(&r, "Changes").contains("moves 1 file back to where it was: a"), "{}", text(&r, "Changes"));
+        assert!(text(&r, "Writes").contains("cleanup-20261101T000000Z") && text(&r, "Undo").contains("Clean up"));
     }
 
     #[test]

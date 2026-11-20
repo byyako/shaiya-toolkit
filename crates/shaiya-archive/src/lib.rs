@@ -10,11 +10,13 @@
 //! [`Archive`] reads files from an archive on disk; [`compact`] rewrites `data.saf` without dead space. Patches live in `shaiya-patch`.
 
 pub mod check;
+pub mod cleanup;
 pub mod client;
 pub mod compact;
 pub mod diff;
 pub mod edit;
 pub mod extract;
+pub mod health;
 pub mod journal;
 pub mod layout;
 pub mod pack;

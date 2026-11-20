@@ -27,7 +27,7 @@ The id used by a monster area in a `.svmap` file ([server map](svmap.md)) is the
 |---|---|
 | `shaiya-clientdata` `Monsters` | reads name, model, level, ai and hp |
 | Shaiya SVMap Editor and `shaiya svmap` | monster names and levels, the colours by level, the heatmap, the Spawns tab, and the rules `mob-unknown` and `area-mob-zero` |
-| `shaiya-sdata`, `shaiya sdata table` and the SData tab's View table | every field of the 31-byte block as a column (layout `monster-31`), or of the 36-byte block of the FIT-ONLY layout `monster-36`; the 31-byte layout names its columns, `monster-36` names none: its text column is `s0` and the other columns are `f<offset>`; a stored name's trailing NUL is not shown |
+| `shaiya-sdata`, `shaiya sdata table` and the SData tab's View table | every field of the 31-byte block as a column (layout `monster-31`), or of the 36-byte block of the FIT-ONLY layout `monster-36`; the 31-byte layout names its columns, `monster-36` names none: its columns are `id` (the record's number, counted by the table's loop, not stored in the file), `s0` (the text) and `f<offset>` (the fixed block); a stored name's trailing NUL is not shown |
 
 The file is only read.
 

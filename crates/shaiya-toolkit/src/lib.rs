@@ -6,6 +6,7 @@ pub mod apply_tab;
 pub mod archive_view;
 pub mod clients;
 pub mod explain;
+pub mod health;
 pub mod inspect;
 pub mod keys;
 pub mod patch_builder;
@@ -20,6 +21,7 @@ use apply_tab::ApplyTab;
 use archive_view::{ArchiveView, OpenSource, TabRequest};
 use start::StartAction;
 use clients::{ClientInfo, ClientsAction, ClientsUi};
+use health::HealthAction;
 use egui::{Key, Modifiers, RichText};
 use inspect::InspectTab;
 use keys::KeyForm;
@@ -145,6 +147,7 @@ pub struct ToolkitApp {
     pub inspect: InspectTab,
     pub keys: KeyForm,
     pub clients: ClientsUi,
+    pub health: health::HealthView,
     /// The saved client (or opened folder) the tabs work on.
     pub current: Option<ClientInfo>,
     ini_stamp: Option<(PathBuf, u64)>,
@@ -257,6 +260,29 @@ impl ToolkitApp {
             StartAction::Publish => {
                 self.patch.publish.open();
                 self.set_tab(Tab::Patch, cx);
+            }
+            StartAction::Health => self.open_health(None, cx),
+        }
+    }
+
+    /// Opens the Health window for a saved client by name; `None` is the open client, else the first saved client that is there.
+    pub fn open_health(&mut self, name: Option<&str>, cx: &mut ToolkitCx<'_>) {
+        let saved = cx.shell.shared().clients.clone();
+        let wanted = name.map(str::to_string).or_else(|| self.current.as_ref().map(|c| c.name.clone()));
+        let pick = match wanted {
+            Some(n) => saved.iter().find(|c| c.name.eq_ignore_ascii_case(&n)),
+            None => saved.iter().find(|c| has_sah(Path::new(&c.path))),
+        };
+        match pick {
+            Some(c) => {
+                let (n, d) = (c.name.clone(), PathBuf::from(&c.path));
+                self.health.open_for(&n, d, cx);
+            }
+            None => {
+                self.health.open = true;
+                if saved.is_empty() {
+                    cx.shell.status("Add a client folder first");
+                }
             }
         }
     }
@@ -514,6 +540,7 @@ impl ToolApp for ToolkitApp {
             inspect: InspectTab::new(),
             keys: KeyForm::default(),
             clients: ClientsUi::default(),
+            health: health::HealthView::default(),
             current: None,
             ini_stamp: None,
             folder_prompt: None,
@@ -572,9 +599,35 @@ impl ToolApp for ToolkitApp {
         for a in actions {
             match a {
                 ClientsAction::Open(n) => self.select_client(&n, cx),
+                ClientsAction::Health(n) => self.open_health(Some(&n), cx),
                 ClientsAction::Reload(dir) => {
                     if self.archive.client_dir() == Some(dir.as_path()) || self.archive.source_dir_is(&dir) {
                         self.archive.reopen(cx);
+                    }
+                }
+            }
+        }
+        for a in self.health.ui(&ctx, cx, &mut self.archive) {
+            match a {
+                HealthAction::Reload(dir) => {
+                    if self.archive.client_dir() == Some(dir.as_path()) || self.archive.source_dir_is(&dir) {
+                        self.archive.reopen(cx);
+                    }
+                }
+                HealthAction::Compact(dir) => {
+                    if self.archive.client_dir() == Some(dir.as_path()) {
+                        self.set_tab(Tab::Archive, cx);
+                        self.archive.request_compact();
+                    } else {
+                        cx.shell.status("Open this client first (toolbar), then use Compact... again");
+                    }
+                }
+                HealthAction::Prune(dir) => {
+                    if self.current.as_ref().is_some_and(|c| c.dir == dir) {
+                        self.set_tab(Tab::Apply, cx);
+                        self.apply.request_prune(self.current.as_ref());
+                    } else {
+                        cx.shell.status("Open this client first (toolbar), then use Prune... again");
                     }
                 }
             }
@@ -611,6 +664,10 @@ impl ToolApp for ToolkitApp {
                 if ui.button("Manage client folders...").clicked() {
                     ui.close();
                     self.clients.open_manage(cx.shell);
+                }
+                if ui.button("Client health...").clicked() {
+                    ui.close();
+                    self.open_health(None, cx);
                 }
             }
             Menu::Edit => {
@@ -657,6 +714,7 @@ impl ToolApp for ToolkitApp {
         v.push(Command { id: "apply-patches", label: "Apply the listed patches...".into(), shortcut: None, enabled: self.apply.apply_blocked(client).is_none() });
         v.push(Command { id: "history-rollback", label: "Undo last applied change (roll back)...".into(), shortcut: None, enabled: self.undo_state().is_ok() });
         v.push(Command { id: "hash-selected", label: "Hash selected files".into(), shortcut: None, enabled: !self.inspect.is_empty() });
+        v.push(Command { id: "client-health", label: "Client health...".into(), shortcut: None, enabled: true });
         v
     }
 
@@ -677,6 +735,7 @@ impl ToolApp for ToolkitApp {
             }
             "history-rollback" => self.undo_last_change(cx),
             "hash-selected" => self.inspect.hash_selected(cx),
+            "client-health" => self.open_health(None, cx),
             other => {
                 self.set_tab(Tab::Archive, cx);
                 let requests = self.archive.run_command(other, cx);

@@ -24,7 +24,7 @@ Shaiya Toolkit shows what a change will do before it does it: every confirmation
 | Item | Where | Made by | Notes |
 |---|---|---|---|
 | Journal | `<client>/shaiya-toolkit-backups/<UTC stamp>-<label>/` (`--journal-dir` changes the folder) | every in-place change, unless `--no-journal` | `journal.txt`, a copy of the old `data.sah`, and a copy of each loose file the change overwrote. This is what rollback uses. |
-| `data.sah.bak` | next to `data.sah` | in-place changes (including `--no-journal`), `compact --in-place` | A plain copy of the previous index. **Each change overwrites it**, so it holds only the index from before the *latest* change. It is a manual fallback; no command reads it. |
+| `data.sah.bak` | next to `data.sah` | in-place changes (including `--no-journal`), `compact --in-place` | A plain copy of the previous index. **Each change overwrites it**, so it holds only the index from before the *latest* change. It is a manual fallback; no command reads it. [Client health](client-health.md) lists it and can move it into a cleanup folder (never deleting it); it is not ticked at first. |
 | Loose file backups | in the journal | the change that overwrote the file | **With `--no-journal` there is no backup of an overwritten loose file.** |
 | `NAME.bak` | next to the file | `sdata ... --in-place` | The original; never overwritten (a time-stamped name is used when `NAME.bak` exists). |
 

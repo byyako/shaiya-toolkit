@@ -15,6 +15,8 @@ pub enum StartAction {
     Go(Tab),
     /// The Patch builder with its "Publish for the regular updater" section open.
     Publish,
+    /// The Health window for the open client (or the first saved one).
+    Health,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -71,6 +73,13 @@ pub fn start_jobs() -> Vec<StartJob> {
             line: "Open Item, Skill, Monster and NpcQuest files as tables you can filter and export as CSV. Read only.",
             button: "Open SData",
             action: StartAction::Go(Tab::SData),
+        },
+        StartJob {
+            key: "client-health",
+            title: "Check a client folder's health",
+            line: "See the index check, unused space in data.saf, journals and leftover files, and move leftovers aside (nothing is deleted; Put back undoes it).",
+            button: "Open Health",
+            action: StartAction::Health,
         },
     ]
 }

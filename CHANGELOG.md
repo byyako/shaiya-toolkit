@@ -10,10 +10,13 @@ All notable changes are listed here, newest first. The format follows [Keep a Ch
 - New FIT-ONLY table layouts read files that were shown as hex before: `Item.SData` of kr-ep8 and fawkes-v68 (`item-134`), `Monster.SData` of kr-ep8 and fawkes-v68 (`monster-36`) and `NpcQuest.SData` of kr-ep8 and fawkes-v68 (`npcquest-287`). Their columns are named by position.
 - The Archive tab previews `world/<id>.wld` maps: a field shows a grey hillshade top view (north up) with "Map <id>, <n> x <n> corners, <size> units" and its height range; a dungeon map shows "Dungeon map: the floor is in <name>; no top view yet". A `.wld` that does not parse shows the existing error with hex, whatever its first bytes are.
 - The Archive tab previews `.smod` models: the textured, lit picture of the SVMap Editor's Models window with "N modules, N triangles, N textures (N missing)", textures looked up in the same archive under `Entity/Texture`; a missing texture is named and drawn grey. `.3DC` and `.3DO` models stay hex and say "no preview (format not documented yet)".
+- Client health: **File > Client health...**, the **Health...** button in Manage client folders and a row on the Start page open a window that shows, for a saved client, the index check, dead space in `data.saf` (with a **Compact...** link), the journals (with **Prune...**), an unfinished change, `Version.ini` `StartUpdate=UPDATE_START`, leftover files and earlier cleanup folders. **Clean up...** (after the usual Changes / Writes / Undo / Game confirmation) moves the ticked leftovers into `shaiya-toolkit-backups/cleanup-<UTC>/` with a `manifest.json` and deletes nothing; **Put back...** moves them back. A temporary file that a pending change names, and the map editor's backups while its install record exists, are never offered.
 
 ### shaiya (CLI)
 
 - `sdata table` prints the same sentence on stderr (the FIT-ONLY one, or "Loader-verified on: <clients>."; also with `--csv` and with `--quiet`), and its JSON gains `status` (`loader-verified` or `fit-only`), `loader_verified_on` and `fit_only_on` next to `chosen_by` (also in the `--csv --json` summary). The existing keys are unchanged.
+- `clients health NAME|DIR` looks at a client folder and writes nothing: the index check, dead space in `data.saf`, journals, a pending change, `Version.ini` `StartUpdate=UPDATE_START` and the leftovers; exit 0 when nothing is found, 1 when something is, 3 when the index cannot be read; with `--json` the report.
+- `clients clean NAME|DIR --move KIND... [--dry-run]` moves leftovers (`sah-bak`, `stray-temp`, `swap-pair`, `editor-backup`, `editor-first-copy`) into `shaiya-toolkit-backups/cleanup-<UTC>/` and deletes nothing; `clients clean --put-back DIR` moves them back. Exit 4 when the game or another program holds the files, a pending change is still recorded after recovery, or a destination exists.
 
 ### Libraries
 
@@ -21,9 +24,11 @@ All notable changes are listed here, newest first. The format follows [Keep a Ch
 - `shaiya-sdata` `Table::to_json` gains `status`, `loader_verified_on` and `fit_only_on`.
 - `shaiya-clientdata`: new `render` module with `shade_rect` (moved from `shaiya-svmap-tools`, which re-exports it; the editor's pictures are unchanged) and `hillshade_grey`.
 - `shaiya-clientdata` `render` also holds the model picture moved out of the SVMap Editor (`render_picture`, `PreviewFit`, `PreviewTri`, `ModelPicture`, `MipImage`, `mip_chain`, `mip_image_capped`) and the new `model_picture`, which builds the preview of a parsed `Smod`; `texture_candidates` lists the paths a texture name can have. The editor's Models-window pictures are unchanged.
+- `shaiya-archive`: new `health` module (`report`, read only) and `cleanup` module (`clean`, `clean_by`, `plan`, `put_back`, `list_folders`, `Manifest`); `shaiya-archive` now depends on `serde_json` (for `manifest.json`).
 
 ### Documentation
 
+- New guide [Client health and clean-up](docs/guides/client-health.md); [the toolkit's files](docs/formats/toolkit-files.md) describe cleanup folders and the keys of `manifest.json`; the Shaiya Toolkit and `shaiya` pages describe the Health window and `clients health` / `clients clean`. The Monster.SData page says the columns of `monster-36` are `id`, `s0` and `f<offset>`.
 - The version matrix says `FIT-ONLY <n>` (not `OK`) for the table fits that were not read from a client's loader (Item, Skill and NpcQuest on kr-ep8, fawkes-v68 and cn-ep4, Monster on kr-ep8 and fawkes-v68), has new Monster and NpcQuest rows, and records that cn-ep4 Monster has no fit. The Item, Skill, Monster and NpcQuest format pages, the SData files guide and the Toolkit and `shaiya` tool pages describe FIT-ONLY layouts and how a layout becomes loader-verified.
 
 ## [0.3.1] - 2026-11-20

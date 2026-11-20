@@ -15,11 +15,16 @@ The toolbar picker lists your saved client folders (the same list as `shaiya cli
 - **File > Add client folder...** (also on the picker) asks for a folder holding `data.sah` and a name. You can also drop a folder on the window and choose "Open this client".
 - **File > Manage client folders...** shows each client with its status, SAH version, file count and `Version.ini` CheckVersion and CurrentVersion; rename, edit the note, remove from the list (files untouched), or **Use another archive pair...** which swaps a different `data.sah`/`data.saf` in (the current pair is kept as `data.<UTC stamp>.sah/saf`; there is a "swap back").
 - **Open other archive...** opens any `.sah` (for example a stock `data.orig.sah`) read-only; changes to it can only be saved as a new archive.
+- **File > Client health...** (also the **Health...** button of a client in the Manage dialog, and the command palette) opens the [Health window](#client-health).
 - Shaiya Toolkit never scans your disks for clients. When a client opens, it finishes or discards the leftovers of an interrupted change and says so in the Activity panel.
 
 ## The Start page
 
-With no client or archive open, the Archive tab shows a **Start** page: one line for each job and a button that opens the right place. **Add client folder...** asks for a folder and a name; **Open other archive...** opens any `data.sah` read-only; **Open Patch builder** and **Open Apply & history** switch to those tabs; **Open Publish** opens the Patch builder with its publish section open. The page goes away as soon as an archive opens.
+With no client or archive open, the Archive tab shows a **Start** page: one line for each job and a button that opens the right place. **Add client folder...** asks for a folder and a name; **Open other archive...** opens any `data.sah` read-only; **Open Patch builder** and **Open Apply & history** switch to those tabs; **Open Publish** opens the Patch builder with its publish section open; **Open Health** opens the [Health window](#client-health) for the open client, or the first saved client that is there. The page goes away as soon as an archive opens.
+
+## Client health
+
+**File > Client health...** opens a window for one saved client (pick it at the top; **Check again** reads it again). It only looks: nothing in the client folder changes until you confirm a clean-up. It shows the index check (problems and warnings), the size of `data.saf` with its dead space and a **Compact...** link (the Archive tab's Compact confirmation, for the open client), the journals with a **Prune...** link (the Apply & history confirmation), a change that did not finish, `Version.ini` `StartUpdate=UPDATE_START` (explained, never edited), the leftovers with a checkbox each, and the earlier cleanup folders with **Put back...**. Only the leftovers that no undo, swap back or uninstall may need are ticked at first. **Clean up...** moves the ticked files into `shaiya-toolkit-backups/cleanup-<UTC>/` in the client folder and deletes nothing; **Put back...** moves them back. What each leftover is, what is never offered, and the command line: [Client health and clean-up](../guides/client-health.md).
 
 ## The six tabs
 
@@ -78,6 +83,8 @@ Buttons say what they do and the risky one is marked. Every confirmation that ch
 | Publish | "Players' updaters read UpdateVersion.ini ... a wrong value there stops every player's update" and the four rows: Changes (files copied, `PatchFileVersion A -> B`; a CheckVersion change says every player is told to reinstall), Writes (the files in the server folder), Undo ("no undo of its own, and no backup", with the old ini values), Game ("not involved: this writes into a server folder"). **Publish** / Cancel. |
 | Prune | Which journals are deleted and that those changes can then no longer be rolled back. **Prune** / Cancel. |
 | Swap archives | "Put PAIR in place of NAME's data.sah/data.saf?" and the four rows (the current pair is renamed to `data.<UTC stamp>.sah/.saf`). **Swap archives** / Cancel. |
+| Clean up | "Move N files of NAME into a cleanup folder? Nothing is deleted." and the four rows: Changes (the files and their size), Writes (the new `shaiya-toolkit-backups\cleanup-<UTC>\` with `manifest.json`; every file is renamed into it), Undo ("Put back in Health, cleanup-<UTC>"), Game (as above). **Clean up** / Cancel. |
+| Put back | "Move the files of cleanup-<UTC> back into NAME?" and the four rows (Game says "not involved": no `data.sah` or `data.saf` is opened). **Put back** / Cancel. |
 | Existing outputs | Skip existing / Overwrite / Cancel (extract, SData); Overwrite / Cancel (patch); Replace signature / Cancel. |
 | Discard, reload with pending changes | Discard / Keep; reload asks first. |
 | **The game or another program has the files** | "NAME's data.saf is open in another program (is the game running?). Close it and press Retry." **Retry** / Cancel. Nothing has been changed; close the program and press Retry. (Windows only; elsewhere the toolkit cannot tell.) |

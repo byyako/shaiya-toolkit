@@ -188,6 +188,8 @@ enum SwapFlow {
 pub enum ClientsAction {
     /// Open this saved client.
     Open(String),
+    /// Open the Health window for this saved client.
+    Health(String),
     /// A swap finished or failed: reload the open archive when it is this folder.
     Reload(PathBuf),
 }
@@ -305,6 +307,7 @@ impl ClientsUi {
             let mut open = true;
             let mut remove: Option<String> = None;
             let mut open_client: Option<String> = None;
+            let mut health_for: Option<String> = None;
             let mut edit: Option<(String, EditKind)> = None;
             let mut swap_for: Option<(String, PathBuf)> = None;
             let clients = cx.shell.shared().clients.clone();
@@ -342,6 +345,9 @@ impl ClientsUi {
                             if ui.add_enabled(st.found, egui::Button::new("Open")).clicked() {
                                 open_client = Some(c.name.clone());
                             }
+                            if ui.add_enabled(st.found, egui::Button::new("Health...")).on_hover_text("Look at leftovers, dead space and unfinished changes; nothing is changed until you confirm a clean-up").clicked() {
+                                health_for = Some(c.name.clone());
+                            }
                             if ui.button("Rename...").clicked() {
                                 edit = Some((c.name.clone(), EditKind::Rename));
                             }
@@ -369,6 +375,9 @@ impl ClientsUi {
             });
             if !open {
                 self.manage = false;
+            }
+            if let Some(n) = health_for {
+                out.push(ClientsAction::Health(n));
             }
             if let Some(n) = open_client {
                 out.push(ClientsAction::Open(n));

@@ -365,7 +365,7 @@ impl Marker {
     }
 }
 
-fn safe_rel(rel: &str) -> bool {
+pub(crate) fn safe_rel(rel: &str) -> bool {
     !rel.is_empty() && !rel.starts_with(['/', '\\']) && !rel.contains(':') && rel.split(['/', '\\']).all(|p| p != "..")
 }
 

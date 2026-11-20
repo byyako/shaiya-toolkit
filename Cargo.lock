@@ -2615,6 +2615,7 @@ version = "0.3.1"
 dependencies = [
  "encoding_rs",
  "serde",
+ "serde_json",
  "shaiya-core",
  "shaiya-testkit",
 ]
