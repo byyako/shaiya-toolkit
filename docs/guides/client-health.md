@@ -37,7 +37,7 @@ The editor's two kinds are **not offered while `svmap-editor-install.json` is in
 
 1. finishes or discards an interrupted change (the same recovery as before every write) and stops if a pending change is still recorded afterwards;
 2. checks that the game or another program is not holding `data.sah` or `data.saf` (Windows; elsewhere it cannot tell, and the confirmation and the command say so);
-3. makes `shaiya-toolkit-backups/cleanup-<UTC stamp>/` and writes `manifest.json` there with every file marked `planned` ([the file](../formats/toolkit-files.md#cleanup-folders-shaiya-toolkit-backupscleanup-utc-stamp));
+3. makes `shaiya-toolkit-backups/cleanup-<UTC stamp>/` and writes `manifest.json` there with every file marked `planned` ([the file](../formats/toolkit-files.md#cleanup-folders));
 4. renames the files into that folder one by one, rewriting `manifest.json` after each.
 
 A rename that fails stops the run and says how many files were moved. Nothing is copied and deleted instead, so a clean-up only ever renames files within the client folder. The journals are not touched: a cleanup folder is not a journal and does not count as one.

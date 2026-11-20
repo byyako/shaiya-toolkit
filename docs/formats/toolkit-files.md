@@ -84,7 +84,7 @@ A swap writes `data.swap-journal` (one line per rename: the old path, a tab, the
 
 Atomic writes go to `.<name>.<pid>.shaiya-tmp` in the folder of the target, are flushed, and are renamed over it. A failed or cancelled write removes the temporary file. A process that is killed leaves it. Shaiya Toolkit sweeps `*.shaiya-tmp` files older than a day from its own data folders, not from client folders. A patch apply also writes `.update.saf.<pid>.shaiya-tmp`, the unpacked archive data of the patch, and removes it when it ends. [Client health](../guides/client-health.md) lists a leftover `*.shaiya-tmp` file as a stray one only when no pending marker names it (the marker's `staged` entries are the files recovery still needs); a clean-up moves it into a cleanup folder instead of deleting it.
 
-## Cleanup folders: `shaiya-toolkit-backups/cleanup-<UTC stamp>/`
+## Cleanup folders
 
 A clean-up ([Client health](../guides/client-health.md)) moves leftover files out of the client folder into a new folder `cleanup-<UTC stamp>/` next to the journals. Each file keeps its path relative to the client folder. The folder holds the moved files and `manifest.json`. A cleanup folder has no `journal.txt`, so it is not a journal: it is not listed by `patch history`, not counted as a change, and `prune` leaves it alone.
 
