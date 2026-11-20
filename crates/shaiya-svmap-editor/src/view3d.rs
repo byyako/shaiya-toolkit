@@ -19,6 +19,9 @@ use crate::view2d::{self, DrawTarget, Request, Tool};
 
 pub const FOV_Y: f32 = 50.0 * std::f32::consts::PI / 180.0;
 const FAR: f32 = 16000.0;
+/// The largest distance of the orbit camera from its focus: the wheel, Frame map, Frame box and the switch from 2D stop here (half of [`FAR`], so
+/// the focus stays inside the far plane). A map too big to fit at this distance is framed at it and is cut off at the edges.
+const MAX_DIST: f32 = 8000.0;
 /// The part of the picture (each way, from the centre) the fitted map may fill.
 const FIT_MARGIN: f32 = 0.95;
 const MIN_PITCH: f32 = -89.0 * std::f32::consts::PI / 180.0;
@@ -127,7 +130,7 @@ impl Camera3d {
         if self.fly {
             self.fly_speed = (self.fly_speed * (scroll * 0.002).exp()).clamp(2.0, 2000.0);
         } else {
-            self.dist = (self.dist * (-scroll * 0.0016).exp()).clamp(3.0, 8000.0);
+            self.dist = (self.dist * (-scroll * 0.0016).exp()).clamp(3.0, MAX_DIST);
         }
     }
 
@@ -158,7 +161,7 @@ impl Camera3d {
         let c = math3d::scale(math3d::add(min, max), 0.5);
         let r = (math3d::len(math3d::sub(max, min)) * 0.5).max(6.0);
         self.focus = c;
-        self.dist = (r / (FOV_Y * 0.5).sin() * 1.05).clamp(12.0, 8000.0);
+        self.dist = (r / (FOV_Y * 0.5).sin() * 1.05).clamp(12.0, MAX_DIST);
         if self.fly {
             self.fly_eye = math3d::sub(c, math3d::scale(self.forward(), self.dist));
         }
@@ -179,7 +182,7 @@ impl Camera3d {
             let toward_eye = -math3d::dot(v, f);
             need = need.max(toward_eye + math3d::dot(v, r).abs() / tx).max(toward_eye + math3d::dot(v, u).abs() / t);
         }
-        (need * 1.01).clamp(40.0, 8000.0)
+        (need * 1.01).clamp(40.0, MAX_DIST)
     }
 
     /// The whole map in view from the south-west-ish default direction, with its height, at this window shape.
@@ -214,7 +217,7 @@ impl Camera3d {
         if !depth.is_finite() || depth < 3.0 {
             return;
         }
-        self.dist = depth.min(8000.0);
+        self.dist = depth.min(MAX_DIST);
         self.focus = math3d::add(eye, math3d::scale(f, self.dist));
     }
 
@@ -333,7 +336,7 @@ pub fn enter_from_2d(cam: &mut Camera3d, view: &crate::doc::View, viewport: Vec2
     cam.fly = false;
     cam.focus = [view.cx, ground(view.cx, view.cz), view.cz];
     let visible_h = viewport.y.max(1.0) / view.zoom.max(0.01);
-    cam.dist = (visible_h / (2.0 * (FOV_Y * 0.5).tan()) * 1.1).clamp(20.0, 8000.0);
+    cam.dist = (visible_h / (2.0 * (FOV_Y * 0.5).tan()) * 1.1).clamp(20.0, MAX_DIST);
 }
 
 /// The reverse: the 2D view centres on the 3D focus and keeps about the same extent.

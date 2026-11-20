@@ -373,7 +373,7 @@ mod tests {
         let (root, client) = guard_tree("named");
         let clients = [client.clone()];
         assert!(check_target(&client, &[], &clients).is_err());
-        // with a trailing separator, and spelled through `..`
+        // spelled through `..`
         assert!(check_target(&root.join("out").join("..").join("client"), &[], &clients).is_err());
         let _ = std::fs::remove_dir_all(&root);
     }

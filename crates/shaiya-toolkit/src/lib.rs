@@ -216,6 +216,10 @@ impl ToolkitApp {
     }
 
     pub fn set_tab(&mut self, tab: Tab, cx: &mut ToolkitCx<'_>) {
+        if tab == Tab::Apply && self.tab != Tab::Apply {
+            // a change made outside the Toolkit (the CLI, another window) is listed when the tab is shown
+            self.apply.refresh_history();
+        }
         self.tab = tab;
         cx.settings.tab = tab.key().to_string();
     }
@@ -530,6 +534,7 @@ impl ToolApp for ToolkitApp {
         let focused = ctx.input(|i| i.viewport().focused).unwrap_or(true);
         if focused && !self.was_focused {
             clients::reload(cx.shell);
+            self.apply.refresh_history();
         }
         self.was_focused = focused;
         self.refresh_ini();

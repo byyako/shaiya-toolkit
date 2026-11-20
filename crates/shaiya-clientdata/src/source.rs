@@ -144,7 +144,8 @@ impl ClientSource {
 
     /// Whether some file path (as in [`list`](Self::list)) satisfies `pred`, looking at no more than `limit` entries (files and
     /// folders) and at no folder deeper than [`PROBE_DEPTH`]. For an extracted folder this stops a wrong folder (a drive root, a
-    /// home folder) from being walked to the end; an archive's index is already in memory and is always searched whole.
+    /// home folder) from being walked to the end; an archive's index is already in memory and is always searched whole. Links to
+    /// folders are followed like folders, so a link that leads back up the tree is walked only until the depth or entry limit.
     pub fn has_any(&self, pred: impl Fn(&str) -> bool, limit: usize) -> Probed {
         match &self.backing {
             Backing::Archive(a) => {

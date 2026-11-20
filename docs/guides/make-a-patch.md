@@ -22,7 +22,7 @@ All three inputs are optional, but at least one is needed.
 shaiya patch build -o ps0110.patch --files changed --only-changed C:\Games\Shaiya
 ```
 
-In Shaiya Toolkit's Patch builder the same thing is the box "Leave out files that are already the same in NAME", on when a client is selected; the contents table shows those files as "same, left out". If nothing differs, the patch is empty and the builder says so.
+In Shaiya Toolkit's Patch builder the same thing is the box "Leave out files that are already the same in NAME", on when a client is selected; the contents table shows those files as "same, left out". The Toolkit makes this comparison for whatever the contents come from (a folder, pending changes or the difference of two archives), while `shaiya patch build --diff` refuses `--only-changed`. If nothing differs, the patch is empty and the builder says so.
 
 **From the difference of two archives.** When you have the old and the new `data.sah`/`data.saf` (two client folders, or a stock pair and your edited one):
 

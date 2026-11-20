@@ -64,8 +64,19 @@ enum BuildFlow {
     Running(PathBuf, TaskHandle<BuildDone>),
 }
 
-/// (resolved contents generation, the Archive tab's change counter, client folder).
-type SameKey = (u64, u64, PathBuf);
+/// (resolved contents generation, the Archive tab's change counter, client folder, length and modified time of its `data.sah`:
+/// a change made outside the Toolkit changes the last one, so the comparison is made again).
+type SameKey = (u64, u64, PathBuf, Option<(u64, Option<std::time::SystemTime>)>);
+
+/// Length and modified time of the client's `data.sah` (`None` when it cannot be read).
+fn sah_stamp(dir: &std::path::Path) -> Option<(u64, Option<std::time::SystemTime>)> {
+    std::fs::metadata(dir.join("data.sah")).ok().map(|m| (m.len(), m.modified().ok()))
+}
+
+/// Build waits for the comparison with the client only while "leave out the same files" is ticked.
+fn waits_for_same(skip_same: bool, comparing: bool) -> bool {
+    skip_same && comparing
+}
 
 pub struct PatchBuilder {
     pub files_dir: Option<PathBuf>,
@@ -326,7 +337,7 @@ impl PatchBuilder {
 
     /// Starts the comparison with the selected client (read-only) when it is wanted and not known for the current contents.
     fn sync_same(&mut self, client: Option<&ClientInfo>, archive: &ArchiveView, cx: &mut ToolkitCx<'_>) {
-        self.cur_key = client.map(|c| (self.all_gen, archive.changed_counter, c.dir.clone()));
+        self.cur_key = client.map(|c| (self.all_gen, archive.changed_counter, c.dir.clone(), sah_stamp(&c.dir)));
         if let (true, Some(key)) = (self.skip_same && !self.all.files.is_empty(), self.cur_key.clone()) {
             let running = self.same_task.as_ref().is_some_and(|(k, _)| *k == key);
             if self.same_for.as_ref() != Some(&key) && !running {
@@ -458,7 +469,7 @@ impl PatchBuilder {
             return;
         }
         let Some(out) = self.out_path() else { return };
-        if self.same_task.is_some() {
+        if waits_for_same(self.skip_same, self.same_task.is_some()) {
             self.flow = BuildFlow::WaitSame(out);
         } else {
             self.after_checks(out, cx);
@@ -571,7 +582,7 @@ impl PatchBuilder {
         match std::mem::replace(&mut self.flow, BuildFlow::Idle) {
             BuildFlow::Idle => {}
             BuildFlow::WaitSame(out) => {
-                if self.same_task.is_none() {
+                if !waits_for_same(self.skip_same, self.same_task.is_some()) {
                     self.after_checks(out, cx);
                 } else {
                     self.flow = BuildFlow::WaitSame(out);
@@ -902,5 +913,17 @@ impl PatchBuilder {
         if self.check_version.is_empty() {
             self.check_version = keys.check_version.clone();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::waits_for_same;
+
+    #[test]
+    fn build_waits_for_the_comparison_only_when_files_are_being_left_out() {
+        assert!(waits_for_same(true, true), "box ticked, comparison running: wait");
+        assert!(!waits_for_same(false, true), "box unticked: the comparison does not matter, build now");
+        assert!(!waits_for_same(true, false) && !waits_for_same(false, false));
     }
 }

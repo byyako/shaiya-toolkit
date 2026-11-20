@@ -7,6 +7,8 @@ All notable changes are listed here, newest first. The format follows [Keep a Ch
 ### Shaiya Toolkit
 
 - DXT2 and DXT4 textures now preview and pass the texture check: they are read as DXT3 and DXT5 blocks and the colour is un-premultiplied. Before, such a file (`Item/DDS/reflection.dds` of the US EP4.5 client) was refused as `texture-unreadable`.
+- Apply & history lists a change made outside the Toolkit (for example by the command line) when you switch to the tab or the window gets focus back.
+- The Patch builder no longer waits for the comparison with the client when "Leave out files that are already the same" is unticked, and it compares again when the client's `data.sah` changed outside the Toolkit.
 
 ### Libraries
 
@@ -80,7 +82,6 @@ All notable changes are listed here, newest first. The format follows [Keep a Ch
 ### Shaiya SVMap Editor
 
 - File > Export may write a file in a folder that holds the client folder (for example the Desktop); a file in or at the client folder stays refused, also through a junction or symbolic link.
-
 - The 3D view's Frame map fits the whole map with its height at the current window shape, so tall small dungeons are no longer cropped. New View menu entries: Top-down 3D view, Level 3D view and 45 degree 3D view.
 
 ### Documentation

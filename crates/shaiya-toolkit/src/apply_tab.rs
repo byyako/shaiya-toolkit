@@ -370,6 +370,11 @@ impl ApplyTab {
         self.history.iter().rev().find(|(j, r)| j.state == State::Applied && matches!(r, Rollback::Possible)).map(|(j, _)| j)
     }
 
+    /// Reads the history again on the next frame (a journal may have been written outside the Toolkit).
+    pub fn refresh_history(&mut self) {
+        self.history_stamp.clear();
+    }
+
     pub fn history(&self) -> &[(Journal, Rollback)] {
         &self.history
     }

@@ -424,6 +424,7 @@ fn cancelling_a_long_extract_ends_cancelled() {
         let n = e.file_name().to_string_lossy().into_owned();
         assert!(!n.contains("shaiya-tmp"), "no half-written file stays: {n}");
     }
+    h.app.shell.tasks().release_progress();
 }
 
 #[test]
@@ -1286,6 +1287,31 @@ fn the_patch_builder_leaves_out_files_that_are_already_the_same_in_the_client() 
     assert!(skipped(&w.h).is_empty());
 }
 
+#[test]
+fn the_same_files_comparison_is_made_again_when_the_clients_archive_changes_outside_the_toolkit() {
+    let mut w = open_world("w4-same-cache");
+    let src = TempDir::new("w4-same-cache-src");
+    let files = src.path().join("mod");
+    std::fs::create_dir_all(files.join("Item/3DO")).unwrap();
+    std::fs::write(files.join("Item/3DO/a.txt"), b"hello text").unwrap(); // identical to the client's
+    std::fs::write(files.join("c.txt"), b"fresh").unwrap();
+    go(&mut w.h, Tab::Patch);
+    w.h.drop_files(std::slice::from_ref(&files));
+    let skipped = |h: &Harness<ToolkitApp>| h.app.app.patch.rows.iter().filter(|r| r.skipped).map(|r| r.path.clone()).collect::<Vec<_>>();
+    assert!(w.h.wait_until(WAIT, |h| skipped(h) == ["Item/3DO/a.txt"] && h.app.app.patch.checks_done()), "a.txt is the same");
+    // another program changes a.txt in the client and adds a file: the archive's index changes length and time
+    let dir = w.client_dir();
+    let put = |path: &str, bytes: &[u8], mode| shaiya_archive::edit::Put { path: path.into(), source: shaiya_archive::edit::Source::Bytes(bytes.to_vec()), version: 1, mode };
+    let plan = shaiya_archive::edit::EditPlan {
+        puts: vec![put("Item/3DO/a.txt", b"changed outside", shaiya_archive::edit::PutMode::ReplaceOnly), put("extra.txt", b"x", shaiya_archive::edit::PutMode::AddOnly)],
+        label: "outside".into(),
+        ..shaiya_archive::edit::EditPlan::default()
+    };
+    let opts = shaiya_archive::edit::InPlaceOptions { journal: shaiya_archive::journal::JournalMode::In(dir.join(shaiya_archive::journal::DEFAULT_DIR)), legacy_bak: false, check_in_use: false };
+    shaiya_archive::edit::apply_in_place(&dir, &plan, &opts, &shaiya_core::Job::silent()).unwrap();
+    assert!(w.h.wait_until(WAIT, |h| skipped(h).is_empty() && h.app.app.patch.input().files.len() == 2), "a.txt now differs from the client, so it is built");
+}
+
 // ------------------------------------------------------------------------------------------------ T7 W7: SData table view
 
 fn put_u32(v: &mut Vec<u8>, n: u32) {
@@ -1419,4 +1445,27 @@ fn the_archive_preview_has_a_view_table_button_and_the_table_opens_from_the_clie
     w.h.frames(2);
     assert!(w.h.wait_until(WAIT, |h| h.app.app.table.as_ref().is_some_and(|t| !t.is_loading() && !t.is_table())), "the fixture's Item.SData is no table: hex");
     assert!(w.h.app.app.table.as_ref().unwrap().raw_message().unwrap().contains("No table layout fits this file (21 bytes); shown as hex"));
+}
+
+#[test]
+fn the_history_lists_a_change_made_outside_the_toolkit_when_the_tab_is_shown() {
+    let mut w = open_world("w4-history");
+    go(&mut w.h, Tab::Apply);
+    assert!(w.h.app.app.apply.history().is_empty(), "nothing has been applied yet");
+    // another program (the CLI) applies a change: the journal appears on disk, the Toolkit did nothing
+    let dir = w.client_dir();
+    let root = dir.join(shaiya_archive::journal::DEFAULT_DIR);
+    let plan = shaiya_archive::edit::EditPlan {
+        puts: vec![shaiya_archive::edit::Put { path: "outside.txt".into(), source: shaiya_archive::edit::Source::Bytes(b"x".to_vec()), version: 1, mode: shaiya_archive::edit::PutMode::AddOnly }],
+        label: "outside".into(),
+        ..shaiya_archive::edit::EditPlan::default()
+    };
+    let opts = shaiya_archive::edit::InPlaceOptions { journal: shaiya_archive::journal::JournalMode::In(root), legacy_bak: false, check_in_use: false };
+    shaiya_archive::edit::apply_in_place(&dir, &plan, &opts, &shaiya_core::Job::silent()).unwrap();
+    w.h.frames(3);
+    assert!(w.h.app.app.apply.history().is_empty(), "the list is not re-read by itself");
+    go(&mut w.h, Tab::Archive);
+    go(&mut w.h, Tab::Apply);
+    assert!(w.h.wait_until(WAIT, |h| h.app.app.apply.history().len() == 1), "showing the tab lists the journal");
+    assert_eq!(w.h.app.app.apply.history()[0].0.label, "outside");
 }

@@ -31,11 +31,11 @@ The `README.txt` inside each zip carries the same notice as the repository READM
 
 | Item | Budget |
 |---|---|
-| `shaiya.exe` (command line), release, Windows x86_64 | 6 MB (measured 3,563,008 bytes) |
-| `shaiya-toolkit.exe` (GUI), release, Windows x86_64 | 20 MB (measured 14,142,464 bytes) |
-| `shaiya-svmap-editor.exe` (GUI), release, Windows x86_64 | 20 MB (measured 17,981,440 bytes) |
-| `shaiya-toolkit` zip (all three programs), Windows x86_64 | 17,000,000 bytes (measured 14,293,046 bytes) |
-| `shaiya` zip (command line only), Windows x86_64 | 3,000,000 bytes (measured 1,621,392 bytes) |
+| `shaiya.exe` (command line), release, Windows x86_64 | 6 MB (measured 3,871,744 bytes, 0.3.0) |
+| `shaiya-toolkit.exe` (GUI), release, Windows x86_64 | 20 MB (measured 14,648,832 bytes, 0.3.0) |
+| `shaiya-svmap-editor.exe` (GUI), release, Windows x86_64 | 20 MB (measured 17,984,000 bytes, 0.3.0) |
+| `shaiya-toolkit` zip (all three programs), Windows x86_64 | 17,000,000 bytes (measured 14,572,200 bytes, 0.3.0) |
+| `shaiya` zip (command line only), Windows x86_64 | 3,000,000 bytes (measured 1,722,625 bytes, 0.3.0) |
 | SAH parse of a 48,000-file index | under 150 ms (release) |
 | SAF handling | never loaded whole; buffers of at most 1 MiB |
 | SEED decrypt or encrypt | at least 40 MB/s single thread (release) |

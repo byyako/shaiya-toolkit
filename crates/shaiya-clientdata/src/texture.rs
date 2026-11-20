@@ -1,5 +1,6 @@
-//! Texture decoding to RGBA8: DDS (DXT1 to DXT5, DXT2/DXT4 with the colour un-premultiplied, and uncompressed bit-mask formats, first mip level), TGA (uncompressed and RLE
-//! true-colour, 24/32 bit) and BMP (24/32 bit, some "dds" files of the client are really bitmaps). No dependencies.
+//! Texture decoding to RGBA8: DDS (DXT1 to DXT5, DXT2/DXT4 with the colour un-premultiplied, and uncompressed bit-mask formats, first mip
+//! level), TGA (uncompressed and RLE true-colour, 24/32 bit) and BMP (24/32 bit, some "dds" files of the client are really bitmaps). No
+//! dependencies.
 
 use crate::error::{Cur, Result};
 
