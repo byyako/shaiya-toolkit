@@ -3,6 +3,7 @@
  "table": "Monster",
  "variant": "monster-31",
  "file": "Monster/Monster.SData",
+ "evidence": {"loader": ["us-108", "ru-ep3", "ru-ep45", "fr-ep54", "phoenix-ep63"], "fit_only": []},
  "sections": [
   {
    "name": "monsters",

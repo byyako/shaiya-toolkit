@@ -23,6 +23,8 @@ pub enum Cell {
     Fails,
     /// Every SData file is plain (not encrypted).
     Plain,
+    /// A table layout reads the whole file, but no loader of this client was read for it (the layout's `evidence`): never called OK.
+    FitOnly,
     NotAvailable,
 }
 
@@ -32,6 +34,7 @@ impl Cell {
             Cell::Ok => "OK",
             Cell::Fails => "fails",
             Cell::Plain => "Plain",
+            Cell::FitOnly => "FIT-ONLY",
             Cell::NotAvailable => "n/a",
         }
     }
@@ -66,10 +69,12 @@ pub enum Cap {
     // SData tables
     SdataItemFits,
     SdataSkillFits,
+    SdataMonsterFits,
+    SdataNpcQuestFits,
     SdataAutoPicks,
 }
 
-pub const CAPS: [Cap; 25] = [
+pub const CAPS: [Cap; 27] = [
     Cap::IndexParse,
     Cap::ToBytesIdentical,
     Cap::InspectSah,
@@ -94,6 +99,8 @@ pub const CAPS: [Cap; 25] = [
     Cap::MapNameIds,
     Cap::SdataItemFits,
     Cap::SdataSkillFits,
+    Cap::SdataMonsterFits,
+    Cap::SdataNpcQuestFits,
     Cap::SdataAutoPicks,
 ];
 
@@ -135,6 +142,8 @@ impl Cap {
             Cap::MapNameIds => "sysmsg has text for the distinct map-name message ids of the EP4.5 table",
             Cap::SdataItemFits => "sdata `Item` layout fits",
             Cap::SdataSkillFits => "sdata `Skill` layout fits",
+            Cap::SdataMonsterFits => "sdata `Monster` layout fits",
+            Cap::SdataNpcQuestFits => "sdata `NpcQuest` layout fits",
             Cap::SdataAutoPicks => "`auto` picks exactly one layout or none, every SData",
         }
     }
@@ -143,7 +152,7 @@ impl Cap {
 /// The client ids, the author's client first.
 pub const CLIENTS: [&str; 9] = ["us-108", "ru-ep3", "ru-ep45", "ru-ep54", "fr-ep54", "phoenix-ep63", "kr-ep8", "fawkes-v68", "cn-ep4"];
 
-use Cell::{Fails as F, NotAvailable as NA, Ok as O, Plain as P};
+use Cell::{Fails as F, FitOnly as FO, NotAvailable as NA, Ok as O, Plain as P};
 
 /// Expected cells, one row per capability in `CAPS` order, one column per client in `CLIENTS` order. `ru-ep54` has an
 /// index only (its data.saf is not available) and no game.exe. The two "fails" rows for kr-ep8, fawkes-v68 and cn-ep4 assert that parsing returns
@@ -151,7 +160,7 @@ use Cell::{Fails as F, NotAvailable as NA, Ok as O, Plain as P};
 ///
 /// Note: the 9 EP8 `DB*Data` binary-header files of kr-ep8 and fawkes-v68 do not survive `seed::unwrap` + CRC
 /// (the SEED rows of those two clients may need `Fails` once a run shows it); a run that disagrees must be reported, not forced to pass.
-pub const EXPECTED: [[Cell; 9]; 25] = [
+pub const EXPECTED: [[Cell; 9]; 27] = [
     /* IndexParse       */ [O, O, O, O, O, O, O, O, O],
     /* ToBytesIdentical */ [O, O, O, O, O, O, O, O, O],
     /* InspectSah       */ [O, O, O, O, O, O, O, O, O],
@@ -174,8 +183,10 @@ pub const EXPECTED: [[Cell; 9]; 25] = [
     /* AreaTxtRoundtrip       */ [O, NA, NA, NA, NA, NA, NA, NA, NA],
     /* NpcQuestGates          */ [O, O, O, NA, O, O, F, F, O],
     /* MapNameIds             */ [O, O, O, NA, O, O, O, O, O],
-    /* SdataItemFits          */ [O, O, O, NA, O, O, F, F, O],
-    /* SdataSkillFits         */ [O, O, O, NA, O, O, O, O, O],
+    /* SdataItemFits          */ [O, O, O, NA, O, O, FO, FO, FO],
+    /* SdataSkillFits         */ [O, O, O, NA, O, O, FO, FO, FO],
+    /* SdataMonsterFits       */ [O, O, O, NA, O, O, FO, FO, F],
+    /* SdataNpcQuestFits      */ [O, O, O, NA, O, O, FO, FO, FO],
     /* SdataAutoPicks         */ [O, O, O, NA, O, O, O, O, O],
 ];
 
@@ -183,9 +194,10 @@ pub const EXPECTED: [[Cell; 9]; 25] = [
 /// `ArchiveVisibleCount`: files minus shadowed. `ArchiveCheckIndex`: the `shadowed` warnings of the index-only check. `ArchiveFreeList`:
 /// free-list entries (preserved by an in-place edit). `ArchiveDataEnd`: `max(offset + length)`, asserted where the table gives it.
 /// `WldParse`/`WldLossless`: `.wld` files parsed / written back identically. `AreaTxtRoundtrip`: `world/*.txt` identical. `NpcQuestGates`: gatekeepers.
-/// `MapNameIds`: ids of the map-name table that have text in sysmsg. `SdataItemFits`/`SdataSkillFits`: records of `Item/Item.SData` and
-/// `Character/Skill.SData` read by their layout. `SdataAutoPicks`: SData files that exactly one layout reads (the rest are raw).
-pub const NUMBERS: [(Cap, [Option<u64>; 9]); 12] = [
+/// `MapNameIds`: ids of the map-name table that have text in sysmsg. `SdataItemFits`/`SdataSkillFits`/`SdataMonsterFits`/`SdataNpcQuestFits`:
+/// records of `Item/Item.SData`, `Character/Skill.SData`, `Monster/Monster.SData` and `Npc/NpcQuest.SData` (its quests) read by their layout;
+/// a `FIT-ONLY` cell is a layout that reads the file but was not read from that client's loader. `SdataAutoPicks`: SData files that exactly one layout reads (the rest are raw).
+pub const NUMBERS: [(Cap, [Option<u64>; 9]); 14] = [
     (Cap::ArchiveVisibleCount, [Some(19_939), Some(21_523), Some(23_533), Some(24_745), Some(24_599), Some(30_340), Some(34_418), Some(48_118), Some(20_418)]),
     (Cap::ArchiveCheckIndex, [Some(0), Some(0), Some(0), Some(0), Some(0), Some(0), Some(1), Some(1), Some(0)]),
     (Cap::ArchiveFreeList, [Some(0), Some(0), Some(507), Some(500), Some(500), Some(0), Some(0), Some(630), Some(500)]),
@@ -195,9 +207,11 @@ pub const NUMBERS: [(Cap, [Option<u64>; 9]); 12] = [
     (Cap::AreaTxtRoundtrip, [Some(33), None, None, None, None, None, None, None, None]),
     (Cap::NpcQuestGates, [Some(61), Some(61), Some(72), None, Some(72), Some(106), None, None, Some(61)]),
     (Cap::MapNameIds, [Some(47), Some(47), Some(47), None, Some(47), Some(47), Some(47), Some(47), Some(44)]),
-    (Cap::SdataItemFits, [Some(16_045), Some(15_612), Some(16_559), None, Some(17_090), Some(22_697), None, None, Some(16_047)]),
+    (Cap::SdataItemFits, [Some(16_045), Some(15_612), Some(16_559), None, Some(17_090), Some(22_697), Some(25_245), Some(24_990), Some(16_047)]),
     (Cap::SdataSkillFits, [Some(978), Some(882), Some(978), None, Some(3_348), Some(6_765), Some(8_775), Some(8_460), Some(978)]),
-    (Cap::SdataAutoPicks, [Some(5), Some(5), Some(5), None, Some(5), Some(5), Some(3), Some(2), Some(6)]),
+    (Cap::SdataMonsterFits, [Some(2_474), Some(2_372), Some(2_474), None, Some(2_992), Some(4_511), Some(4_776), Some(4_774), None]),
+    (Cap::SdataNpcQuestFits, [Some(1_720), Some(1_531), Some(2_109), None, Some(2_262), Some(3_051), Some(3_820), Some(4_182), Some(1_531)]),
+    (Cap::SdataAutoPicks, [Some(5), Some(5), Some(5), None, Some(5), Some(5), Some(6), Some(5), Some(6)]),
 ];
 
 pub fn expected_number(client: &str, cap: Cap) -> Option<u64> {
@@ -215,7 +229,7 @@ pub fn expected(client: &str, cap: Cap) -> Option<Cell> {
 #[derive(Clone, Debug)]
 pub struct Observed {
     pub client: String,
-    pub cells: [Cell; 25],
+    pub cells: [Cell; 27],
     /// Measured numbers of the T1 rows (see [`NUMBERS`]).
     pub numbers: Vec<(Cap, u64)>,
     /// Counts and other facts printed with the table (not asserted).
@@ -226,6 +240,9 @@ pub struct Observed {
     pub sdata_bytes: usize,
     /// Notes on cells that are not OK (file names and error texts).
     pub notes: Vec<String>,
+    /// SData files that a layout reads although the layout's `evidence` lists neither `loader` nor `fit_only` for this client
+    /// ("<file> = <variant>"). Must be empty: it is the matrix consistency check.
+    pub unlisted: Vec<String>,
 }
 
 impl Observed {
@@ -278,7 +295,7 @@ fn by_name<'a>(files: &'a [(String, Vec<u8>)], tail: &str) -> Option<&'a (String
 
 /// Measures one client folder.
 pub fn observe(client: &str, dir: &Path) -> Observed {
-    let mut o = Observed { client: client.to_string(), cells: [NA; 25], numbers: Vec::new(), facts: Vec::new(), sah_files: None, sah_millis: None, sdata_files: 0, sdata_bytes: 0, notes: Vec::new() };
+    let mut o = Observed { client: client.to_string(), cells: [NA; 27], numbers: Vec::new(), facts: Vec::new(), sah_files: None, sah_millis: None, sdata_files: 0, sdata_bytes: 0, notes: Vec::new(), unlisted: Vec::new() };
     let set = |o: &mut Observed, cap: Cap, c: Cell| o.cells[CAPS.iter().position(|x| *x == cap).expect("cap")] = c;
 
     // the index
@@ -452,8 +469,8 @@ pub fn markdown(all: &[Observed]) -> String {
     for cap in CAPS {
         s.push_str(&format!("| {} |", cap.label()));
         for o in all {
-            let n = expected_number(&o.client, cap).and_then(|_| o.number(cap)).filter(|_| o.cell(cap) == O);
-            s.push_str(&format!(" {} |", n.map_or(o.cell(cap).label().to_string(), |n| format!("OK {}", group(n)))));
+            let n = expected_number(&o.client, cap).and_then(|_| o.number(cap)).filter(|_| matches!(o.cell(cap), O | FO));
+            s.push_str(&format!(" {} |", n.map_or(o.cell(cap).label().to_string(), |n| format!("{} {}", o.cell(cap).label(), group(n)))));
         }
         s.push('\n');
     }
@@ -499,6 +516,7 @@ pub fn differences(all: &[Observed]) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use shaiya_sdata::TableKind;
     use shaiya_testkit::{pe_stub, SahBuilder, TempDir};
 
     fn synthetic_client(dir: &Path, encrypted: bool, with_exe: bool) {
@@ -525,13 +543,83 @@ mod tests {
             .file(b"Character/Skill.SData", &shaiya_seed::encrypt(b"text, not a table"))
             .file(b"Other/Thing.SData", b"also nothing")
             .write_to(d.path());
-        let o = observe("synthetic", d.path());
-        assert_eq!(o.cell(Cap::SdataItemFits), Cell::Ok, "{:?}", o.notes);
+        let o = observe("ru-ep3", d.path());
+        assert_eq!(o.cell(Cap::SdataItemFits), Cell::Ok, "item-81 was read from the ru-ep3 loader: {:?}", o.notes);
         assert_eq!(o.number(Cap::SdataItemFits), Some(1));
         assert_eq!(o.cell(Cap::SdataSkillFits), Cell::Fails);
         assert_eq!(o.number(Cap::SdataSkillFits), None);
+        assert_eq!((o.cell(Cap::SdataMonsterFits), o.cell(Cap::SdataNpcQuestFits)), (Cell::NotAvailable, Cell::NotAvailable), "no Monster or NpcQuest file in this client");
         assert_eq!((o.cell(Cap::SdataAutoPicks), o.number(Cap::SdataAutoPicks)), (Cell::Ok, Some(1)), "one file fits, two stay raw");
         assert!(o.facts.iter().any(|f| f.contains("1 fit one layout, 2 raw, 0 ambiguous")), "{:?}", o.facts);
+        assert!(o.unlisted.is_empty(), "{:?}", o.unlisted);
+        // the same file on cn-ep4 is a fit without a loader read: FIT-ONLY, and the cell says so with the number
+        let cn = observe("cn-ep4", d.path());
+        assert_eq!((cn.cell(Cap::SdataItemFits), cn.number(Cap::SdataItemFits)), (Cell::FitOnly, Some(1)));
+        assert!(cn.unlisted.is_empty(), "cn-ep4 is listed in fit_only of item-81: {:?}", cn.unlisted);
+    }
+
+    #[test]
+    fn a_fit_only_cell_prints_as_fit_only_with_its_number_and_a_layout_that_does_not_list_the_client_is_flagged() {
+        // a 134-byte-block Item table: only the FIT-ONLY layout item-134 reads it (listed for kr-ep8 and fawkes-v68)
+        let mut item = Vec::new();
+        for n in [1u32, 1, 1] {
+            item.extend_from_slice(&n.to_le_bytes());
+        }
+        item.push(b'A');
+        item.extend_from_slice(&0u32.to_le_bytes());
+        item.extend_from_slice(&[7u8; 134]);
+        let d = TempDir::new("matrix-fit-only");
+        SahBuilder::new(0).file(b"Item/Item.SData", &shaiya_seed::encrypt(&item)).write_to(d.path());
+        let kr = observe("kr-ep8", d.path());
+        assert_eq!((kr.cell(Cap::SdataItemFits), kr.number(Cap::SdataItemFits)), (Cell::FitOnly, Some(1)));
+        assert!(kr.unlisted.is_empty(), "{:?}", kr.unlisted);
+        assert!(kr.facts.iter().any(|f| f.contains("layout item-134 (fit-only), 1 records")), "{:?}", kr.facts);
+        let md = markdown(&[kr]);
+        assert!(md.contains("| sdata `Item` layout fits | FIT-ONLY 1 |"), "{md}");
+        // a client that is not in item-134's evidence is listed as unlisted: the consistency test would fail on it
+        let ru = observe("ru-ep3", d.path());
+        assert_eq!(ru.cell(Cap::SdataItemFits), Cell::FitOnly);
+        assert_eq!(ru.unlisted, ["Item/Item.SData = item-134"]);
+    }
+
+    #[test]
+    fn the_expected_table_marks_every_fit_without_a_loader_as_fit_only() {
+        // the expected cells follow the layouts' evidence: OK where the client is a loader client of the layout that reads it
+        // (the matrix test checks the layout that reads the real file), FIT-ONLY for kr-ep8, fawkes-v68 and cn-ep4
+        for cap in [Cap::SdataItemFits, Cap::SdataSkillFits, Cap::SdataNpcQuestFits] {
+            for id in ["kr-ep8", "fawkes-v68", "cn-ep4"] {
+                assert_eq!(expected(id, cap), Some(Cell::FitOnly), "{id} {}", cap.label());
+            }
+        }
+        assert_eq!(expected("kr-ep8", Cap::SdataMonsterFits), Some(Cell::FitOnly));
+        assert_eq!(expected("cn-ep4", Cap::SdataMonsterFits), Some(Cell::Fails), "cn-ep4 Monster has no fit");
+        assert_eq!(expected("ru-ep54", Cap::SdataItemFits), Some(Cell::NotAvailable));
+        assert_eq!(Cell::FitOnly.label(), "FIT-ONLY");
+    }
+
+    #[test]
+    fn layout_evidence_names_only_matrix_clients_and_every_expected_cell_agrees_with_it() {
+        let by_cap = [(Cap::SdataItemFits, TableKind::Item), (Cap::SdataSkillFits, TableKind::Skill), (Cap::SdataMonsterFits, TableKind::Monster), (Cap::SdataNpcQuestFits, TableKind::NpcQuest)];
+        for l in shaiya_sdata::layouts() {
+            for c in l.evidence.loader.iter().chain(&l.evidence.fit_only) {
+                assert!(CLIENTS.contains(&c.as_str()), "{}: {c} is not a matrix client id", l.variant);
+            }
+            assert!(!l.evidence.loader.contains(&"ru-ep54".to_string()) && !l.evidence.fit_only.contains(&"ru-ep54".to_string()), "{}: ru-ep54 has no SData", l.variant);
+        }
+        // for each client and table, a cell is OK only if some layout of the table lists the client under loader, FIT-ONLY only if
+        // some layout lists it (under fit_only) and none under loader
+        for (cap, kind) in by_cap {
+            for id in CLIENTS {
+                let loader = shaiya_sdata::layouts().iter().any(|l| l.table == kind && l.evidence.loader.iter().any(|c| c == id));
+                let fit = shaiya_sdata::layouts().iter().any(|l| l.table == kind && l.evidence.fit_only.iter().any(|c| c == id));
+                match expected(id, cap).unwrap() {
+                    Cell::Ok => assert!(loader, "{id} {}: OK needs a loader client", cap.label()),
+                    Cell::FitOnly => assert!(fit && !loader, "{id} {}: FIT-ONLY needs a fit_only client and no loader layout", cap.label()),
+                    Cell::Fails | Cell::NotAvailable => assert!(!loader && !fit, "{id} {}: a layout lists this client but the cell says {:?}", cap.label(), expected(id, cap)),
+                    Cell::Plain => unreachable!(),
+                }
+            }
+        }
     }
 
     #[test]

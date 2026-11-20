@@ -3,6 +3,7 @@
  "table": "Skill",
  "variant": "skill-9",
  "file": "Character/Skill.SData",
+ "evidence": {"loader": ["fr-ep54"], "fit_only": ["kr-ep8"]},
  "sections": [
   {
    "name": "skills",

@@ -1360,6 +1360,7 @@ fn the_table_view_opens_on_an_encrypted_item_file_and_filters() {
     assert!(t.contains("SData table: Item.SData"), "{t}");
     assert!(t.contains("Layout item-81") && t.contains("Read only"), "{t}");
     assert!(t.contains("chosen because it reads the whole file") && t.contains("checked against the game's own loader only on the clients listed as verified"), "{t}");
+    assert!(t.contains("Loader-verified on: us-108, ru-ep3, ru-ep45, fr-ep54.") && !t.contains("FIT-ONLY: this layout reads"), "{t}");
     assert!(t.contains("3 rows") && t.contains("Sword") && t.contains("Shield") && t.contains("Axe"), "{t}");
     assert!(t.contains("bank") && t.contains("req_level") && t.contains("Export CSV...") && t.contains("Copy rows") && t.contains("Filter rows"), "{t}");
     {
@@ -1393,6 +1394,23 @@ fn the_table_view_opens_on_an_encrypted_item_file_and_filters() {
     w.h.app.app.table = None;
     w.h.frames(2);
     assert!(!w.h.text().contains("SData table:"));
+}
+
+#[test]
+fn a_fit_only_layout_says_so_in_the_table_view() {
+    let mut w = open_world("t9w5-fit-only");
+    // one monster with a 36-byte block: only the FIT-ONLY layout reads it
+    let mut v = Vec::new();
+    put_u32(&mut v, 1);
+    put_u32(&mut v, 5);
+    v.extend_from_slice(b"Wolf\0");
+    v.extend_from_slice(&[0u8; 36]);
+    open_table_of(&mut w, "Monster.SData", &shaiya_seed::encrypt(&v));
+    let t = w.h.text().to_string();
+    assert!(t.contains("Layout monster-36."), "{t}");
+    assert!(t.contains("FIT-ONLY: this layout reads the whole file, but it was not read from any client's own loader."), "{t}");
+    assert!(t.contains("Columns are named by position; values may be split wrongly."), "{t}");
+    assert!(!t.contains("Loader-verified on"), "{t}");
 }
 
 #[test]

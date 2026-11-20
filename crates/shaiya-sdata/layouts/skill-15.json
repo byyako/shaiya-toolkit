@@ -3,6 +3,7 @@
  "table": "Skill",
  "variant": "skill-15",
  "file": "Character/Skill.SData",
+ "evidence": {"loader": ["phoenix-ep63"], "fit_only": ["kr-ep8", "fawkes-v68"]},
  "sections": [
   {
    "name": "skills",

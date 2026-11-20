@@ -58,8 +58,9 @@ The part after the link table is `u32 count` and that many quest records, which 
 |---|---|
 | `npcquest-165` | `u16`, two strings, a fixed block of 165 bytes, seven strings |
 | `npcquest-87` | `u16`, two strings, a fixed block of 87 bytes, six sub-blocks of 33 bytes each followed by a string, four strings |
+| `npcquest-287` (FIT-ONLY) | a fixed block of 287 bytes and no strings; the NPC and gate records also hold no texts |
 
-Quests are numbered from 1 (the `id` column). Fields of the fixed blocks whose meaning is not known are shown as `f<offset>`. The NPC sections are the same in both variants.
+Quests are numbered from 1 (the `id` column). Fields of the fixed blocks whose meaning is not known are shown as `f<offset>`. The NPC sections are the same in the two verified variants; `npcquest-287` has its own NPC sections without texts.
 
 ## What the toolkit does with it
 
@@ -76,4 +77,10 @@ US EP4.5. The version matrix shows `NpcQuest::parse` reading it on ru-ep3, ru-ep
 
 ## Other episodes
 
-The layout is the original client generation's; later episodes change it. `NpcQuest::parse` fails on kr-ep8 and fawkes-v68, so the gates were not measured on those two clients. The editor then turns off the NPC and gatekeeper rules with one note. The text code page differs between episodes.
+The layout is the original client generation's; later episodes change it. `NpcQuest::parse` fails on kr-ep8 and fawkes-v68, so the gates were not measured on those two clients. The editor then turns off the NPC and gatekeeper rules with one note. The text code page differs between episodes. The table view reads kr-ep8 (3,820 quests) and fawkes-v68 (4,182) with the FIT-ONLY layout `npcquest-287`, and cn-ep4 (1,531 quests) with `npcquest-165`, also FIT-ONLY there (see below).
+
+## FIT-ONLY layouts
+
+`npcquest-287` was not read from any client's own loader (the `game.exe` of kr-ep8 and fawkes-v68 is packed): it reads those two files to the last byte, so it is FIT-ONLY. In it the merchant, gatekeeper and NPC records and the gate items have no texts, and a quest is a fixed block of 287 bytes (the verified `npcquest-87` record without its strings). The columns are named by position (`f<offset>`, `l0`, `l1` for lists), only multi-byte widths that aligned with the verified client's values are wider than a byte, and values may be split wrongly. `npcquest-165` on cn-ep4 is a layout verified on other clients that reads that client's file: FIT-ONLY there. The table view, `shaiya sdata table` (stderr) and the JSON (`"status"`, `"loader_verified_on"`, `"fit_only_on"`) say so, and the [version matrix](../version-matrix.md) shows `FIT-ONLY` with the quest count.
+
+**Upgrade path.** A client moves from `fit_only` to `loader` in the layout file, and its matrix cell becomes OK, when the layout is read from that client's own loader (an unpacked `game.exe` build or a memory dump) and still reads every NpcQuest file of that client to the last byte; confirmed names then replace the positions.

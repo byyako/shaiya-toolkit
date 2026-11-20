@@ -49,13 +49,18 @@ fn skill(entries: usize, levels: usize, fixed: usize) -> Vec<u8> {
 }
 
 fn monster(names: &[&[u8]]) -> Vec<u8> {
+    monster_of(names, 31)
+}
+
+/// A Monster file with a fixed block of `fixed` bytes per record.
+fn monster_of(names: &[&[u8]], fixed: usize) -> Vec<u8> {
     let mut v = Vec::new();
     u32le(&mut v, names.len() as u32);
     for (i, n) in names.iter().enumerate() {
         let mut with_nul = n.to_vec();
         with_nul.push(0);
         lenstr(&mut v, &with_nul);
-        let mut b = block(i as u8, 31);
+        let mut b = block(i as u8, fixed);
         b[0..2].copy_from_slice(&(100 + i as i16).to_le_bytes());
         b[5..9].copy_from_slice(&(5000i32).to_le_bytes());
         v.extend_from_slice(&b);
@@ -89,6 +94,32 @@ fn npcquest(quests: usize) -> Vec<u8> {
         for s in 0..7 {
             lenstr(&mut v, format!("s{s}").as_bytes());
         }
+    }
+    v
+}
+
+/// An NpcQuest file in the 287-byte quest shape: one merchant, one gatekeeper, no NPCs, empty links, `quests` fixed 287-byte quests
+/// and no strings anywhere.
+fn npcquest_287(quests: usize) -> Vec<u8> {
+    let mut v = Vec::new();
+    u32le(&mut v, 1); // merchants: fixed 20, then three lists (two (u8, u8) pairs, one u16, none)
+    v.extend_from_slice(&block(1, 20));
+    u32le(&mut v, 2);
+    v.extend_from_slice(&[1, 2, 3, 4]);
+    u32le(&mut v, 1);
+    v.extend_from_slice(&7u16.to_le_bytes());
+    u32le(&mut v, 0);
+    u32le(&mut v, 1); // gatekeepers: fixed 19, three gates of 18, two lists
+    v.extend_from_slice(&block(2, 19 + 3 * 18));
+    u32le(&mut v, 0);
+    u32le(&mut v, 0);
+    for _ in 0..11 {
+        u32le(&mut v, 0);
+    }
+    v.extend(std::iter::repeat_n(0u8, 65536 * 8));
+    u32le(&mut v, quests as u32);
+    for q in 0..quests {
+        v.extend_from_slice(&block(q as u8, 287));
     }
     v
 }
@@ -166,7 +197,7 @@ fn nothing_ambiguous_is_picked() {
     assert!(e.ambiguous.len() > 1 && e.ambiguous.contains(&"item-81".to_string()) && e.ambiguous.contains(&"monster-31".to_string()), "{e:?}");
     assert!(e.to_string().contains("more than one layout reads it to the end"));
     let e = read(&zero, Hint::Table(TableKind::Item), Encoding::Cp949).unwrap_err();
-    assert_eq!(e.ambiguous, ["item-81", "item-132"]);
+    assert_eq!(e.ambiguous, ["item-81", "item-132", "item-134"]);
 }
 
 #[test]
@@ -264,7 +295,7 @@ fn json_shape() {
 #[test]
 fn layout_files_are_checked_when_they_load() {
     use shaiya_sdata::parse_layout;
-    let ok = r#"{"format":1,"table":"Monster","variant":"x","file":"f","sections":[{"name":"s","loops":[{"count":"u32"}],"record":[{"kind":"fixed","size":3,"fields":[{"offset":0,"name":"a","kind":"u8"},{"offset":1,"name":"b","kind":"u16"}]}]}]}"#;
+    let ok = r#"{"format":1,"table":"Monster","variant":"x","file":"f","evidence":{"loader":["us-108"],"fit_only":["cn-ep4"]},"sections":[{"name":"s","loops":[{"count":"u32"}],"record":[{"kind":"fixed","size":3,"fields":[{"offset":0,"name":"a","kind":"u8"},{"offset":1,"name":"b","kind":"u16"}]}]}]}"#;
     assert!(parse_layout(ok).is_ok());
     assert!(parse_layout(&ok.replace("\"size\":3", "\"size\":4")).unwrap_err().contains("add up to 3"));
     assert!(parse_layout(&ok.replace("\"offset\":1", "\"offset\":2")).unwrap_err().contains("offset"));
@@ -297,4 +328,109 @@ fn implausible_counts_do_not_fit() {
     v.extend_from_slice(&[0u8; 8]);
     let e = read(&v, Hint::Table(TableKind::Monster), Encoding::Cp949).unwrap_err();
     assert!(e.tried[0].2.contains("does not fit"), "{:?}", e.tried);
+}
+
+// ------------------------------------------------------------------------------------------------ T9 W5: evidence, FIT-ONLY layouts
+
+const MINIMAL: &str = r#"{"format":1,"table":"Monster","variant":"x","file":"f","evidence":{"loader":["us-108"],"fit_only":["cn-ep4"]},"sections":[{"name":"s","loops":[{"count":"u32"}],"record":[{"kind":"fixed","size":3,"fields":[{"offset":0,"name":"a","kind":"u8"},{"offset":1,"name":"b","kind":"u16"}]}]}]}"#;
+
+#[test]
+fn a_layout_without_evidence_is_refused_and_the_evidence_is_read() {
+    use shaiya_sdata::{parse_layout, Status};
+    let l = parse_layout(MINIMAL).unwrap();
+    assert_eq!((l.evidence.loader.as_slice(), l.evidence.fit_only.as_slice()), (&["us-108".to_string()][..], &["cn-ep4".to_string()][..]));
+    assert_eq!(l.status(), Status::LoaderVerified);
+    let without = MINIMAL.replace(r#""evidence":{"loader":["us-108"],"fit_only":["cn-ep4"]},"#, "");
+    assert!(parse_layout(&without).unwrap_err().contains("\"evidence\" is missing"));
+    for (from, to, what) in [
+        (r#""loader":["us-108"],"#, "", "no \"loader\" list"),
+        (r#","fit_only":["cn-ep4"]"#, "", "no \"fit_only\" list"),
+        (r#""loader":["us-108"]"#, r#""loader":[7]"#, "not a client id"),
+        (r#""fit_only":["cn-ep4"]"#, r#""fit_only":["us-108"]"#, "both loader and fit_only"),
+        (r#""loader":["us-108"]"#, r#""loader":["us-108","us-108"]"#, "twice"),
+        (r#""loader":["us-108"],"fit_only":["cn-ep4"]"#, r#""loader":[],"fit_only":[]"#, "lists no client"),
+        (r#""evidence":{"loader":["us-108"],"fit_only":["cn-ep4"]}"#, r#""evidence":"yes""#, "\"evidence\" is missing"),
+    ] {
+        assert!(parse_layout(&MINIMAL.replace(from, to)).unwrap_err().contains(what), "{what}");
+    }
+    // an empty loader list is FIT-ONLY
+    let fit_only = parse_layout(&MINIMAL.replace(r#""loader":["us-108"]"#, r#""loader":[]"#)).unwrap();
+    assert_eq!(fit_only.status(), Status::FitOnly);
+}
+
+#[test]
+fn every_embedded_layout_has_evidence_and_the_fit_only_ones_say_so() {
+    use shaiya_sdata::{layouts, Status, FIT_ONLY_NOTE};
+    let by = |v: &str| layouts().iter().find(|l| l.variant == v).unwrap_or_else(|| panic!("{v}"));
+    for l in layouts() {
+        assert!(!l.evidence.loader.is_empty() || !l.evidence.fit_only.is_empty(), "{}", l.variant);
+        assert_eq!(l.status() == Status::FitOnly, l.evidence.loader.is_empty(), "{}", l.variant);
+    }
+    for v in ["item-134", "monster-36", "npcquest-287"] {
+        let l = by(v);
+        assert_eq!((l.status(), l.provenance().as_str()), (Status::FitOnly, FIT_ONLY_NOTE), "{v}");
+        assert_eq!(l.evidence.fit_only, ["kr-ep8", "fawkes-v68"], "{v}");
+    }
+    for v in ["item-81", "item-132", "skill-3", "skill-9", "skill-15", "monster-31", "npcquest-165", "npcquest-87"] {
+        assert_eq!(by(v).status(), Status::LoaderVerified, "{v}");
+    }
+    assert_eq!(by("item-81").evidence.fit_only, ["cn-ep4"]);
+    assert_eq!(by("skill-3").evidence.fit_only, ["cn-ep4"]);
+    assert_eq!(by("skill-9").evidence.fit_only, ["kr-ep8"], "skill-9 reads the NpcSkill file of kr-ep8");
+    assert_eq!(by("npcquest-165").evidence.fit_only, ["cn-ep4"]);
+    assert_eq!(by("skill-15").evidence.fit_only, ["kr-ep8", "fawkes-v68"]);
+    assert!(by("monster-31").evidence.fit_only.is_empty(), "cn-ep4 Monster has no fit");
+    assert_eq!(by("item-81").provenance(), "Loader-verified on: us-108, ru-ep3, ru-ep45, fr-ep54. On cn-ep4 it only fits (FIT-ONLY: no loader read).");
+    assert_eq!(by("monster-31").provenance(), "Loader-verified on: us-108, ru-ep3, ru-ep45, fr-ep54, phoenix-ep63.");
+    assert!(FIT_ONLY_NOTE.starts_with("FIT-ONLY: this layout reads the whole file, but it was not read from any client's own loader."));
+}
+
+#[test]
+fn the_fit_only_layouts_fit_their_synthetic_table_and_nothing_else() {
+    // Item: 134-byte block
+    let book = |fixed| item(&[vec![(&b"A"[..], &b"B"[..], 1), (&b"C"[..], &b"D"[..], 2)]], fixed);
+    let t = read_ok(&book(134), Hint::Auto);
+    assert_eq!((t.layout.variant.as_str(), t.primary().rows.len()), ("item-134", 2));
+    assert_eq!(t.primary().columns.iter().map(|c| c.name.as_str()).take(4).collect::<Vec<_>>(), ["bank", "s0", "s1", "f0"], "positional names");
+    let mut one_more = book(134);
+    one_more.push(0);
+    assert!(read(&one_more, Hint::Table(TableKind::Item), Encoding::Cp949).is_err());
+    assert!(read(&book(134)[..book(134).len() - 1], Hint::Table(TableKind::Item), Encoding::Cp949).is_err());
+    // Monster: 36-byte block (and the 31-byte file stays monster-31)
+    let t = read_ok(&monster_of(&[b"Wolf", b"Bear"], 36), Hint::Auto);
+    assert_eq!((t.layout.variant.as_str(), t.primary().rows.len()), ("monster-36", 2));
+    assert_eq!(read_ok(&monster(&[b"Wolf", b"Bear"]), Hint::Auto).layout.variant, "monster-31");
+    let mut more = monster_of(&[b"Wolf"], 36);
+    more.push(0);
+    assert!(read(&more, Hint::Table(TableKind::Monster), Encoding::Cp949).is_err());
+    let one = monster_of(&[b"Wolf"], 36);
+    assert!(read(&one[..one.len() - 1], Hint::Table(TableKind::Monster), Encoding::Cp949).is_err());
+    // NpcQuest: 287-byte quests, no strings
+    let t = read_ok(&npcquest_287(3), Hint::Auto);
+    assert_eq!((t.layout.variant.as_str(), t.primary().name.as_str(), t.primary().rows.len()), ("npcquest-287", "quests", 3));
+    assert_eq!(t.sheet("quest_links").unwrap().rows.len(), 65536);
+    let mut more = npcquest_287(3);
+    more.push(0);
+    assert!(read(&more, Hint::Table(TableKind::NpcQuest), Encoding::Cp949).is_err());
+    let short = npcquest_287(3);
+    assert!(read(&short[..short.len() - 1], Hint::Table(TableKind::NpcQuest), Encoding::Cp949).is_err());
+    // the verified shapes keep their own layouts
+    assert_eq!(read_ok(&npcquest(3), Hint::Auto).layout.variant, "npcquest-165");
+    assert_eq!(read_ok(&item(&[vec![(&b"A"[..], &b"B"[..], 1)]], 81), Hint::Auto).layout.variant, "item-81");
+}
+
+#[test]
+fn json_has_the_status_keys() {
+    let t = read_ok(&monster_of(&[b"Wolf"], 36), Hint::Auto);
+    let j = t.to_json(None);
+    assert_eq!((j["status"].as_str(), j["chosen_by"].as_str()), (Some("fit-only"), Some("fit")));
+    assert_eq!(j["loader_verified_on"], serde_json::json!([]));
+    assert_eq!(j["fit_only_on"], serde_json::json!(["kr-ep8", "fawkes-v68"]));
+    assert_eq!(j["layout"], "monster-36", "the existing keys stay");
+    let j = read_ok(&monster(&[b"Wolf"]), Hint::Auto).to_json(None);
+    assert_eq!(j["status"], "loader-verified");
+    assert_eq!(j["loader_verified_on"], serde_json::json!(["us-108", "ru-ep3", "ru-ep45", "fr-ep54", "phoenix-ep63"]));
+    assert_eq!(j["fit_only_on"], serde_json::json!([]));
+    let j = read_ok(&item(&[vec![(&b"A"[..], &b"B"[..], 1)]], 81), Hint::Auto).to_json(None);
+    assert_eq!(j["fit_only_on"], serde_json::json!(["cn-ep4"]));
 }

@@ -149,6 +149,25 @@ fn sdata_skill_layout_fits() {
 }
 
 #[test]
+fn sdata_monster_layout_fits() {
+    check(Cap::SdataMonsterFits);
+}
+
+#[test]
+fn sdata_npcquest_layout_fits() {
+    check(Cap::SdataNpcQuestFits);
+}
+
+/// The consistency check: for every client in the run, the layout `auto` picks for each of its SData files lists that client in the
+/// layout's `evidence` (`loader` or `fit_only`); a layout that reads a client's file without naming the client fails here.
+#[test]
+fn every_layout_that_reads_a_client_lists_that_client() {
+    let Some(all) = observed_all() else { return };
+    let bad: Vec<String> = all.iter().flat_map(|o| o.unlisted.iter().map(move |u| format!("{}: {u}", o.client))).collect();
+    assert!(bad.is_empty(), "add the client to the layout's evidence (loader or fit_only), or fix the layout:\n{}", bad.join("\n"));
+}
+
+#[test]
 fn sdata_auto_picks_exactly_one_layout_or_none() {
     check(Cap::SdataAutoPicks);
 }

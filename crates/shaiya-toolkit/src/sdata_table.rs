@@ -164,6 +164,21 @@ impl TableView {
         }
     }
 
+    /// The line under the table's toolbar: how the layout was chosen and where its facts come from. A FIT-ONLY layout says so in the
+    /// words of [`shaiya_sdata::FIT_ONLY_NOTE`]; a loader-verified one adds "Loader-verified on: <clients>".
+    pub fn note(&self) -> Option<String> {
+        match &self.state {
+            State::Table { table, .. } => {
+                let l = table.layout;
+                Some(match l.status() {
+                    shaiya_sdata::Status::FitOnly => format!("Layout {}. {} Read only; the file is not changed.", l.variant, l.provenance()),
+                    shaiya_sdata::Status::LoaderVerified => format!("Layout {}, {} {} Read only; the file is not changed.", l.variant, shaiya_sdata::FIT_NOTE, l.provenance()),
+                })
+            }
+            _ => None,
+        }
+    }
+
     pub fn is_open(&self) -> bool {
         self.open
     }
@@ -320,7 +335,6 @@ impl TableView {
         }
         // the table
         let names = self.sheet_names();
-        let layout = self.layout_name().unwrap_or("").to_string();
         let mut copy = false;
         let mut export = false;
         let mut new_sheet = None;
@@ -345,7 +359,7 @@ impl TableView {
                 export = true;
             }
         });
-        ui.label(RichText::new(format!("Layout {layout}, {} Read only; the file is not changed.", shaiya_sdata::FIT_NOTE)).color(pal.weak));
+        ui.label(RichText::new(self.note().unwrap_or_default()).color(pal.weak));
         if let Some(i) = new_sheet {
             self.sheet = i;
         }

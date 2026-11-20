@@ -4,6 +4,24 @@ All notable changes are listed here, newest first. The format follows [Keep a Ch
 
 ## [Unreleased]
 
+### Shaiya Toolkit
+
+- The SData table view says where its layout comes from. A table read with a layout that no client's own loader was read for shows "FIT-ONLY: this layout reads the whole file, but it was not read from any client's own loader. Columns are named by position; values may be split wrongly."; a table read with a loader-verified layout shows "Loader-verified on: <clients>" after the existing note. The Archive tab's View table is the same window.
+- New FIT-ONLY table layouts read files that were shown as hex before: `Item.SData` of kr-ep8 and fawkes-v68 (`item-134`), `Monster.SData` of kr-ep8 and fawkes-v68 (`monster-36`) and `NpcQuest.SData` of kr-ep8 and fawkes-v68 (`npcquest-287`). Their columns are named by position.
+
+### shaiya (CLI)
+
+- `sdata table` prints the same sentence on stderr (the FIT-ONLY one, or "Loader-verified on: <clients>."), and its JSON gains `status` (`loader-verified` or `fit-only`), `loader_verified_on` and `fit_only_on` next to `chosen_by` (also in the `--csv --json` summary). The existing keys are unchanged.
+
+### Libraries
+
+- `shaiya-sdata`: every layout file has a required `evidence` object (`loader`, `fit_only`: client ids); `parse_layout` refuses a layout without it. `Layout` gains `evidence`, `status()`, `provenance()` and `provenance_json()`; new `Evidence`, `Status` and `FIT_ONLY_NOTE`. Three layouts are added (`item-134`, `monster-36`, `npcquest-287`); `skill-9` also reads kr-ep8's `NpcSkill` file.
+- `shaiya-sdata` `Table::to_json` gains `status`, `loader_verified_on` and `fit_only_on`.
+
+### Documentation
+
+- The version matrix says `FIT-ONLY <n>` (not `OK`) for the table fits that were not read from a client's loader (Item, Skill and NpcQuest on kr-ep8, fawkes-v68 and cn-ep4, Monster on kr-ep8 and fawkes-v68), has new Monster and NpcQuest rows, and records that cn-ep4 Monster has no fit. The Item, Skill, Monster and NpcQuest format pages, the SData files guide and the Toolkit and `shaiya` tool pages describe FIT-ONLY layouts and how a layout becomes loader-verified.
+
 ## [0.3.1] - 2026-11-20
 
 ### Shaiya Toolkit

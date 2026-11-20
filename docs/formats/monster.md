@@ -27,7 +27,7 @@ The id used by a monster area in a `.svmap` file ([server map](svmap.md)) is the
 |---|---|
 | `shaiya-clientdata` `Monsters` | reads name, model, level, ai and hp |
 | Shaiya SVMap Editor and `shaiya svmap` | monster names and levels, the colours by level, the heatmap, the Spawns tab, and the rules `mob-unknown` and `area-mob-zero` |
-| `shaiya-sdata`, `shaiya sdata table` and the SData tab's View table | every field of the 31-byte block as a column (layout `monster-31`); the names are those above where known, `f<offset>` otherwise; a stored name's trailing NUL is not shown |
+| `shaiya-sdata`, `shaiya sdata table` and the SData tab's View table | every field of the 31-byte block as a column (layout `monster-31`), or of the 36-byte block of the FIT-ONLY layout `monster-36`; the names are those above where known, `f<offset>` otherwise; a stored name's trailing NUL is not shown |
 
 The file is only read.
 
@@ -37,4 +37,10 @@ US EP4.5 (2,474 records). The version matrix shows `Monsters::parse` reading it 
 
 ## Other episodes
 
-The layout is the original client generation's. It fails on kr-ep8, fawkes-v68 and cn-ep4 in the version matrix. When it does not read, the editor says so in one note, and the monster names, levels and rules are off.
+The layout is the original client generation's. `Monsters::parse` fails on kr-ep8, fawkes-v68 and cn-ep4 in the version matrix. When it does not read, the editor says so in one note, and the monster names, levels and rules are off. The table view reads kr-ep8 (4,776 records) and fawkes-v68 (4,774) with `monster-36` (a name and a 36-byte block), FIT-ONLY, see below. cn-ep4 has no fit: `monster-31` stops 36 bytes before the end of the file and `monster-36` does not read it, so the file is shown as hex.
+
+## FIT-ONLY layouts
+
+`monster-36` is a FIT-ONLY layout: the record is a text and a fixed block of 36 bytes, and it reads the kr-ep8 and the fawkes-v68 file to the last byte, but it was not read from any client's own loader (their `game.exe` is packed). The table view and `shaiya sdata table` say "FIT-ONLY: this layout reads the whole file, but it was not read from any client's own loader. Columns are named by position; values may be split wrongly."; the JSON has `"status": "fit-only"`; the columns are `id`, `s0` and `f<offset>`. Multi-byte widths were taken over from `monster-31` only where the values aligned with the verified client's, and the five bytes that `monster-31` does not have are not interpreted.
+
+**Upgrade path.** The layout becomes loader-verified when it is read from those clients' own loaders (an unpacked `game.exe` build or a memory dump) and still reads every Monster file of that client to the last byte; its clients then move from `fit_only` to `loader` in the layout file, confirmed names replace the positions, and the matrix cell becomes OK.

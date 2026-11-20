@@ -3,6 +3,7 @@
  "table": "NpcQuest",
  "variant": "npcquest-87",
  "file": "Npc/NpcQuest.SData",
+ "evidence": {"loader": ["phoenix-ep63"], "fit_only": []},
  "sections": [
   {
    "name": "merchants",

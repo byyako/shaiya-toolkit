@@ -44,7 +44,7 @@ The block is 51 bytes longer in the 81-byte form's terms: `range` is a `u16` (so
 
 | Program | Use |
 |---|---|
-| `shaiya-sdata` | reads the table with the layout that fits the file (`item-81` or `item-132`) |
+| `shaiya-sdata` | reads the table with the layout that fits the file (`item-81`, `item-132` or the FIT-ONLY `item-134`) |
 | `shaiya sdata table` and the SData tab's View table | rows and columns, filter, CSV, JSON |
 
 The file is only read.
@@ -55,4 +55,12 @@ The file is only read.
 
 ## Other episodes
 
-The layout of a client is not assumed. `auto` tries both variants and uses the one that reads the file to its last byte; when none does (the matrix shows kr-ep8 and fawkes-v68), the file is shown as hex. `item-81` also reads the file of cn-ep4 (16,047 records): a fit of the data, not checked against that client's loader.
+The layout of a client is not assumed. `auto` tries every variant and uses the one that reads the file to its last byte; when none does, the file is shown as hex. `item-81` also reads the file of cn-ep4 (16,047 records) and `item-134` the files of kr-ep8 (25,245 records) and fawkes-v68 (24,990): fits of the data, not checked against those clients' loaders (FIT-ONLY, below).
+
+## FIT-ONLY layouts
+
+A layout file says, in its `evidence` object, which clients it was read from the loader of (`loader`) and which clients' files it only reads to the last byte (`fit_only`). A layout with no `loader` client is **FIT-ONLY**, and a client listed under `fit_only` of a loader-verified layout is FIT-ONLY on that layout. FIT-ONLY is never the same as verified: no loader of that client was read (its `game.exe` is packed). The viewers say so: the table view and `shaiya sdata table` (on stderr) show "FIT-ONLY: this layout reads the whole file, but it was not read from any client's own loader. Columns are named by position; values may be split wrongly.", the JSON has `"status": "fit-only"`, and the [version matrix](../version-matrix.md) cell says `FIT-ONLY` with the record count.
+
+For Item: `item-134` is the same container as `item-81` (a bank count, then per bank a record count and that many records of two texts and a fixed block) with a 134-byte block; 134 is the only block size that reads the kr-ep8 and the fawkes-v68 file to the last byte. Its columns are `bank`, `s0`, `s1` and `f<offset>` for the block; no field has a meaning. Multi-byte widths were taken over from `item-81` only where the values aligned with a verified client's, so a value may still be split wrongly. `item-81` on cn-ep4 is a layout verified on other clients that reads that client's file: FIT-ONLY there.
+
+**Upgrade path.** A FIT-ONLY layout becomes loader-verified when it is read from that client's own loader (an unpacked `game.exe` build or a memory dump of that client) and still reads every file of that table to the last byte. Then the client moves from `fit_only` to `loader` in the layout file, the confirmed field names replace the positions, and the matrix cell becomes OK. Until then the layout stays FIT-ONLY.

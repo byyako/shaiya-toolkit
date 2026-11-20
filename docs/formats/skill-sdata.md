@@ -39,4 +39,10 @@ The file is only read.
 
 ## Other episodes
 
-The number of levels is not assumed: `auto` tries the three variants and uses the one that reads the file to its last byte. `skill-15` also reads the files of kr-ep8 (8,775 records) and fawkes-v68 (8,460), and `skill-3` the file of cn-ep4 (978): fits of the data, not checked against those clients' loaders.
+The number of levels is not assumed: `auto` tries the three variants and uses the one that reads the file to its last byte. `skill-15` also reads the files of kr-ep8 (8,775 records) and fawkes-v68 (8,460), and `skill-3` the file of cn-ep4 (978): FIT-ONLY, fits of the data that were not checked against those clients' loaders (see [FIT-ONLY layouts](#fit-only-layouts)). `skill-9` reads the `NpcSkill` file of kr-ep8 the same way.
+
+## FIT-ONLY layouts
+
+The layout files list, in their `evidence` object, the clients whose loader they were read from and the clients whose files they only read to the last byte. On kr-ep8, fawkes-v68 and cn-ep4 the Skill layouts above are FIT-ONLY: nobody read those clients' own loaders (their `game.exe` is packed). The table view and `shaiya sdata table` say so, the JSON has `"status"`, `"loader_verified_on"` and `"fit_only_on"`, and the [version matrix](../version-matrix.md) cell says `FIT-ONLY` with the record count. The column names are those of the verified clients; whether those clients' loaders read the same fields is not checked.
+
+**Upgrade path.** A client moves from `fit_only` to `loader` in the layout file, and its matrix cell from FIT-ONLY to OK, when the layout is read from that client's own loader (an unpacked `game.exe` build or a memory dump) and still reads every Skill file of that client to the last byte.

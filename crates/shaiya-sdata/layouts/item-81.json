@@ -3,6 +3,7 @@
  "table": "Item",
  "variant": "item-81",
  "file": "Item/Item.SData",
+ "evidence": {"loader": ["us-108", "ru-ep3", "ru-ep45", "fr-ep54"], "fit_only": ["cn-ep4"]},
  "sections": [
   {
    "name": "items",

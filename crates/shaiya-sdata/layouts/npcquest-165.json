@@ -3,6 +3,7 @@
  "table": "NpcQuest",
  "variant": "npcquest-165",
  "file": "Npc/NpcQuest.SData",
+ "evidence": {"loader": ["us-108", "ru-ep3", "ru-ep45", "fr-ep54"], "fit_only": ["cn-ep4"]},
  "sections": [
   {
    "name": "merchants",

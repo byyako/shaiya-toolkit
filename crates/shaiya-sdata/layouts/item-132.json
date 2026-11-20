@@ -3,6 +3,7 @@
  "table": "Item",
  "variant": "item-132",
  "file": "Item/Item.SData",
+ "evidence": {"loader": ["phoenix-ep63"], "fit_only": []},
  "sections": [
   {
    "name": "items",

@@ -5,11 +5,16 @@
 //!
 //! ```text
 //! { "format": 1, "table": "Item", "variant": "item-81", "file": "Item/Item.SData",
+//!   "evidence": { "loader": ["us-108"], "fit_only": ["cn-ep4"] },
 //!   "sections": [ { "name": "items", "primary": true,
 //!       "loops":  [ { "index": "bank", "base": 0, "count": "u32", "max": 255 }, { "count": "u32" } ],
 //!       "record": [ { "kind": "lenstr", "name": "name" },
 //!                   { "kind": "fixed", "size": 81, "fields": [ { "offset": 0, "name": "type", "kind": "u8" } ] } ] } ] }
 //! ```
+//!
+//! `evidence` is required: `loader` lists the clients whose own table loader the layout was read from (and checked on that client's
+//! files), `fit_only` the clients whose files it reads to the last byte without any loader read. A layout with an empty `loader` is
+//! FIT-ONLY ([`Layout::status`]). Client ids are the column names of `docs/version-matrix.md`.
 //!
 //! A section is read as nested loops (each loop's count is a `u32` in the file or a constant) and one record per innermost
 //! iteration; a record is a list of nodes: `u8 i8 u16 i16 u32 i32 f32` (with an optional `count`), `lenstr` (a `u32` byte length and
@@ -155,16 +160,79 @@ pub struct Section {
     pub min_bytes: Vec<u64>,
 }
 
+/// What a table view says about a layout that no client's own loader was read for.
+pub const FIT_ONLY_NOTE: &str = "FIT-ONLY: this layout reads the whole file, but it was not read from any client's own loader. Columns are named by position; values may be split wrongly.";
+
+/// Where a layout's facts come from (the layout file's `evidence` object). Client ids are the version matrix's column names.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Evidence {
+    /// Clients whose own table loader the layout was read from and checked against.
+    pub loader: Vec<String>,
+    /// Clients whose file the layout reads to the last byte, with no loader read.
+    pub fit_only: Vec<String>,
+}
+
+/// Whether a layout was read from any client's own loader.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Status {
+    LoaderVerified,
+    FitOnly,
+}
+
+impl Status {
+    /// The word used in JSON: `loader-verified` or `fit-only`.
+    pub fn label(self) -> &'static str {
+        match self {
+            Status::LoaderVerified => "loader-verified",
+            Status::FitOnly => "fit-only",
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct Layout {
     pub variant: String,
     pub table: TableKind,
     /// The usual archive path of the file (a hint for people, not used to pick a layout).
     pub file: String,
+    pub evidence: Evidence,
     pub sections: Vec<Section>,
 }
 
 impl Layout {
+    /// FIT-ONLY when no client's loader was read for this layout.
+    pub fn status(&self) -> Status {
+        if self.evidence.loader.is_empty() {
+            Status::FitOnly
+        } else {
+            Status::LoaderVerified
+        }
+    }
+
+    /// The sentence the viewers show about where this layout comes from. FIT-ONLY: [`FIT_ONLY_NOTE`]. Loader-verified: "Loader-verified
+    /// on: <clients>." and, when the layout also fits clients without a loader read, which ones.
+    pub fn provenance(&self) -> String {
+        match self.status() {
+            Status::FitOnly => FIT_ONLY_NOTE.to_string(),
+            Status::LoaderVerified => {
+                let mut s = format!("Loader-verified on: {}.", self.evidence.loader.join(", "));
+                if !self.evidence.fit_only.is_empty() {
+                    s.push_str(&format!(" On {} it only fits (FIT-ONLY: no loader read).", self.evidence.fit_only.join(", ")));
+                }
+                s
+            }
+        }
+    }
+
+    /// The additive JSON keys: `status`, `loader_verified_on`, `fit_only_on`.
+    pub fn provenance_json(&self) -> serde_json::Map<String, J> {
+        let mut m = serde_json::Map::new();
+        m.insert("status".into(), J::String(self.status().label().into()));
+        m.insert("loader_verified_on".into(), self.evidence.loader.iter().cloned().map(J::String).collect());
+        m.insert("fit_only_on".into(), self.evidence.fit_only.iter().cloned().map(J::String).collect());
+        m
+    }
+
     pub fn primary(&self) -> usize {
         self.sections.iter().position(|s| s.primary).unwrap_or(0)
     }
@@ -218,6 +286,31 @@ impl Node {
             Node::Repeat { count, items, .. } => u64::from(*count) * items.iter().map(Node::min_bytes).sum::<u64>(),
         }
     }
+}
+
+fn clients_of(ev: &J, key: &str, variant: &str) -> Result<Vec<String>, String> {
+    let arr = ev.get(key).and_then(J::as_array).ok_or_else(|| bad(variant, format!("evidence has no \"{key}\" list")))?;
+    let mut out: Vec<String> = Vec::new();
+    for c in arr {
+        let s = c.as_str().filter(|s| !s.trim().is_empty()).ok_or_else(|| bad(variant, format!("evidence \"{key}\" holds something that is not a client id")))?;
+        if out.iter().any(|o| o == s) {
+            return Err(bad(variant, format!("evidence lists {s} twice")));
+        }
+        out.push(s.to_string());
+    }
+    Ok(out)
+}
+
+fn evidence_of(v: &J, variant: &str) -> Result<Evidence, String> {
+    let ev = v.get("evidence").filter(|e| e.is_object()).ok_or_else(|| bad(variant, "\"evidence\" is missing (it names the clients the layout was read from or only fitted)"))?;
+    let (loader, fit_only) = (clients_of(ev, "loader", variant)?, clients_of(ev, "fit_only", variant)?);
+    if let Some(c) = loader.iter().find(|c| fit_only.contains(c)) {
+        return Err(bad(variant, format!("evidence lists {c} as both loader and fit_only")));
+    }
+    if loader.is_empty() && fit_only.is_empty() {
+        return Err(bad(variant, "evidence lists no client"));
+    }
+    Ok(Evidence { loader, fit_only })
 }
 
 fn bad(variant: &str, what: impl std::fmt::Display) -> String {
@@ -343,5 +436,6 @@ pub fn parse_layout(text: &str) -> Result<Layout, String> {
     if sections.is_empty() {
         return Err(bad(&variant, "no sections"));
     }
-    Ok(Layout { file: str_of(&v, "file", &variant)?.to_string(), variant, table, sections })
+    let evidence = evidence_of(&v, &variant)?;
+    Ok(Layout { file: str_of(&v, "file", &variant)?.to_string(), variant, table, evidence, sections })
 }

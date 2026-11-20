@@ -257,6 +257,41 @@ fn table_json_shape_and_sections() {
 }
 
 #[test]
+fn table_says_fit_only_or_loader_verified() {
+    let w = world();
+    // a 31-byte monster table: loader-verified layout
+    let v = w.tmp.path().join("Monster.SData");
+    write(&v, &encrypt(&monster_table(&[b"Wolf\0"])));
+    let o = sh(&w.data, &["sdata", "table", p(&v)]);
+    assert!(err(&o).contains("Loader-verified on: us-108, ru-ep3, ru-ep45, fr-ep54, phoenix-ep63."), "{}", err(&o));
+    assert!(!err(&o).contains("FIT-ONLY: this layout reads"), "{}", err(&o));
+    let j = json(&sh(&w.data, &["sdata", "table", p(&v), "--json"]));
+    assert_eq!(j["status"].as_str(), Some("loader-verified"));
+    assert_eq!(j["loader_verified_on"], serde_json::json!(["us-108", "ru-ep3", "ru-ep45", "fr-ep54", "phoenix-ep63"]));
+    assert_eq!(j["fit_only_on"], serde_json::json!([]));
+    // a 36-byte block: the FIT-ONLY layout; the sentence is on stderr, the JSON keys are additive
+    let mut fo = Vec::new();
+    put_u32(&mut fo, 1);
+    put_str(&mut fo, b"Wolf\0");
+    fo.extend_from_slice(&[0u8; 36]);
+    let f = w.tmp.path().join("Monster36.SData");
+    write(&f, &encrypt(&fo));
+    let o = sh(&w.data, &["sdata", "table", p(&f)]);
+    assert_eq!(code(&o), 0, "{}", err(&o));
+    assert!(out(&o).contains("layout monster-36 (Monster)"), "{}", out(&o));
+    assert!(err(&o).contains("FIT-ONLY: this layout reads the whole file, but it was not read from any client's own loader. Columns are named by position; values may be split wrongly."), "{}", err(&o));
+    assert!(!out(&o).contains("FIT-ONLY"), "the sentence is on stderr: {}", out(&o));
+    let j = json(&sh(&w.data, &["sdata", "table", p(&f), "--json"]));
+    assert_eq!((j["layout"].as_str(), j["chosen_by"].as_str(), j["status"].as_str()), (Some("monster-36"), Some("fit"), Some("fit-only")));
+    assert_eq!((&j["loader_verified_on"], &j["fit_only_on"]), (&serde_json::json!([]), &serde_json::json!(["kr-ep8", "fawkes-v68"])));
+    // the CSV summary document carries the same keys
+    let csv = w.tmp.path().join("m36.csv");
+    let j = json(&sh(&w.data, &["sdata", "table", p(&f), "--csv", p(&csv), "--json"]));
+    assert_eq!((j["status"].as_str(), j["rows"].as_u64()), (Some("fit-only"), Some(1)));
+    assert_eq!(j["fit_only_on"], serde_json::json!(["kr-ep8", "fawkes-v68"]));
+}
+
+#[test]
 fn table_exit_codes() {
     let w = world();
     // a readable file no layout fits: exit 3, with the sentence the viewer uses

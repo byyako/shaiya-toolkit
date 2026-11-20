@@ -3,6 +3,7 @@
  "table": "Skill",
  "variant": "skill-3",
  "file": "Character/Skill.SData",
+ "evidence": {"loader": ["us-108", "ru-ep3", "ru-ep45"], "fit_only": ["cn-ep4"]},
  "sections": [
   {
    "name": "skills",

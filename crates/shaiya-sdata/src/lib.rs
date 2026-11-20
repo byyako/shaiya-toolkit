@@ -5,13 +5,15 @@
 //!
 //! Layout facts were derived from the loaders of the clients listed as verified in `docs/version-matrix.md` and checked on real
 //! files; which clients each variant was checked on is in the same file. Field names are `f<offset>` unless the meaning is known.
+//! Every layout file says, in its `evidence` object, which clients it was read from the loader of and which it only fits; a layout
+//! with no loader client is FIT-ONLY (positional names, [`FIT_ONLY_NOTE`]).
 
 mod csv;
 mod engine;
 pub mod layout;
 
 pub use csv::{csv, csv_rows, csv_text};
-pub use layout::{ColKind, Column, Layout, TableKind};
+pub use layout::{ColKind, Column, Evidence, Layout, Status, TableKind, FIT_ONLY_NOTE};
 
 /// What every table view says about how its layout was chosen: by fit, not by the client's own loader, except on the verified clients.
 pub const FIT_NOTE: &str = "chosen because it reads the whole file. It was checked against the game's own loader only on the clients listed as verified in the version matrix.";
@@ -22,15 +24,18 @@ use std::fmt;
 use std::sync::OnceLock;
 
 /// The layout files, in the order `auto` tries them. Each is embedded in the program.
-const LAYOUT_FILES: [&str; 8] = [
+const LAYOUT_FILES: [&str; 11] = [
     include_str!("../layouts/item-81.json"),
     include_str!("../layouts/item-132.json"),
+    include_str!("../layouts/item-134.json"),
     include_str!("../layouts/skill-3.json"),
     include_str!("../layouts/skill-9.json"),
     include_str!("../layouts/skill-15.json"),
     include_str!("../layouts/monster-31.json"),
+    include_str!("../layouts/monster-36.json"),
     include_str!("../layouts/npcquest-165.json"),
     include_str!("../layouts/npcquest-87.json"),
+    include_str!("../layouts/npcquest-287.json"),
 ];
 
 /// Every layout (parsed once). The embedded files are tested to parse; a broken one is a bug that stops the program at first use.
@@ -107,7 +112,12 @@ impl Table {
                 })
             })
             .collect();
-        json!({"layout": self.layout.variant, "table": self.layout.table.name(), "chosen_by": "fit", "sheets": sheets})
+        let mut doc = json!({"layout": self.layout.variant, "table": self.layout.table.name(), "chosen_by": "fit"});
+        if let J::Object(m) = &mut doc {
+            m.extend(self.layout.provenance_json());
+            m.insert("sheets".into(), J::Array(sheets));
+        }
+        doc
     }
 }
 
