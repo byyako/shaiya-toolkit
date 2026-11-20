@@ -635,6 +635,8 @@ fn write_new_drops_shadowed_entries_and_the_free_list_and_verifies() {
     assert_eq!(n.index().data_end(), n.saf_len(), "no gaps");
     assert_eq!(r.saf_len_after, n.saf_len());
     assert_eq!(check_archive(&n, &CheckOptions { deep: true }, &Job::silent()).unwrap().problems(), 0);
+    // close the output pair before it is replaced: Windows cannot replace a file another handle holds open (exFAT, unlike NTFS, refuses)
+    drop(n);
     // inputs are never overwritten; existing outputs need --force
     assert!(matches!(edit::write_new(&a, &plan, &src.join("data.sah"), Existing::Overwrite, &Job::silent()), Err(Error::Refused(_))));
     assert!(matches!(edit::write_new(&a, &plan, &out.join("data.sah"), Existing::Refuse, &Job::silent()), Err(Error::Refused(_))));

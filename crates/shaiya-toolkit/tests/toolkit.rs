@@ -412,10 +412,12 @@ fn cancelling_a_long_extract_ends_cancelled() {
     with_cx(&mut h, |app, cx| app.add_client("big", &dir, true, cx)).unwrap();
     assert!(h.wait_until(WAIT, |h| h.app.app.archive.is_open()));
     let out = TempDir::new("t1-cancel-out");
+    // hold the extraction at its first progress report: it cannot finish before the cancel below, however fast the disk
+    h.app.shell.tasks().hold_progress();
     with_cx(&mut h, |app, cx| app.archive.begin_extract(out.path().to_path_buf(), false, true, false, cx));
-    assert!(h.wait_until(WAIT, |h| h.app.shell.tasks().views().iter().any(|v| v.title.starts_with("Extracting") && v.done > 0)), "extraction started");
+    assert!(h.wait_until(Duration::from_secs(60), |h| h.app.shell.tasks().views().iter().any(|v| v.title.starts_with("Extracting") && v.done > 0)), "extraction started");
     h.app.shell.tasks().cancel_all();
-    assert!(h.wait_until(Duration::from_secs(10), |h| !h.app.app.archive.is_extracting()), "ended");
+    assert!(h.wait_until(Duration::from_secs(60), |h| !h.app.app.archive.is_extracting()), "ended");
     h.frames(2);
     assert!(h.app.app.archive.status_line.contains("Cancelled"), "{}", h.app.app.archive.status_line);
     for e in std::fs::read_dir(out.path().join("a")).into_iter().flatten().flatten() {

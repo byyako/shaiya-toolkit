@@ -113,6 +113,27 @@ impl TaskState {
 struct TaskSink {
     state: Arc<TaskState>,
     log: Arc<Mutex<Vec<LogLine>>>,
+    #[cfg(any(test, feature = "testing"))]
+    hold: Arc<Hold>,
+}
+
+/// Test hook (feature `testing`): while set, a task's progress reports stop at the first `advance` until the hold is released or the
+/// task is cancelled, so a test can cancel a task at a point it cannot have passed.
+#[cfg(any(test, feature = "testing"))]
+#[derive(Default)]
+struct Hold {
+    on: Mutex<bool>,
+    cv: Condvar,
+}
+
+#[cfg(any(test, feature = "testing"))]
+impl Hold {
+    fn wait(&self, cancel: &Cancel) {
+        let mut on = self.on.lock().unwrap_or_else(|p| p.into_inner());
+        while *on && !cancel.is_cancelled() {
+            on = self.cv.wait_timeout(on, Duration::from_millis(20)).unwrap_or_else(|p| p.into_inner()).0;
+        }
+    }
 }
 
 impl Progress for TaskSink {
@@ -127,6 +148,8 @@ impl Progress for TaskSink {
     }
     fn advance(&self, n: u64) {
         self.state.done.fetch_add(n, Ordering::Relaxed);
+        #[cfg(any(test, feature = "testing"))]
+        self.hold.wait(&self.state.cancel);
     }
     fn note(&self, level: Level, text: &str) {
         self.log.lock().unwrap_or_else(|p| p.into_inner()).push(LogLine { at: SystemTime::now(), level, text: text.to_string() });
@@ -187,6 +210,8 @@ pub struct Tasks {
     log: Arc<Mutex<Vec<LogLine>>>,
     gate: Arc<Gate>,
     ctx: Option<egui::Context>,
+    #[cfg(any(test, feature = "testing"))]
+    hold: Arc<Hold>,
 }
 
 /// Finished tasks stay in the list (for the Activity panel) up to this many.
@@ -194,7 +219,20 @@ const KEEP_FINISHED: usize = 20;
 
 impl Tasks {
     pub fn new(ctx: Option<egui::Context>) -> Tasks {
-        Tasks { next_id: 1, states: Vec::new(), log: Arc::new(Mutex::new(Vec::new())), gate: Arc::new(Gate::default()), ctx }
+        Tasks { next_id: 1, states: Vec::new(), log: Arc::new(Mutex::new(Vec::new())), gate: Arc::new(Gate::default()), ctx, #[cfg(any(test, feature = "testing"))] hold: Arc::new(Hold::default()) }
+    }
+
+    /// Test hook: from now on every task stops at its first progress report until [`Tasks::release_progress`] or until it is cancelled.
+    #[cfg(any(test, feature = "testing"))]
+    pub fn hold_progress(&self) {
+        *self.hold.on.lock().unwrap_or_else(|p| p.into_inner()) = true;
+    }
+
+    /// Test hook: lets tasks held by [`Tasks::hold_progress`] go on.
+    #[cfg(any(test, feature = "testing"))]
+    pub fn release_progress(&self) {
+        *self.hold.on.lock().unwrap_or_else(|p| p.into_inner()) = false;
+        self.hold.cv.notify_all();
     }
 
     /// Runs `work` on a worker thread. A panic becomes `TaskOutcome::Panicked`.
@@ -226,10 +264,12 @@ impl Tasks {
         let handle_state = state.clone();
         let (tx, rx) = channel();
         let (log, gate, ctx) = (self.log.clone(), self.gate.clone(), self.ctx.clone());
+        #[cfg(any(test, feature = "testing"))]
+        let hold = self.hold.clone();
         let key = spec.exclusive.clone();
         let handle_cancel = cancel.clone();
         let spawned = std::thread::Builder::new().name(format!("task-{id}")).spawn(move || {
-            let sink = TaskSink { state: state.clone(), log: log.clone() };
+            let sink = TaskSink { state: state.clone(), log: log.clone(), #[cfg(any(test, feature = "testing"))] hold };
             // wait for the exclusive key
             let mut cancelled_waiting = false;
             if let Some(k) = &key {

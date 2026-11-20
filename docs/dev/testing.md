@@ -35,6 +35,11 @@ All of them skip with a message (`skipped: SHAIYA_CLIENT not set`) when unset, s
 SHAIYA_CLIENT=D:\clients\us SHAIYA_SCRATCH=D:\scratch cargo test -p shaiya-matrix-tests --test us_copy -- --nocapture --test-threads=1
 ```
 
+## Temp folders on exFAT
+
+Tests write to `TMP` / `TEMP`. When those point at an exFAT drive, replacing a file while another handle on it is still open fails with "Access is denied" on Windows (observed: `write_new_drops_shadowed_entries_and_the_free_list_and_verifies` failed 10 of 10 runs before it closed its reader of the output pair first). A test that replaces a file therefore drops every handle on it before the replace.
+Tests that cancel a background task do not race it: `Tasks::hold_progress` (feature `testing` of `shaiya-ui`) stops every task at its first progress report until the test cancels it, so the cancel always arrives mid-task.
+
 ## The version matrix
 
 `crates/shaiya-matrix-tests` holds an `EXPECTED` table (client, capability, `OK | fails | Plain | n/a`) that mirrors [../version-matrix.md](../version-matrix.md), one test per capability that walks the clients, and a test that prints the observed table as Markdown. A cell that differs from `EXPECTED` fails, an improvement included, with the message "update EXPECTED and docs/version-matrix.md". Update both in the same commit as the code.
