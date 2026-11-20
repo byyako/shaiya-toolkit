@@ -37,7 +37,7 @@ SHAIYA_CLIENT=D:\clients\us SHAIYA_SCRATCH=D:\scratch cargo test -p shaiya-matri
 
 ## Temp folders on exFAT
 
-Tests write to `TMP` / `TEMP`. When those point at an exFAT drive, replacing a file while another handle on it is still open fails with "Access is denied" on Windows (observed: `write_new_drops_shadowed_entries_and_the_free_list_and_verifies` failed 10 of 10 runs before it closed its reader of the output pair first). A test that replaces a file therefore drops every handle on it before the replace.
+Tests write to `TMP` / `TEMP`. When those point at an exFAT drive, replacing a file while another handle on it is still open fails with "Access is denied" on Windows (observed: `write_new_drops_shadowed_entries_and_the_free_list_and_verifies` failed 10 of 10 runs before it closed its reader of the output pair first). A test that replaces a file must drop every handle on it before the replace.
 Tests that cancel a background task do not race it: `Tasks::hold_progress` (feature `testing` of `shaiya-ui`) stops every task at its first progress report until the test cancels it, so the cancel always arrives mid-task.
 
 ## The version matrix

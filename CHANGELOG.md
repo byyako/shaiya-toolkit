@@ -18,11 +18,11 @@ All notable changes are listed here, newest first. The format follows [Keep a Ch
 
 ### Fixed
 
-- A rollback of a change that wrote only loose files, interrupted by a crash, is now finished the next time the client is opened (the files it had not yet restored are restored). Before, the pending marker was dropped with "had not started", some files stayed restored and a second rollback was refused unless `--force` was given. A file changed by hand after the crash is saved first as `<name>.bak`, or `<name>.<UTC>.bak` when that name exists. A journal that already says rolled-back only has its marker removed, and a journal naming a backup path outside its folder is refused.
+- A rollback of a change that wrote only loose files, interrupted by a crash, is now finished the next time Shaiya Toolkit opens the client or a command writes to it (the files it had not yet restored are restored). Before, the pending marker was dropped with "had not started", some files stayed restored and a second rollback was refused unless `--force` was given. A file changed by hand after the crash is saved first as `<name>.bak`, or `<name>.<UTC>.bak` when that name exists. A journal that already says rolled-back only has its marker removed, and a journal still marked applied that names a backup path outside its folder is refused.
 
 ### Documentation
 
-- The texture format page, the version matrix, the recovery pages (Undo and recovery, the Toolkit's files) and the Patch builder text of Make a patch describe the changes above; the testing page explains temp folders on exFAT.
+- The texture format page, the version matrix, the recovery pages (Undo and recovery, the Toolkit's files) and the Toolkit page (Apply & history) describe the changes above; Make a patch notes that the Toolkit's "Leave out files that are already the same" works for every source while `shaiya patch build --diff` refuses `--only-changed`; the testing page explains temp folders on exFAT.
 
 ## [0.3.0] - 2026-11-19
 
