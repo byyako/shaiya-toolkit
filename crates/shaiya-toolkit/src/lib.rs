@@ -208,10 +208,10 @@ impl ToolkitApp {
 
     /// The number of queued changes of the client in `dir`, whether it is the active one or not.
     pub fn queued_for(&self, dir: &Path) -> usize {
-        if self.archive.queue_dir() == Some(dir) {
+        if self.archive.queue_dir().is_some_and(|d| clients::same_folder(d, dir)) {
             self.archive.pending.len()
         } else {
-            self.queues.get(dir).map(|(_, q)| q.len()).unwrap_or(0)
+            self.queues.iter().find(|(d, _)| clients::same_folder(d, dir)).map(|(_, (_, q))| q.len()).unwrap_or(0)
         }
     }
 
@@ -237,10 +237,10 @@ impl ToolkitApp {
 
     /// A client was removed from the list or renamed: the queued changes of its folder are dropped (the question was asked before).
     pub fn drop_queue_of(&mut self, dir: &Path) {
-        if self.archive.queue_dir() == Some(dir) {
+        if self.archive.queue_dir().is_some_and(|d| clients::same_folder(d, dir)) {
             self.archive.drop_queue();
         }
-        self.queues.remove(dir);
+        self.queues.retain(|d, _| !clients::same_folder(d, dir));
     }
 
     fn open_client_dir(&mut self, name: &str, dir: PathBuf, cx: &mut ToolkitCx<'_>) {

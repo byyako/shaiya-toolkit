@@ -179,8 +179,19 @@ struct EditClient {
 pub const SWAP_BLOCKED_HOVER: &str = "Apply or discard this client's queued changes first";
 
 /// The queued changes of the folder `dir`, whichever saved client (or opened folder) they belong to.
-fn queued_in(queued: &[(String, PathBuf, usize)], dir: &Path) -> usize {
-    queued.iter().find(|(_, d, _)| d.as_path() == dir).map(|(_, _, c)| *c).unwrap_or(0)
+pub(crate) fn queued_in(queued: &[(String, PathBuf, usize)], dir: &Path) -> usize {
+    queued.iter().find(|(_, d, _)| same_folder(d, dir)).map(|(_, _, c)| *c).unwrap_or(0)
+}
+
+/// Whether two folders are the same place (compared as absolute paths, resolved when they exist; on Windows the case does not matter).
+pub(crate) fn same_folder(a: &Path, b: &Path) -> bool {
+    let norm = |p: &Path| std::fs::canonicalize(p).or_else(|_| std::path::absolute(p)).unwrap_or_else(|_| p.to_path_buf());
+    let (a, b) = (norm(a), norm(b));
+    if cfg!(windows) {
+        a.to_string_lossy().to_lowercase() == b.to_string_lossy().to_lowercase()
+    } else {
+        a == b
+    }
 }
 
 /// A removal or rename waiting for the answer about the queue.

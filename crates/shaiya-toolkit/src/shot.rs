@@ -5,6 +5,7 @@
 //! A scene is set up once (`begin_scene`), then the shell waits until the background work is idle and asks for the next step
 //! (`scene_step`) until there is none; then the window is photographed.
 
+use crate::clients::same_folder;
 use crate::sdata_table::Input;
 use crate::{Tab, ToolkitApp, ToolkitCx};
 use shaiya_archive::edit::{self, EditPlan, InPlaceOptions, Put, PutMode, Source};
@@ -52,12 +53,6 @@ fn make_change(dir: &Path) -> Result<(), String> {
 
 /// The time the demo change shows in the history (the same day as the demo archive's own files; no real time reaches a picture).
 const DEMO_TIME: &str = "2010-01-01T00:00:00Z";
-
-/// Whether two folders are the same place (compared as absolute paths, resolved when they exist).
-fn same_folder(a: &Path, b: &Path) -> bool {
-    let norm = |p: &Path| std::fs::canonicalize(p).or_else(|_| std::path::absolute(p)).unwrap_or_else(|_| p.to_path_buf());
-    norm(a) == norm(b)
-}
 
 impl ToolkitApp {
     /// Sets up a scene: saves the demo client (given as the first file of the command line) under [`CLIENT_NAME`] and opens what the scene

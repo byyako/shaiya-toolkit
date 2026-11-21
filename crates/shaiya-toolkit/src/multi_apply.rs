@@ -73,7 +73,11 @@ impl Outcome {
             }
         }
         for (c, of) in &self.same_folder {
-            v.push(format!("{c} is the same folder as {of}: the patches were applied there once."));
+            if self.changed.iter().any(|x| x.client == *of) {
+                v.push(format!("{c} is the same folder as {of}: the patches were applied there once."));
+            } else {
+                v.push(format!("{c} was left out because {of} (the same folder) was not applied."));
+            }
         }
         if self.stopped.is_none() {
             v.push("Done: every chosen client was changed.".to_string());
@@ -145,7 +149,7 @@ impl MultiApply {
         let mut todo: Vec<(String, PathBuf)> = Vec::new();
         let mut outcome = Outcome::default();
         for (n, d) in clients {
-            match todo.iter().find(|(_, d2)| *d2 == d) {
+            match todo.iter().find(|(_, d2)| clients::same_folder(d2, &d)) {
                 Some((first, _)) => outcome.same_folder.push((n, first.clone())),
                 None => todo.push((n, d)),
             }
@@ -256,7 +260,7 @@ impl MultiApply {
                     let list = if list.len() <= 3 { list.join(" and ") } else { format!("{} patches", list.len()) };
                     let sigs = if cur.key.is_some() { "a valid signature is required and checked" } else { "not used (unsigned patches)" };
                     let which = run.total - run.todo.len();
-                    let text = format!("Apply {list} to {name} ({})? Client {which} of {}. Signatures: {sigs}.", dir.display(), run.total);
+                    let text = format!("Apply {list} to {name} ({})? Client {which} of {}. Signatures: {sigs}.", cx.shell.folder_text(&name, &dir), run.total);
                     cur.stage = Stage::Confirm(rows, text);
                 }
                 Some(TaskOutcome::Failed(e)) => self.stop(format!("cannot plan the patches: {e}"), cx),
@@ -374,7 +378,7 @@ impl MultiApply {
                 }
                 if !running {
                     let chosen: Vec<&PathBuf> = self.clients.iter().filter(|(_, _, on)| *on).map(|(_, d, _)| d).collect();
-                    if chosen.iter().enumerate().any(|(i, d)| chosen[..i].contains(d)) {
+                    if chosen.iter().enumerate().any(|(i, d)| chosen[..i].iter().any(|e| clients::same_folder(e, d))) {
                         ui.label(RichText::new("Clients that share a folder get the patches once.").color(pal.weak));
                     }
                 }
@@ -456,5 +460,42 @@ mod tests {
         assert!(!l.contains("Changed: A"), "{l}");
         assert!(l.contains("Not touched: B") && l.contains("unfinished earlier change recovered"), "{l}");
         assert!(l.contains("A2 is the same folder as A"), "{l}");
+    }
+
+    #[test]
+    fn a_same_folder_client_of_a_client_that_was_not_applied_is_left_out_not_applied_once() {
+        let o = Outcome {
+            not_touched: vec!["A".into(), "A2".into()],
+            stopped: Some(("A".into(), "stopped at your request".into())),
+            same_folder: vec![("A2".into(), "A".into())],
+            ..Outcome::default()
+        };
+        let l = o.lines().join("\n");
+        assert!(!l.contains("applied there once"), "{l}");
+        assert!(l.contains("A2 was left out because A (the same folder) was not applied"), "{l}");
+    }
+
+    #[test]
+    fn the_same_folder_line_is_only_true_when_the_first_client_was_applied() {
+        let o = Outcome {
+            changed: vec![Changed { client: "A".into(), dir: PathBuf::from("a"), applied: 1, of: 1, journals: Vec::new(), unknown: false }],
+            same_folder: vec![("A2".into(), "A".into())],
+            ..Outcome::default()
+        };
+        let l = o.lines().join("\n");
+        assert!(l.contains("A2 is the same folder as A: the patches were applied there once."), "{l}");
+        assert!(!l.contains("left out"), "{l}");
+    }
+
+    #[test]
+    fn two_spellings_of_one_folder_are_one_folder() {
+        let base = std::env::temp_dir().join(format!("shaiya-test-spell-{}", std::process::id()));
+        let sub = base.join("c");
+        std::fs::create_dir_all(&sub).unwrap();
+        let other = if cfg!(windows) { PathBuf::from(sub.to_string_lossy().to_uppercase()) } else { base.join("c").join(".").join("..").join("c") };
+        assert!(clients::same_folder(&sub, &other));
+        assert!(!clients::same_folder(&sub, &base));
+        assert_eq!(clients::queued_in(&[("A".to_string(), sub.clone(), 2usize)], &other), 2);
+        let _ = std::fs::remove_dir_all(&base);
     }
 }
