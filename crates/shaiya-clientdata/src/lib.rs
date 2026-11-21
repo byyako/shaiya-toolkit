@@ -1,8 +1,9 @@
 //! Readers for Shaiya client data: files in `data.sah`/`data.saf` or an extracted
-//! folder, `.wld` maps, `.dg` dungeons, SEED-encrypted SData (`Monster`, `NpcQuest`), `sysmsg-uni.txt`, map names and textures.
-//! Readers only, except the lossless `.wld` model (`wld_raw`) and the `<id>.txt` line model (`area_txt`), which build bytes
+//! folder, `.wld` maps, `.dg` dungeons, `.ANI` animations, SEED-encrypted SData (`Monster`, `NpcQuest`), `sysmsg-uni.txt`, map names and textures.
+//! Readers only, except the lossless `.wld` model (`wld_raw`), the `<id>.txt` line model (`area_txt`) and the `.ANI` model (`anim`), which build bytes
 //! in memory: nothing here writes a file.
 
+pub mod anim;
 pub mod area_txt;
 pub mod dg;
 pub mod error;
@@ -16,6 +17,7 @@ pub mod texture;
 pub mod wld;
 pub mod wld_raw;
 
+pub use anim::Ani;
 pub use dg::{dungeon_map_size, Dg};
 pub use error::{Error, Result};
 pub use sdata::{Monster, Monsters, Npc, NpcQuest};

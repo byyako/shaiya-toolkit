@@ -36,6 +36,8 @@ Client ids: `us-108` (US patch level 108), and the eight test clients `ru-ep3`, 
 | sdata `Monster` layout fits (the number is the records read from `Monster/Monster.SData`) | OK 2,474 | OK 2,372 | OK 2,474 | n/a | OK 2,992 | OK 4,511 | FIT-ONLY 4,776 | FIT-ONLY 4,774 | fails |
 | sdata `NpcQuest` layout fits (the number is the quests read from `Npc/NpcQuest.SData`) | OK 1,720 | OK 1,531 | OK 2,109 | n/a | OK 2,262 | OK 3,051 | FIT-ONLY 3,820 | FIT-ONLY 4,182 | FIT-ONLY 1,531 |
 | `auto` picks exactly one layout or none, every SData (the number is the files that exactly one layout reads; the rest are shown raw) | OK 5 | OK 5 | OK 5 | n/a | OK 5 | OK 5 | OK 6 | OK 5 | OK 6 |
+| `.ANI` files the index lists (index only: the number is the visible `.ANI` files of the index; no contents were read on the eight test clients) | OK 3,509 | OK 3,537 | OK 3,624 | OK 3,724 | OK 3,723 | OK 4,099 | OK 4,255 | OK 5,951 | OK 3,429 |
+| `Ani::parse` reads every `.ANI` to the last byte and `to_bytes` gives it back byte for byte; `validate` finds no error | OK 3,509 | n/a | n/a | n/a | n/a | n/a | n/a | n/a | n/a |
 
 Reading the table:
 
@@ -58,6 +60,7 @@ Reading the table:
 - The model preview row counts the `.smod` files whose preview data is built: all 1,355 of the US client give a picture, with 0 texture names missing; the toolkit's opt-in test asserts both and the matrix run prints the counts. The 29 fields and 54 dungeons of the map row are asserted too.
 - The gatekeeper row is `fails` where `NpcQuest::parse` fails (kr-ep8, fawkes-v68), and `n/a` where there is no file (ru-ep54). The gates were not measured on those two clients: `NpcQuest::parse` fails first there (the layout differs from the original generation's), so the gate row says `fails`.
 - The map-name row measures the presence of text for the distinct map-name message ids of the EP4.5 table (47 message ids covering 67 map ids), not its correctness; the cn-ep4 sysmsg lacks text for three of them.
+- The `.ANI` rows: the first counts the `.ANI` files each client's index lists; it reads no file contents. The second reads every `.ANI` on `us-108` (US EP4.5) and is `n/a` on the eight test clients because the test set holds no `data.saf` for them: their animations are counted from the index only and were never read. Whether a later episode's `.ANI` files read is not checked. See [ani.md](formats/ani.md).
 
 ## SVMap Editor and `shaiya svmap`
 

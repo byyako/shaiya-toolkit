@@ -123,6 +123,18 @@ impl<'a> Cur<'a> {
         Ok(decode_cp949(raw.split(|&b| b == 0).next().unwrap_or(&[])))
     }
 
+    /// Like `str_i32`, but gives the raw bytes exactly as stored (the NUL and anything after it included), so a writer can give them back.
+    #[allow(dead_code)] // first used by the .3DC reader
+    pub fn raw_str_i32(&mut self, what: &str) -> Result<&'a [u8]> {
+        let at = self.p;
+        let n = self.u32(what)? as usize;
+        if n > self.left() || n > 1 << 20 {
+            self.p = at;
+            return Err(self.fail(format!("{what}: bad string length {n}")));
+        }
+        self.bytes(n, what)
+    }
+
     /// Fixed 256-byte name buffer; bytes after the NUL are garbage from the map tool.
     pub fn name256(&mut self, what: &str) -> Result<String> {
         let raw = self.bytes(256, what)?;

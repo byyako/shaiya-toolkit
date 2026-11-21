@@ -1,6 +1,7 @@
 //! Test helpers for the Shaiya toolkit (dev-dependency only). Std only, independent of the code it tests: it writes the formats by hand,
 //! so it is an oracle, not a mirror. It returns bytes and paths, never toolkit types. No game data.
 
+pub mod anim;
 pub mod demo;
 pub use demo::demo_client;
 
@@ -212,6 +213,12 @@ pub fn env_test_clients() -> Option<PathBuf> {
 /// Opt-in scratch space for tests that write gigabytes (`SHAIYA_SCRATCH`): a folder outside every repo.
 pub fn env_scratch() -> Option<PathBuf> {
     env_path("SHAIYA_SCRATCH")
+}
+
+/// Opt-in data: an archive holding the stock files (`SHAIYA_CLIENT_ORIGINAL`): a `.sah` file (its `.saf` is the sibling with the same
+/// stem) or a folder with `data.sah`. Read only.
+pub fn env_client_original() -> Option<PathBuf> {
+    env_path("SHAIYA_CLIENT_ORIGINAL")
 }
 
 fn crc32(data: &[u8]) -> u32 {

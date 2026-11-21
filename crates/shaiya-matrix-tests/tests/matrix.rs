@@ -223,3 +223,13 @@ fn performance_on_the_us_client() {
 fn smod_model_preview_data() {
     check(Cap::ModelPreview);
 }
+
+#[test]
+fn ani_index_count() {
+    check(Cap::AniIndexCount);
+}
+
+#[test]
+fn ani_round_trip() {
+    check(Cap::AniRoundTrip);
+}

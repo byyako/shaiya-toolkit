@@ -2,6 +2,14 @@
 
 All notable changes are listed here, newest first. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). One version number covers every program and library of the workspace.
 
+## [Unreleased]
+
+### Libraries
+
+- `shaiya-clientdata`: `anim::Ani` reads a `.ANI` skeletal animation to the last byte and writes it back byte for byte (floats and NaN bits are kept exactly); `anim::validate` lists errors and warnings per bone, `anim::rig_check` and `anim::passes` compare a candidate with the file it would replace (bone count, parents, reference matrices as raw bits, and the first field as a separate difference), and `anim::rig_of` names the kind and rig of an archive path. On US EP4.5, all 3,509 `.ANI` files read and write back byte for byte; the eight other matrix clients are index only (files counted, none read).
+- `shaiya-testkit`: `anim` builds synthetic `.ANI` bytes without using the reader; `env_client_original` names the optional `SHAIYA_CLIENT_ORIGINAL` archive.
+- `cargo xtask guard` also refuses tracked files ending `.ani`, `.3dc`, `.3do`, `.3de`, `.vani`, `.mani` and `.smod`.
+
 ## [0.3.2] - 2026-11-20
 
 0.3.1 was never tagged or published: its changes are listed under [0.3.1] below and ship with this release.
