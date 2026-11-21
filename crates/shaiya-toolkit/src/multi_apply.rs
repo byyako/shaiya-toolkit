@@ -73,8 +73,12 @@ impl Outcome {
             }
         }
         for (c, of) in &self.same_folder {
-            if self.changed.iter().any(|x| x.client == *of) {
-                v.push(format!("{c} is the same folder as {of}: the patches were applied there once."));
+            if let Some(x) = self.changed.iter().find(|x| x.client == *of) {
+                if !x.unknown && x.applied == x.of {
+                    v.push(format!("{c} is the same folder as {of}: the patches were applied there once."));
+                } else {
+                    v.push(format!("{c} is the same folder as {of}; see {of}'s result above."));
+                }
             } else {
                 v.push(format!("{c} was left out because {of} (the same folder) was not applied."));
             }
@@ -272,7 +276,7 @@ impl MultiApply {
                 match cx.shell.confirm("toolkit-multi-apply", &c) {
                     None => cur.stage = Stage::Confirm(rows, text),
                     Some(0) => {
-                        let arc = if archive.client_dir() == Some(dir.as_path()) { archive.release_handle() } else { None };
+                        let arc = if archive.client_dir().is_some_and(|d| clients::same_folder(d, &dir)) { archive.release_handle() } else { None };
                         cur.stage = Stage::Closing(arc);
                     }
                     Some(_) => self.stop("stopped at your request".to_string(), cx),
@@ -319,7 +323,7 @@ impl MultiApply {
                         archive.changed_counter += 1;
                     }
                     // the open client's archive is read again whether or not the apply went through
-                    if archive.client_dir() == Some(dir.as_path()) || archive.source_dir_is(&dir) {
+                    if archive.client_dir().is_some_and(|d| clients::same_folder(d, &dir)) || archive.source_dir_is(&dir) {
                         archive.reopen(cx);
                     }
                     match err {
@@ -485,6 +489,39 @@ mod tests {
         let l = o.lines().join("\n");
         assert!(l.contains("A2 is the same folder as A: the patches were applied there once."), "{l}");
         assert!(!l.contains("left out"), "{l}");
+    }
+
+    #[test]
+    fn the_same_folder_line_does_not_claim_a_full_apply_for_a_partial_or_unknown_twin() {
+        for (applied, unknown) in [(1usize, false), (0, true)] {
+            let o = Outcome {
+                changed: vec![Changed { client: "A".into(), dir: PathBuf::from("a"), applied, of: 2, journals: Vec::new(), unknown }],
+                same_folder: vec![("A2".into(), "A".into())],
+                ..Outcome::default()
+            };
+            let l = o.lines().join("\n");
+            assert!(!l.contains("applied there once"), "{l}");
+            assert!(l.contains("A2 is the same folder as A; see A's result above."), "{l}");
+        }
+    }
+
+    #[test]
+    fn spellings_compare_equal_and_other_folders_differ_with_the_cache_warm() {
+        let base = std::env::temp_dir().join(format!("shaiya-test-memo-{}", std::process::id()));
+        let (c, d) = (base.join("c"), base.join("d"));
+        std::fs::create_dir_all(&c).unwrap();
+        std::fs::create_dir_all(&d).unwrap();
+        let other = if cfg!(windows) { PathBuf::from(c.to_string_lossy().to_uppercase()) } else { c.join(".").join("..").join("c") };
+        for _ in 0..3 {
+            assert!(clients::same_folder(&c, &other));
+            assert!(!clients::same_folder(&c, &d));
+        }
+        // a failure is not kept: the folder appears later
+        let late = base.join("late");
+        assert!(!clients::same_folder(&late, &d));
+        std::fs::create_dir_all(&late).unwrap();
+        assert!(clients::same_folder(&late, &late.join(".")));
+        let _ = std::fs::remove_dir_all(&base);
     }
 
     #[test]

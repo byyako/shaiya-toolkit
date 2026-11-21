@@ -829,7 +829,7 @@ impl ArchiveView {
 
     /// Whether the open source is this folder (a saved client or an opened client folder).
     pub fn source_dir_is(&self, dir: &Path) -> bool {
-        matches!(&self.source, Some(OpenSource::Client { dir: d, .. }) if d == dir)
+        matches!(&self.source, Some(OpenSource::Client { dir: d, .. }) if crate::clients::same_folder(d, dir))
     }
 
     /// The app's handle on `data.saf` (for tasks that read it; they must not outlive a write).
@@ -1169,7 +1169,12 @@ impl ArchiveView {
 
     /// True when the queue (if any) was built on the client folder that is open now. A queue is never applied anywhere else.
     fn queue_is_ours(&self) -> bool {
-        self.pending.is_empty() || self.pending_owner.as_deref() == self.client_dir()
+        self.pending.is_empty()
+            || match (self.pending_owner.as_deref(), self.client_dir()) {
+                (Some(o), Some(d)) => crate::clients::same_folder(o, d),
+                (None, None) => true,
+                _ => false,
+            }
     }
 
     fn push_edit(&mut self, label: &str, edits: Vec<QueueEdit>) {

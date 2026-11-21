@@ -2519,3 +2519,35 @@ fn apply_to_several_clients_stops_at_a_read_only_second_client_on_every_system()
     assert_eq!(file_hashes(c.path()), c_before, "the third was never started");
     assert!(!c.path().join(shaiya_archive::journal::DEFAULT_DIR).exists());
 }
+
+#[test]
+fn a_stashed_queue_is_restored_when_the_folder_is_opened_under_another_spelling() {
+    let mut w = open_world("t11-spelling");
+    let a = w.client_dir();
+    let b = client_of("t11-spelling-b", &[("b.txt", b"b file")]);
+    add_saved(&mut w, "EU test", b.path());
+    let src = TempDir::new("t11-spelling-src");
+    queue_one(&mut w, &src.path().join("q.txt"), "queued/one.txt");
+    open_saved(&mut w, "EU test", b.path());
+    assert_eq!(w.h.app.app.queued_for(&a), 1);
+    // the same folder, spelled another way
+    let alt = if cfg!(windows) { std::path::PathBuf::from(a.to_string_lossy().to_uppercase()) } else { a.join(".").join("..").join(a.file_name().unwrap()) };
+    with_cx(&mut w.h, |app, cx| app.add_client("US alt", &alt, false, cx)).unwrap();
+    w.h.frames(1);
+    open_saved(&mut w, "US alt", &alt);
+    assert_eq!(w.h.app.app.archive.pending.len(), 1, "the queue came back under the other spelling");
+    assert_eq!(w.h.app.app.queued_clients().len(), 1, "one queue for one folder");
+    // stash and restore again: still one queue, never a second for the same place
+    open_saved(&mut w, "EU test", b.path());
+    assert_eq!(w.h.app.app.queued_clients().len(), 1);
+    open_saved(&mut w, "US test", &a);
+    assert_eq!(w.h.app.app.archive.pending.len(), 1);
+    // applied to that client only; a different folder still refuses it
+    let b_before = file_hashes(b.path());
+    open_saved(&mut w, "EU test", b.path());
+    w.h.app.app.archive.pending.push(shaiya_toolkit::archive_view::Pending { path: "queued/one.txt".into(), kind: shaiya_toolkit::archive_view::PendingKind::Remove });
+    with_cx(&mut w.h, |app, cx| app.archive.request_apply(cx));
+    w.h.frames(3);
+    assert!(!w.h.app.app.archive.is_applying(), "a queue from a different folder is refused");
+    assert_eq!(file_hashes(b.path()), b_before);
+}

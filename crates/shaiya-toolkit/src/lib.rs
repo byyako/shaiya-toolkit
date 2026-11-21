@@ -202,6 +202,7 @@ impl ToolkitApp {
     fn stash_queue(&mut self) {
         let name = self.current.as_ref().map(|c| c.name.clone()).or_else(|| self.archive.source_name()).unwrap_or_default();
         if let Some(q) = self.archive.take_queue() {
+            self.queues.retain(|d, _| !clients::same_folder(d, &q.dir));
             self.queues.insert(q.dir.clone(), (name, q));
         }
     }
@@ -249,7 +250,8 @@ impl ToolkitApp {
         self.current = Some(ClientInfo { name: name.to_string(), dir: dir.clone(), check_version, current_version });
         self.ini_stamp = None;
         self.archive.open(OpenSource::Client { name: name.to_string(), dir: dir.clone() }, cx);
-        if let Some((_, q)) = self.queues.remove(&dir) {
+        let key = self.queues.keys().find(|d| clients::same_folder(d, &dir)).cloned();
+        if let Some((_, q)) = key.and_then(|k| self.queues.remove(&k)) {
             self.archive.put_queue(q);
         }
         self.set_tab(Tab::Archive, cx);

@@ -185,13 +185,39 @@ pub(crate) fn queued_in(queued: &[(String, PathBuf, usize)], dir: &Path) -> usiz
 
 /// Whether two folders are the same place (compared as absolute paths, resolved when they exist; on Windows the case does not matter).
 pub(crate) fn same_folder(a: &Path, b: &Path) -> bool {
-    let norm = |p: &Path| std::fs::canonicalize(p).or_else(|_| std::path::absolute(p)).unwrap_or_else(|_| p.to_path_buf());
-    let (a, b) = (norm(a), norm(b));
-    if cfg!(windows) {
+    // (path, whether it was resolved on disk); a resolved path already has the on-disk case and is compared exactly
+    let norm = |p: &Path| match canonical_cached(p) {
+        Some(c) => (c, true),
+        None => (std::path::absolute(p).unwrap_or_else(|_| p.to_path_buf()), false),
+    };
+    let ((a, a_real), (b, b_real)) = (norm(a), norm(b));
+    if a_real && b_real {
+        a == b
+    } else if cfg!(windows) {
         a.to_string_lossy().to_lowercase() == b.to_string_lossy().to_lowercase()
     } else {
         a == b
     }
+}
+
+/// `std::fs::canonicalize` with a small process-wide memo of successes (the callers run every frame, and the drive may be a network share).
+/// Failures are not kept: a missing folder may appear later.
+fn canonical_cached(p: &Path) -> Option<PathBuf> {
+    use std::collections::HashMap;
+    use std::sync::{Mutex, OnceLock};
+    static MEMO: OnceLock<Mutex<HashMap<PathBuf, PathBuf>>> = OnceLock::new();
+    let memo = MEMO.get_or_init(|| Mutex::new(HashMap::new()));
+    if let Some(c) = memo.lock().ok().and_then(|m| m.get(p).cloned()) {
+        return Some(c);
+    }
+    let c = std::fs::canonicalize(p).ok()?;
+    if let Ok(mut m) = memo.lock() {
+        if m.len() > 256 {
+            m.clear();
+        }
+        m.insert(p.to_path_buf(), c.clone());
+    }
+    Some(c)
 }
 
 /// A removal or rename waiting for the answer about the queue.
