@@ -773,11 +773,12 @@ impl PatchBuilder {
                 let left = self.rows.iter().filter(|r| r.skipped).count();
                 let head = if left == 0 { format!("Contents ({})", self.rows.len()) } else { format!("Contents ({}, {left} left out)", self.rows.len() - left) };
                 ui.label(RichText::new(head).strong());
-                egui::Grid::new("toolkit-patch-rows-head").show(ui, |ui| {
-                    for h in ["Kind", "Path", "Size", "Packed", "Effect on the client"] {
-                        ui.label(RichText::new(h).strong());
+                // the same widths as the rows below, so each heading stands over its column
+                ui.horizontal(|ui| {
+                    for (h, w) in [("Kind", 60.0), ("Path", 340.0), ("Size", 80.0), ("Packed", 90.0)] {
+                        ui.add_sized([w, 16.0], egui::Label::new(RichText::new(h).strong()));
                     }
-                    ui.end_row();
+                    ui.label(RichText::new("Effect on the client").strong());
                 });
                 let n = self.rows.len();
                 let findings = &self.findings;

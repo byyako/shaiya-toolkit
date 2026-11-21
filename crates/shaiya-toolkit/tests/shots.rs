@@ -44,6 +44,8 @@ fn assert_no_path(s: &Shot, name: &str) {
     }
     let leaf = s.dir.path().file_name().unwrap().to_string_lossy().to_string();
     assert!(!t.contains(&leaf), "scene {name} shows the name of the real folder {leaf}:\n{t}");
+    let version = format!("v{}", env!("CARGO_PKG_VERSION"));
+    assert!(!t.contains(&version), "scene {name} shows the version {version}:\n{t}");
 }
 
 fn wait_preview(s: &mut Shot) {
@@ -91,6 +93,9 @@ fn the_apply_history_scene_shows_one_real_journal() {
     assert_eq!(s.h.app.app.apply.history()[0].0.label, "Demo: add a changelog");
     let t = s.h.text();
     assert!(t.contains("Demo: add a changelog"), "{t}");
+    // the history shows the fixed demo time, never the real one
+    assert_eq!(s.h.app.app.apply.history()[0].0.created_utc, "2010-01-01T00:00:00Z");
+    assert!(t.contains("2010-01-01 00:00:00 UTC"), "{t}");
     assert_no_path(&s, "apply-history");
 }
 
@@ -200,4 +205,56 @@ fn the_picker_shows_a_saved_client_by_name_under_shot_and_by_path_otherwise() {
     assert_eq!(shaiya_toolkit::clients::picker_label(&c, "Demo client", true), "Demo client");
     assert_eq!(shaiya_toolkit::clients::picker_label(&c, "Demo client", false), "Demo client - not found");
     assert_eq!(shaiya_toolkit::clients::picker_label(&c, "/somewhere/else", true), "Demo client  (/somewhere/else)");
+}
+
+/// A data folder that already holds the saved clients `saved` (name, folder), the way an earlier normal run leaves it.
+fn data_dir_with(tag: &str, saved: &[(&str, &std::path::Path)]) -> TempDir {
+    let data = TempDir::new(tag);
+    let mut h = Harness::<ToolkitApp>::new(ShellOptions { data_dir: Some(data.path().to_path_buf()), ..Default::default() });
+    h.frames(2);
+    for (name, dir) in saved {
+        let a = &mut h.app;
+        let mut cx = shaiya_ui::Cx { shell: &mut a.shell, settings: &mut a.tool_settings };
+        a.app.add_client(name, dir, true, &mut cx).unwrap();
+    }
+    h.frames(2);
+    data
+}
+
+fn shot_with_data(data: &std::path::Path, dir: &std::path::Path, scene: &str) -> Harness<ToolkitApp> {
+    let mut o = options(dir, scene);
+    o.no_settings = false;
+    o.data_dir = Some(data.to_path_buf());
+    Harness::<ToolkitApp>::new(o)
+}
+
+#[test]
+fn a_saved_demo_client_that_is_another_folder_is_refused_under_shot() {
+    let demo = TempDir::new("w9fix-demo");
+    demo_client(demo.path());
+    let elsewhere = TempDir::new("w9fix-elsewhere");
+    shaiya_testkit::SahBuilder::new(0).file(b"a.txt", b"x").write_to(elsewhere.path());
+    let before = std::fs::read(elsewhere.path().join("data.sah")).unwrap();
+    let data = data_dir_with("w9fix-data-a", &[(CLIENT_NAME, elsewhere.path())]);
+    let mut h = shot_with_data(data.path(), demo.path(), "apply-history");
+    let e = h.wait_scene(WAIT).unwrap_err();
+    assert!(e.contains("Demo client") && e.contains("not the demo folder"), "{e}");
+    assert!(!h.app.app.archive.is_open(), "the other folder was not opened");
+    assert_eq!(std::fs::read(elsewhere.path().join("data.sah")).unwrap(), before);
+    assert!(!elsewhere.path().join("shaiya-toolkit-backups").exists());
+}
+
+#[test]
+fn a_shot_run_with_a_data_dir_does_not_reopen_the_last_client() {
+    let demo = TempDir::new("w9fix-demo2");
+    demo_client(demo.path());
+    let other = TempDir::new("w9fix-other2");
+    shaiya_testkit::SahBuilder::new(0).file(b"a.txt", b"x").write_to(other.path());
+    // the last client is "Other"; the saved "Demo client" is this very demo folder
+    let data = data_dir_with("w9fix-data-b", &[(CLIENT_NAME, demo.path()), ("Other", other.path())]);
+    let mut h = shot_with_data(data.path(), demo.path(), "start");
+    h.wait_scene(WAIT).unwrap();
+    h.frames(3);
+    assert!(!h.app.app.archive.is_open(), "the last client is not reopened under --shot");
+    assert!(h.app.shell.hide_paths());
 }

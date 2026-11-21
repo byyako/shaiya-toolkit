@@ -1183,7 +1183,10 @@ impl<A: ToolApp> ShellApp<A> {
                 ui.label(text);
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.label(RichText::new(format!("v{}", self.shell.info.version)).weak());
+                // a screenshot carries no version string (it would be stale at the next release)
+                if !self.shell.hide_paths {
+                    ui.label(RichText::new(format!("v{}", self.shell.info.version)).weak());
+                }
                 if !running.is_empty() {
                     let pct = running.iter().find_map(|v| v.fraction()).map(|f| format!(" {}%", (f * 100.0) as u32)).unwrap_or_default();
                     let text = format!("{} task{}{pct}  \u{b7}", running.len(), if running.len() == 1 { "" } else { "s" });

@@ -614,7 +614,8 @@ impl ToolApp for ToolkitApp {
         };
         app.archive.show_shadowed = cx.settings.show_shadowed;
         // the last used client opens at start, as a task; a client whose folder is gone is not opened
-        if let Some(name) = cx.settings.last_client.clone() {
+        // (a `--shot` run never does: its scene decides what opens)
+        if let Some(name) = cx.settings.last_client.clone().filter(|_| !cx.shell.hide_paths()) {
             app.select_client(&name, cx);
         }
         app

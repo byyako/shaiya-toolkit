@@ -325,6 +325,7 @@ impl ClientsUi {
             let mut edit: Option<(String, EditKind)> = None;
             let mut swap_for: Option<(String, PathBuf)> = None;
             let clients = cx.shell.shared().clients.clone();
+            let shown: Vec<String> = clients.iter().map(|c| cx.shell.folder_text(&c.name, Path::new(&c.path))).collect();
             let queued = self.queued.clone();
             let queued_of = move |n: &str| queued.iter().find(|(q, _)| q.eq_ignore_ascii_case(n)).map(|(_, c)| *c).unwrap_or(0);
             egui::Window::new("Manage client folders").open(&mut open).default_width(720.0).show(ctx, |ui| {
@@ -337,11 +338,11 @@ impl ClientsUi {
                     ui.label(RichText::new("Note").strong());
                     ui.label("");
                     ui.end_row();
-                    for c in &clients {
+                    for (c, shown_path) in clients.iter().zip(&shown) {
                         let st = self.statuses.iter().find(|(n, _)| n == &c.name).map(|(_, s)| s.clone()).unwrap_or_default();
                         ui.label(&c.name);
                         ui.vertical(|ui| {
-                            ui.label(&c.path);
+                            ui.label(shown_path);
                             if st.found {
                                 let ini = match (st.check_version, st.current_version) {
                                     (Some(a), Some(b)) => format!(", Version.ini CheckVersion {a}, CurrentVersion {b}"),

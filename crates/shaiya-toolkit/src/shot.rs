@@ -39,7 +39,24 @@ fn make_change(dir: &Path) -> Result<(), String> {
         ..EditPlan::default()
     };
     let opts = InPlaceOptions { journal: JournalMode::In(dir.join(journal::DEFAULT_DIR)), legacy_bak: false, check_in_use: false };
-    edit::apply_in_place(dir, &plan, &opts, &Job::silent()).map(|_| ()).map_err(|e| format!("could not make the demo change: {e}"))
+    edit::apply_in_place(dir, &plan, &opts, &Job::silent()).map_err(|e| format!("could not make the demo change: {e}"))?;
+    // the journal is stamped with the real time; a picture must not show when it was taken, so the demo folder's own journal gets a fixed time
+    let root = dir.join(journal::DEFAULT_DIR);
+    let list = journal::list(dir, &root).map_err(|e| format!("could not read the demo journal: {e}"))?;
+    for (mut j, _) in list {
+        j.created_utc = DEMO_TIME.into();
+        j.write().map_err(|e| format!("could not date the demo journal: {e}"))?;
+    }
+    Ok(())
+}
+
+/// The time the demo change shows in the history (the same day as the demo archive's own files; no real time reaches a picture).
+const DEMO_TIME: &str = "2010-01-01T00:00:00Z";
+
+/// Whether two folders are the same place (compared as absolute paths, resolved when they exist).
+fn same_folder(a: &Path, b: &Path) -> bool {
+    let norm = |p: &Path| std::fs::canonicalize(p).or_else(|_| std::path::absolute(p)).unwrap_or_else(|_| p.to_path_buf());
+    norm(a) == norm(b)
 }
 
 impl ToolkitApp {
@@ -53,8 +70,13 @@ impl ToolkitApp {
         if !dir.join(MARKER).is_file() {
             return Err(format!("that folder is not a demo client (it has no {MARKER}); make one with cargo xtask demo-client DIR"));
         }
-        let saved = cx.shell.shared().clients.iter().any(|c| c.name == CLIENT_NAME);
-        if !saved {
+        let saved = cx.shell.shared().clients.iter().find(|c| c.name == CLIENT_NAME).map(|c| PathBuf::from(&c.path));
+        if let Some(path) = &saved {
+            // a saved client of that name (a --data-dir run) must be this very folder: a scene never opens or changes any other
+            if !same_folder(path, &dir) {
+                return Err(format!("the saved client {CLIENT_NAME:?} is not the demo folder given; use a --data-dir without it, or none"));
+            }
+        } else {
             self.add_client(CLIENT_NAME, &dir, false, cx).map_err(|e| e.to_string())?;
         }
         match scene {
