@@ -86,7 +86,7 @@ Atomic writes go to `.<name>.<pid>.shaiya-tmp` in the folder of the target, are 
 
 ## Cleanup folders
 
-A clean-up ([Client health](../guides/client-health.md)) moves leftover files out of the client folder into a new folder `cleanup-<UTC stamp>/` next to the journals. Each file keeps its path relative to the client folder. The folder holds the moved files and `manifest.json`. A cleanup folder has no `journal.txt`, so it is not a journal: it is not listed by `patch history`, not counted as a change, and `prune` leaves it alone.
+A clean-up ([Client health](../guides/client-health.md)) moves leftover files aside into a new folder `shaiya-toolkit-backups/cleanup-<UTC stamp>/` (inside the client folder, next to the journals). Each file keeps its path relative to the client folder. The folder holds the moved files and `manifest.json`. A cleanup folder has no `journal.txt`, so it is not a journal: it is not listed by `patch history`, not counted as a change, and `prune` leaves it alone.
 
 `manifest.json` is written atomically (a temporary file, then a rename) **before** the first file is moved, with every file `planned`, and is written again after each rename. Keys:
 

@@ -37,7 +37,7 @@ US EP4.5 (2,474 records). The version matrix shows `Monsters::parse` reading it 
 
 ## Other episodes
 
-The layout is the original client generation's. `Monsters::parse` fails on kr-ep8, fawkes-v68 and cn-ep4 in the version matrix. When it does not read, the editor says so in one note, and the monster names, levels and rules are off. The table view reads kr-ep8 (4,776 records) and fawkes-v68 (4,774) with `monster-36` (a name and a 36-byte block), FIT-ONLY, see below. cn-ep4 has no fit: `monster-31` stops 36 bytes before the end of the file and `monster-36` does not read it, so the file is shown as hex.
+The layout is the original client generation's. `Monsters::parse` fails on kr-ep8, fawkes-v68 and cn-ep4 in the version matrix. When it does not read, the editor says so in one note, and the monster names, levels and rules are off. The table view reads kr-ep8 (4,776 records) and fawkes-v68 (4,774) with `monster-36` (a name and a 36-byte block), FIT-ONLY, see below. cn-ep4 has no fit: neither `monster-31` nor `monster-36` fits it, so the file is shown as hex.
 
 ## FIT-ONLY layouts
 

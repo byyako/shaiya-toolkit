@@ -2081,7 +2081,7 @@ impl ArchiveView {
             Some(PreviewData::Model { header, missing, see_through, invisible, rgba, .. }) => {
                 ui.label(header);
                 if !missing.is_empty() {
-                    ui.label(RichText::new(format!("texture not in the archive, drawn grey: {}", missing.join(", "))).color(pal.warning));
+                    ui.label(RichText::new(format!("texture missing or unreadable, drawn grey: {}", missing.join(", "))).color(pal.warning));
                 }
                 if !see_through.is_empty() {
                     ui.label(RichText::new(format!("see-through texels are cut out: {}", see_through.join(", "))).color(pal.weak));

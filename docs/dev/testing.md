@@ -35,7 +35,7 @@ All of them skip with a message (`skipped: SHAIYA_CLIENT not set`) when unset, s
 SHAIYA_CLIENT=D:\clients\us SHAIYA_SCRATCH=D:\scratch cargo test -p shaiya-matrix-tests --test us_copy -- --nocapture --test-threads=1
 ```
 
-Client health (`--test health`): with `SHAIYA_CLIENT` and/or `SHAIYA_TEST_CLIENTS` it runs the read-only report on every present client and prints the numbers (`HEALTH <client>: ...`); the folder's entries must be unchanged afterwards. With `SHAIYA_SCRATCH` as well, it copies each client's `data.sah` and an empty `data.saf` into a new folder under the scratch folder, adds one leftover of each kind, cleans up, puts back, compares names and bytes, and removes the copy.
+Client health (`--test health`): with `SHAIYA_CLIENT` and/or `SHAIYA_TEST_CLIENTS` it runs the read-only report on every present client and prints the numbers (`HEALTH <client>: ...`); the folder's entries must be unchanged afterwards. With `SHAIYA_SCRATCH` as well, it copies each client's `data.sah` and an empty `data.saf` into a new folder under the scratch folder, adds three leftovers (`data.sah.bak`, a stray temp file and a swap pair), cleans up, puts back, compares names and bytes, and removes the copy.
 
 ## Temp folders on exFAT
 

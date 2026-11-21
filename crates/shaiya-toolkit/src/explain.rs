@@ -177,9 +177,9 @@ pub fn prune_rows(all: &[Journal], keep: usize) -> Rows {
 /// "Clean up" (Health view). `plan` is the plan [`shaiya_archive::cleanup::clean`] moves (one object feeds both).
 pub fn cleanup_rows(plan: &cleanup::Plan) -> Rows {
     let names: Vec<String> = plan.items.iter().flat_map(|l| l.files.clone()).collect();
-    let changes = format!("moves {} ({}) out of the client folder: {}", counted(plan.files as u64, "file", "files"), human_size(plan.bytes), listed(&names));
+    let changes = format!("moves {} ({}) aside into shaiya-toolkit-backups/cleanup-<UTC stamp>: {}", counted(plan.files as u64, "file", "files"), human_size(plan.bytes), listed(&names));
     let writes = format!(
-        "a new folder {}\\cleanup-<UTC>\\ in the client folder, with manifest.json written before the first move; each file is renamed into it on the same drive, nothing is copied or deleted",
+        "a new folder {}\\cleanup-<UTC>\\ in the client folder, with manifest.json written before the first move; files are renamed into it, none is copied or deleted; the recovery that runs first may remove data.*.compact files or cut data.saf back",
         journal::DEFAULT_DIR
     );
     let undo = "Put back in Health (File > Manage client folders > Health), cleanup-<UTC>".to_string();
@@ -438,7 +438,7 @@ mod tests {
         let c = text(&r, "Changes");
         assert!(c.contains("3 files") && c.contains("4.1 KB") && c.contains("data.sah.bak, data.x.sah, data.x.saf"), "{c}");
         let w = text(&r, "Writes");
-        assert!(w.contains("shaiya-toolkit-backups\\cleanup-<UTC>\\") && w.contains("manifest.json") && w.contains("nothing is copied or deleted"), "{w}");
+        assert!(w.contains("shaiya-toolkit-backups\\cleanup-<UTC>\\") && w.contains("manifest.json") && w.contains("none is copied or deleted") && w.contains("cut data.saf back"), "{w}");
         assert!(text(&r, "Undo").contains("Put back in Health") && text(&r, "Undo").contains("cleanup-<UTC>"));
         let item = |from: &str, state: &str| Item { group: from.into(), kind: "stray-temp".into(), from: from.into(), to: from.into(), bytes: 1, state: state.into() };
         let m = Manifest { id: "cleanup-20261101T000000Z".into(), created_utc: String::new(), tool: String::new(), state: "moved".into(), items: vec![item("a", "moved"), item("b", "put-back")] };

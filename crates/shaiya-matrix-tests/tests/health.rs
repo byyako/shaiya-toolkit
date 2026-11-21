@@ -3,8 +3,8 @@
 //! - `SHAIYA_CLIENT` and/or `SHAIYA_TEST_CLIENTS`: `health::report` of every present matrix client (`ru-ep54` has an index and no
 //!   `data.saf`: the index check and a missing-`data.saf` finding only). The numbers are printed; the folder's entries (names, sizes,
 //!   times) are the same before and after.
-//! - plus `SHAIYA_SCRATCH`: a copy of each client's `data.sah` (and `Version.ini`) with an empty `data.saf` goes to a new folder under
-//!   the scratch folder, gets one leftover of each kind, is cleaned up, put back, and compared byte for byte; the copy is removed.
+//! - plus `SHAIYA_SCRATCH`: a copy of each client's `data.sah` with an empty `data.saf` goes to a new folder under
+//!   the scratch folder, gets three leftovers (`data.sah.bak`, a stray temp file, a swap pair), is cleaned up, put back, and compared byte for byte; the copy is removed.
 //!
 //! Run: `SHAIYA_TEST_CLIENTS=<root> SHAIYA_CLIENT=<us client> SHAIYA_SCRATCH=<new empty folder> cargo test -p shaiya-matrix-tests --test health -- --nocapture`
 

@@ -4,7 +4,7 @@ What the toolkit can tell you about a client folder, which leftover files it fin
 
 ## Where to find it
 
-- Shaiya Toolkit: **File > Client health...**, the **Health...** button of a client in **File > Manage client folders...**, the **Check a client folder's health** row of the Start page, or the command palette. The window has a client picker (the saved clients) and **Check again**.
+- Shaiya Toolkit: **File > Client health...**, the **Health...** button of a client in **File > Manage client folders...**, the **Check a client folder's health** row of the Start page, or the command palette. The window opens for the open client (or, when none is open, the first saved client with a `data.sah`), has a picker for the saved clients, and **Check again**.
 - Command line: `shaiya clients health NAME|DIR` and `shaiya clients clean` ([the commands](../tools/shaiya.md#shaiya-clients)).
 
 ## What it reports
@@ -24,7 +24,7 @@ What the toolkit can tell you about a client folder, which leftover files it fin
 | Kind (CLI name) | What it is | Ticked at first |
 |---|---|---|
 | `sah-bak` | `data.sah.bak`, the only earlier index of a change made without a journal (and of a compaction). | no |
-| `stray-temp` | `.<name>.<pid>.shaiya-tmp`, a temporary file from a write that did not finish, in the client folder or in a folder below it. A file that the pending marker names is **never** offered. If the marker cannot be read, no temporary file is offered. | yes |
+| `stray-temp` | `.<name>.<pid>.shaiya-tmp`, a temporary file from a write that did not finish, in the client folder or in a folder below it. A file that the pending marker names is **never** offered. If the marker cannot be read, no temporary file is offered. Health lists such files by name only, so a temporary file of an update or patch that is running right now looks the same: do not move it, close the other tool first. | yes |
 | `swap-pair` | `data.<UTC stamp>.sah` and `.saf`, the pair kept by "Use another archive pair"; moved together. You need them to swap back. | no |
 | `editor-backup` | `data.sah.svmap-editor-<stamp>`, an index copy made by the map editor's Install. | yes |
 | `editor-first-copy` | `data.sah.svmap-editor`, the index from before the editor's first Install. | no |
@@ -44,7 +44,7 @@ A rename that fails stops the run and says how many files were moved. Nothing is
 
 ## Put back
 
-**Put back...** (or `shaiya clients clean --put-back DIR`) moves every file the manifest lists back to the name it had. If any of those names is taken again, nothing is moved and the names that are taken are listed; a destination below a symbolic link or junction is refused too. After a clean-up that was interrupted, Put back moves back whatever was moved; a file that was never moved is reported as already in place. The cleanup folder and its `manifest.json` stay. The manifest's state becomes `put-back` only when every file was restored or found in place; a file found in neither place stays listed as still to put back.
+**Put back...** (or `shaiya clients clean --put-back DIR`) moves every file the manifest lists back to the name it had. If any of those names is taken again, nothing is moved and the names that are taken are listed; a destination below a symbolic link or junction is refused too. After a clean-up that was interrupted, Put back moves back whatever was moved; a file that was never moved is reported as already in place. The cleanup folder and its `manifest.json` stay. The manifest's state becomes `put-back` only when every file was restored or found in place; a file found in neither place is reported as missing (the command exits 3, and the Toolkit lists it), and its manifest item stays `moved`, so the folder is not marked `put-back`; the Health view counts only files still in the cleanup folder as to put back, so Put back is greyed out when there are none.
 
 Put back only renames the leftover files of a closed cleanup folder back to their names. It does not run recovery, does not look for a pending change and does not check whether the game or another program holds `data.sah` or `data.saf`; close the game and let a pending change finish first. If it stops partway, the window says how many files are back and how many remain, and running it again finishes the rest.
 

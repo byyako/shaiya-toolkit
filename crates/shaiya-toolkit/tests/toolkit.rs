@@ -1773,7 +1773,7 @@ fn clean_up_asks_with_four_rows_moves_into_a_cleanup_folder_and_put_back_restore
     for label in ["Changes", "Writes", "Undo", "Game"] {
         assert!(t.contains(label), "the {label} row: {t}");
     }
-    assert!(t.contains("moves 2 files") && t.contains("Put back in Health") && t.contains("nothing is copied or deleted"), "{t}");
+    assert!(t.contains("moves 2 files") && t.contains("Put back in Health") && t.contains("none is copied or deleted"), "{t}");
     // Cancel changes nothing
     w.h.app.shell.inject_answer("toolkit-cleanup", 1);
     w.h.frames(3);
