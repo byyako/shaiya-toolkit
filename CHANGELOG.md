@@ -4,6 +4,8 @@ All notable changes are listed here, newest first. The format follows [Keep a Ch
 
 ## [0.3.2] - 2026-11-20
 
+0.3.1 was never tagged or published: its changes are listed under [0.3.1] below and ship with this release.
+
 ### Shaiya Toolkit
 
 - The SData table view says where its layout comes from. A table read with a layout that no client's own loader was read for shows "FIT-ONLY: this layout reads the whole file, but it was not read from any client's own loader. Columns are named by position; values may be split wrongly."; a table read with a loader-verified layout shows "Loader-verified on: <clients>" after the existing note. The Archive tab's View table is the same window.
