@@ -175,6 +175,14 @@ struct EditClient {
     text: String,
 }
 
+/// A removal or rename waiting for the answer about the queue.
+struct DropAsk {
+    name: String,
+    queued: usize,
+    /// `None`: remove from the list; `Some(new)`: rename.
+    rename_to: Option<String>,
+}
+
 enum SwapFlow {
     Idle,
     Confirm { client: String, dir: PathBuf, other: PathBuf },
@@ -192,6 +200,8 @@ pub enum ClientsAction {
     Health(String),
     /// A swap finished or failed: reload the open archive when it is this folder.
     Reload(PathBuf),
+    /// This client was removed from the list or renamed: drop its queued changes.
+    DropQueue(String),
 }
 
 pub struct ClientsUi {
@@ -200,13 +210,17 @@ pub struct ClientsUi {
     statuses: Vec<(String, ClientStatus)>,
     edit: Option<EditClient>,
     swap: SwapFlow,
+    /// Clients with queued changes: (name, how many). Set by the app every frame.
+    pub queued: Vec<(String, usize)>,
+    /// Removing or renaming a client that has queued changes asks first.
+    drop_ask: Option<DropAsk>,
     /// The Changes / Writes / Undo / Game rows of the open swap confirmation (made when the swap was asked for).
     swap_rows: Rows,
 }
 
 impl Default for ClientsUi {
     fn default() -> Self {
-        ClientsUi { add: None, manage: false, statuses: Vec::new(), edit: None, swap: SwapFlow::Idle, swap_rows: Vec::new() }
+        ClientsUi { add: None, manage: false, statuses: Vec::new(), edit: None, swap: SwapFlow::Idle, queued: Vec::new(), drop_ask: None, swap_rows: Vec::new() }
     }
 }
 
@@ -311,7 +325,8 @@ impl ClientsUi {
             let mut edit: Option<(String, EditKind)> = None;
             let mut swap_for: Option<(String, PathBuf)> = None;
             let clients = cx.shell.shared().clients.clone();
-            let busy = !archive.pending.is_empty();
+            let queued = self.queued.clone();
+            let queued_of = move |n: &str| queued.iter().find(|(q, _)| q.eq_ignore_ascii_case(n)).map(|(_, c)| *c).unwrap_or(0);
             egui::Window::new("Manage client folders").open(&mut open).default_width(720.0).show(ctx, |ui| {
                 if clients.is_empty() {
                     ui.label("No client folders yet. Use Add client folder... in the toolbar.");
@@ -354,7 +369,7 @@ impl ClientsUi {
                             if ui.button("Edit note...").clicked() {
                                 edit = Some((c.name.clone(), EditKind::Note));
                             }
-                            if ui.add_enabled(st.found && !busy, egui::Button::new("Use another archive pair...")).on_hover_text("Swap in another data.sah/data.saf; the current pair is kept").clicked() {
+                            if ui.add_enabled(st.found && queued_of(&c.name) == 0, egui::Button::new("Use another archive pair...")).on_hover_text(if queued_of(&c.name) > 0 { "Apply or discard this client's queued changes first" } else { "Swap in another data.sah/data.saf; the current pair is kept" }).clicked() {
                                 swap_for = Some((c.name.clone(), PathBuf::from(&c.path)));
                             }
                             if ui.button("Remove from list").on_hover_text("The files are not touched").clicked() {
@@ -383,10 +398,7 @@ impl ClientsUi {
                 out.push(ClientsAction::Open(n));
             }
             if let Some(n) = remove {
-                if let Err(e) = remove_client(cx.shell, &n) {
-                    cx.shell.error("Cannot change the client list", &e);
-                }
-                self.refresh(cx.shell);
+                self.begin_remove(&n, cx);
             }
             if let Some((n, kind)) = edit {
                 let text = match kind {
@@ -428,22 +440,86 @@ impl ClientsUi {
                 });
             });
             if apply {
-                let r = match e.kind {
-                    EditKind::Rename => rename_client(cx.shell, &e.name, e.text.trim()),
-                    EditKind::Note => set_note(cx.shell, &e.name, &e.text),
-                };
-                match r {
-                    Ok(()) => keep = false,
-                    Err(err) => cx.shell.error("Cannot change the client list", &err),
+                match e.kind {
+                    EditKind::Rename => {
+                        keep = !self.begin_rename(&e.name, e.text.trim(), cx);
+                    }
+                    EditKind::Note => {
+                        match set_note(cx.shell, &e.name, &e.text) {
+                            Ok(()) => keep = false,
+                            Err(err) => cx.shell.error("Cannot change the client list", &err),
+                        }
+                        self.refresh(cx.shell);
+                    }
                 }
-                self.refresh(cx.shell);
             }
             if keep {
                 self.edit = Some(e);
             }
         }
+        self.poll_drop_ask(cx, &mut out);
         self.poll_swap(cx, archive, &mut out);
         out
+    }
+
+    fn queued_of(&self, name: &str) -> usize {
+        self.queued.iter().find(|(q, _)| q.eq_ignore_ascii_case(name)).map(|(_, c)| *c).unwrap_or(0)
+    }
+
+    /// Remove from the list: at once, or after the question when the client has queued changes.
+    pub fn begin_remove(&mut self, name: &str, cx: &mut ToolkitCx<'_>) {
+        let q = self.queued_of(name);
+        if q > 0 {
+            self.drop_ask = Some(DropAsk { name: name.to_string(), queued: q, rename_to: None });
+        } else {
+            if let Err(e) = remove_client(cx.shell, name) {
+                cx.shell.error("Cannot change the client list", &e);
+            }
+            self.refresh(cx.shell);
+        }
+    }
+
+    /// Rename: at once, or after the question when the client has queued changes. False when the new name was refused.
+    pub fn begin_rename(&mut self, name: &str, new_name: &str, cx: &mut ToolkitCx<'_>) -> bool {
+        let q = self.queued_of(name);
+        if q > 0 && new_name != name {
+            self.drop_ask = Some(DropAsk { name: name.to_string(), queued: q, rename_to: Some(new_name.to_string()) });
+            return true;
+        }
+        let r = rename_client(cx.shell, name, new_name);
+        if let Err(e) = &r {
+            cx.shell.error("Cannot change the client list", e);
+        }
+        self.refresh(cx.shell);
+        r.is_ok()
+    }
+
+    /// Asks before a removal or rename throws away the queued changes of that client.
+    fn poll_drop_ask(&mut self, cx: &mut ToolkitCx<'_>, out: &mut Vec<ClientsAction>) {
+        let Some(a) = self.drop_ask.take() else { return };
+        let what = if a.rename_to.is_some() { "Renaming" } else { "Removing" };
+        let c = Confirm {
+            title: "Queued changes".into(),
+            text: format!("{} has {} that were not applied. {what} it drops them (the files of the client are not touched). Drop them and continue?", a.name, shaiya_inspect::counted(a.queued as u64, "queued change", "queued changes")),
+            buttons: vec![if a.rename_to.is_some() { "Drop them and rename".into() } else { "Drop them and remove".into() }, "Cancel".into()],
+            danger: Some(0),
+            ..Default::default()
+        };
+        match cx.shell.confirm("toolkit-drop-queue", &c) {
+            None => self.drop_ask = Some(a),
+            Some(0) => {
+                let r = match &a.rename_to {
+                    Some(new) => rename_client(cx.shell, &a.name, new),
+                    None => remove_client(cx.shell, &a.name),
+                };
+                match r {
+                    Ok(()) => out.push(ClientsAction::DropQueue(a.name.clone())),
+                    Err(e) => cx.shell.error("Cannot change the client list", &e),
+                }
+                self.refresh(cx.shell);
+            }
+            Some(_) => {}
+        }
     }
 
     fn poll_swap(&mut self, cx: &mut ToolkitCx<'_>, archive: &mut ArchiveView, out: &mut Vec<ClientsAction>) {
@@ -487,6 +563,15 @@ impl ClientsUi {
                 Some(_) => out.push(ClientsAction::Reload(dir)),
             },
         }
+    }
+}
+
+/// The picker line with the number of queued changes appended ("US test - 3 queued"); unchanged when nothing is queued.
+pub fn queued_label(label: String, queued: usize) -> String {
+    if queued == 0 {
+        label
+    } else {
+        format!("{label} - {queued} queued")
     }
 }
 

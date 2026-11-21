@@ -75,7 +75,7 @@ Before an edit or a build, the toolkit looks at each file and prints what it fin
 
 ![The Patch builder filled from two pending changes of the Archive tab](../assets/screenshots/toolkit-patch-builder.png)
 
-When other people need the same change, or you want one file that bundles several edits, build a patch from your folder and apply it. A patch is also the easiest way to hand a modification to a friend:
+When other people need the same change, or you want one file that bundles several edits, build a patch from your folder and apply it. To try a patch on several test clients, use **Apply & history > Apply to several test clients...**: it asks about each client in turn and keeps one journal per client. A patch is also the easiest way to hand a modification to a friend:
 
 ```
 shaiya patch build -o ps0001.patch --files C:\work\mod

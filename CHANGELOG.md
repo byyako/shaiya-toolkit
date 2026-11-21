@@ -6,6 +6,10 @@ All notable changes are listed here, newest first. The format follows [Keep a Ch
 
 ### Shaiya Toolkit
 
+- Several clients at once. Switching the active client no longer needs the queue to be applied or discarded first: each client keeps its own queue of pending changes (in memory), the Archive tab shows the active client's queue, the client picker marks a client that has queued changes ("US test - 3 queued"), quitting asks once and lists every client with a queue, and a queue is only ever applied to the client it was built on. Removing or renaming a client that has queued changes asks first and drops them.
+- Compare takes any two saved clients or archive files: **OLD (left)** and **NEW (right)** pickers (the left side starts as the open client, **Swap sides**), and **Make patch from differences** builds the patch that turns OLD into NEW. A comparison with no differences says "Nothing differs" and the patch button stays disabled.
+- Patch builder: when "Leave out files that are already the same" leaves out every file (for example when the selected client is the NEW side of the differences) it now says "Nothing differs: all N files are already the same in NAME ..." as a warning and as the reason Build is disabled, instead of only showing an empty patch.
+- **Apply & history > Apply to several test clients...**: pick patches and saved clients; each client gets its own confirmation (Changes, Writes, Undo, Game), then the patches are applied to it with recover, the game-running check and its own journals, one client after the other. The run stops at the first failure and lists the clients that were changed (with their journals) and the ones that were not touched.
 - New `--shot OUT.png [--size WxH] [--scene NAME]` flag: it opens the real window, sets up a scene, waits until the background work is idle, saves a PNG of the window and exits with 0, or with 1 and a reason on standard error. It reads and writes no settings unless `--data-dir` is given, and shows a saved client folder by its name instead of its path. The scenes (`start`, `archive`, `patch-builder`, `apply-history`, `sdata-table`, `health`, `map-preview`, `model-preview`, `inspect`) work on a synthetic demo client made by `cargo xtask demo-client DIR`; a scene refuses a folder without the demo marker `shaiya-demo-client.txt`, because `apply-history` makes one real change in it.
 
 ### Libraries
@@ -15,6 +19,7 @@ All notable changes are listed here, newest first. The format follows [Keep a Ch
 
 ### Documentation
 
+- Shaiya Toolkit page, Mod files, Make a patch and Undo and recovery describe the per-client queue, Compare with two pickers, the "Nothing differs" message and Apply to several test clients.
 - The Shaiya Toolkit pages show pictures of the demo client (`docs/assets/screenshots/toolkit-*.png`: Start, Archive, map and model previews, Patch builder, Apply & history, SData table, Client health, Inspect); [Editing these docs](docs/dev/docs-site.md#screenshots) says how to retake them.
 
 ## [0.3.2] - 2026-11-20

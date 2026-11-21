@@ -96,6 +96,8 @@ pub struct PatchBuilder {
     same: std::collections::HashSet<String>,
     same_task: Option<(SameKey, TaskHandle<Vec<String>>)>,
     same_note: Option<String>,
+    /// The name of the client the same files are compared with (for the messages).
+    client_name: Option<String>,
     /// True while `input` is `all` without the same files.
     skipping: bool,
     pub rows: Vec<Row>,
@@ -165,6 +167,7 @@ impl PatchBuilder {
             same: std::collections::HashSet::new(),
             same_task: None,
             same_note: None,
+            client_name: None,
             skipping: false,
             rows: Vec::new(),
             problems: Vec::new(),
@@ -245,7 +248,13 @@ impl PatchBuilder {
             cx.shell.status("Open an archive in the Archive tab first");
             return;
         };
-        let label = format!("differences {} -> {}", old.display(), newer.display());
+        let (old_label, new_label) = (crate::archive_view::path_label(&old), crate::archive_view::path_label(&newer));
+        self.from_diff_named(old, newer, &old_label, &new_label, cx);
+    }
+
+    /// "Make patch from differences" of Compare: OLD and NEW are named in the source label, so it is clear which way the patch goes.
+    pub fn from_diff_named(&mut self, old: PathBuf, newer: PathBuf, old_label: &str, new_label: &str, cx: &mut ToolkitCx<'_>) {
+        let label = format!("differences, OLD {old_label} -> NEW {new_label}");
         let h = cx.shell.tasks().spawn(TaskSpec { title: "Comparing archives for a patch".into(), cancellable: true, exclusive: None }, move |job| {
             let a = Archive::open(&old)?;
             let b = Archive::open(&newer)?;
@@ -338,6 +347,7 @@ impl PatchBuilder {
     /// Starts the comparison with the selected client (read-only) when it is wanted and not known for the current contents.
     fn sync_same(&mut self, client: Option<&ClientInfo>, archive: &ArchiveView, cx: &mut ToolkitCx<'_>) {
         self.cur_key = client.map(|c| (self.all_gen, archive.changed_counter, c.dir.clone(), sah_stamp(&c.dir)));
+        self.client_name = client.map(|c| c.name.clone());
         if let (true, Some(key)) = (self.skip_same && !self.all.files.is_empty(), self.cur_key.clone()) {
             let running = self.same_task.as_ref().is_some_and(|(k, _)| *k == key);
             if self.same_for.as_ref() != Some(&key) && !running {
@@ -419,6 +429,19 @@ impl PatchBuilder {
         }
     }
 
+    /// Set when "Leave out files that are already the same" took out every file, so the patch would be empty: the reason, in words.
+    pub fn left_out_message(&self) -> Option<String> {
+        if !(self.skipping && self.contents_empty() && !self.all.files.is_empty()) {
+            return None;
+        }
+        let n = self.all.files.len();
+        let client = self.client_name.clone().unwrap_or_else(|| "the client".to_string());
+        Some(format!(
+            "Nothing differs: all {} already the same in {client}, so the patch would be empty. Untick \"Leave out files that are already the same\" to include them anyway.",
+            shaiya_inspect::counted(n as u64, "file is", "files are")
+        ))
+    }
+
     /// Nothing would go into the patch (files that are left out as "same" do not count).
     fn contents_empty(&self) -> bool {
         self.input.files.is_empty() && self.input.loose.is_empty() && self.input.removals.is_empty()
@@ -432,7 +455,9 @@ impl PatchBuilder {
         if !self.input.removals.is_empty() {
             w.push("remove.txt is honoured by the toolkit and the replacement updater, not by the original Updater.exe.".to_string());
         }
-        if self.contents_empty() {
+        if let Some(m) = self.left_out_message() {
+            w.push(m);
+        } else if self.contents_empty() {
             w.push("The patch is empty.".to_string());
         }
         w
@@ -441,6 +466,9 @@ impl PatchBuilder {
     pub fn build_blocked(&self, keys: &KeyForm) -> Option<String> {
         if self.is_busy() {
             return Some("Busy".into());
+        }
+        if let Some(m) = self.left_out_message() {
+            return Some(m);
         }
         if self.contents_empty() {
             return Some("Nothing to build yet".into());

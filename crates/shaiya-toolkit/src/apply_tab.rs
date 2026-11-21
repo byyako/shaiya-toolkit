@@ -44,9 +44,30 @@ enum PlanState {
 }
 
 /// What an apply of several patches reports when it ends.
-struct Applied {
-    reports: Vec<Report>,
-    error: Option<Error>,
+pub(crate) struct Applied {
+    pub(crate) reports: Vec<Report>,
+    pub(crate) error: Option<Error>,
+}
+
+/// Applies `patches` to the client in `dir`, one `apply_with` call each, in order, stopping at the first error. `apply_with` recovers the
+/// client first, checks that the game is not using it and writes one journal per patch; this is the one place the Toolkit calls it, for
+/// Apply & history and for "Apply to several test clients".
+pub(crate) fn apply_patches_to(patches: &[PathBuf], dir: &std::path::Path, key: Option<VerifyKey>, job: &shaiya_core::Job<'_>) -> Applied {
+    let root = dir.join(journal::DEFAULT_DIR);
+    let mut reports = Vec::new();
+    let mut error = None;
+    for p in patches {
+        job.stage(&format!("applying {}", p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()));
+        let opts = ApplyOptions { protect: Vec::new(), journal: JournalMode::In(root.clone()), legacy_bak: true, require_signature: key.clone(), check_in_use: true };
+        match patch::apply_with(p, dir, &opts, job) {
+            Ok(r) => reports.push(r),
+            Err(e) => {
+                error = Some(e);
+                break;
+            }
+        }
+    }
+    Applied { reports, error }
 }
 
 struct ApplyReq {
@@ -84,6 +105,8 @@ pub struct ApplyTab {
     flow: Flow,
     pub result: Vec<String>,
     pub keep: usize,
+    /// Set by the "Apply to several test clients..." button; the app takes it and opens that dialog.
+    pub want_multi: bool,
     pub changed_counter: u64,
     /// The Changes / Writes / Undo / Game rows of the open confirmation, made once when it was asked for, from the dry-run plan the Apply tab shows (the write itself, `apply_with`, plans again when it runs).
     confirm_rows: Rows,
@@ -113,6 +136,7 @@ impl ApplyTab {
             flow: Flow::Idle,
             result: Vec::new(),
             keep: 10,
+            want_multi: false,
             changed_counter: 0,
             confirm_rows: Vec::new(),
         }
@@ -127,6 +151,11 @@ impl ApplyTab {
             }
         }
         self.verify_stamp.clear();
+    }
+
+    /// The listed patches, in the order they are applied.
+    pub fn patch_paths(&self) -> Vec<PathBuf> {
+        self.patches.iter().map(|r| r.path.clone()).collect()
     }
 
     pub fn patch_names(&self) -> Vec<String> {
@@ -330,21 +359,7 @@ impl ApplyTab {
         let (dir, key) = (req.dir.clone(), req.key.clone());
         let n = remaining.len();
         let handle = cx.shell.tasks().spawn(TaskSpec { title: format!("Applying {n} patch{}", if n == 1 { "" } else { "es" }), cancellable: true, exclusive: Some(req.dir.display().to_string()) }, move |job| {
-            let root = dir.join(journal::DEFAULT_DIR);
-            let mut reports = Vec::new();
-            let mut error = None;
-            for p in &remaining {
-                job.stage(&format!("applying {}", p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()));
-                let opts = ApplyOptions { protect: Vec::new(), journal: JournalMode::In(root.clone()), legacy_bak: true, require_signature: key.clone(), check_in_use: true };
-                match patch::apply_with(p, &dir, &opts, job) {
-                    Ok(r) => reports.push(r),
-                    Err(e) => {
-                        error = Some(e);
-                        break;
-                    }
-                }
-            }
-            Ok(Applied { reports, error })
+            Ok(apply_patches_to(&remaining, &dir, key.clone(), job))
         });
         self.flow = Flow::Running(req, handle);
     }
@@ -758,6 +773,9 @@ impl ApplyTab {
                     if !self.patches.is_empty() {
                         ui.label(RichText::new(why).color(pal.weak));
                     }
+                }
+                if ui.add_enabled(!self.is_busy(), egui::Button::new("Apply to several test clients...")).on_hover_text("Pick patches and saved clients; each client gets its own confirmation and journal, one after the other").clicked() {
+                    self.want_multi = true;
                 }
             });
             for line in &self.result {

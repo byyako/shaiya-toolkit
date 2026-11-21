@@ -22,7 +22,7 @@ All three inputs are optional, but at least one is needed.
 shaiya patch build -o ps0110.patch --files changed --only-changed C:\Games\Shaiya
 ```
 
-In Shaiya Toolkit's Patch builder the same thing is the box "Leave out files that are already the same in NAME", on when a client is selected; the contents table shows those files as "same, left out". The Toolkit makes this comparison for whatever the contents come from (a folder, pending changes or the difference of two archives), while `shaiya patch build --diff` refuses `--only-changed`. If nothing differs, the patch is empty and the builder says so.
+In Shaiya Toolkit's Patch builder the same thing is the box "Leave out files that are already the same in NAME", on when a client is selected; the contents table shows those files as "same, left out". The Toolkit makes this comparison for whatever the contents come from (a folder, pending changes or the difference of two archives), while `shaiya patch build --diff` refuses `--only-changed`. If nothing differs, the patch is empty and the builder says so; if the box alone leaves out every file (for example because the selected client is the NEW side of the differences) it says "Nothing differs: all N files are already the same in NAME" and why Build is disabled, and unticking the box includes them anyway.
 
 **From the difference of two archives.** When you have the old and the new `data.sah`/`data.saf` (two client folders, or a stock pair and your edited one):
 
@@ -33,6 +33,8 @@ shaiya patch build -o ps0110.patch --diff C:\stock\data.sah C:\Games\Shaiya-new
 builds the patch that turns the first into the second: files that are new or whose contents differ go in, files that disappeared become removals. Both sides must be full archives (with their `data.saf`), and the contents are compared, so this reads both archives completely. `--diff` may be combined with `--loose`. Look at the difference first with `shaiya archive diff OLD NEW --summary`.
 
 **From Shaiya Toolkit's pending changes.** Queue your edits in the Archive tab and press "Make patch...".
+
+**From Compare in Shaiya Toolkit.** In the Archive tab press "Compare...", pick OLD on the left and NEW on the right (each a saved client or an archive file) and press "Compare"; "Make patch from differences" then builds the patch that turns OLD into NEW, and the Patch builder names both sides ("differences, OLD ... -> NEW ..."). If nothing differs the button stays disabled.
 
 Add `--dry-run` to any `build` to see the contents table and sizes without writing a file.
 

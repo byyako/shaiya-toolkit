@@ -45,7 +45,7 @@ shaiya patch rollback "@us"
 - cuts `data.saf` back to its length before the change,
 - puts back the loose files the change overwrote and deletes the ones it created.
 
-`--dry-run` says what it would do. In Shaiya Toolkit use the toolbar button **Undo last change**, Edit > **Undo last applied change (roll back)...** or **Apply & history > Roll back...**; all three open the same confirmation for the newest change, and when it cannot be rolled back they are greyed out with the reason as hover text. Rolling back several changes means rolling back the newest first, then the next.
+`--dry-run` says what it would do. In Shaiya Toolkit use the toolbar button **Undo last change**, Edit > **Undo last applied change (roll back)...** or **Apply & history > Roll back...**; all three open the same confirmation for the newest change, and when it cannot be rolled back they are greyed out with the reason as hover text. After **Apply to several test clients...** every client has its own journal: open that client in the toolbar and roll back there; the run itself stops at the first failure and lists the clients that were changed (with their journals) and the ones that were not touched. Queued changes in the Archive tab are kept per client and are only ever applied to the client they were made on. Rolling back several changes means rolling back the newest first, then the next.
 
 The journal stays and is marked `rolled back`. `shaiya patch history --prune N` deletes all but the newest N journals; a pruned change can no longer be rolled back.
 

@@ -371,13 +371,84 @@ pub struct CheckPanel {
     pub deep: bool,
 }
 
+/// One side of Compare: a saved client or an archive file.
+#[derive(Clone, Debug, PartialEq)]
+pub enum CompareSide {
+    Client { name: String, dir: PathBuf },
+    File(PathBuf),
+}
+
+/// A short name for an archive path: its folder's name and the file name (`data.sah` alone would not say which one).
+pub fn path_label(p: &Path) -> String {
+    let file = p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    match p.parent().and_then(|d| d.file_name()) {
+        Some(d) => format!("{}/{file}", d.to_string_lossy()),
+        None => file,
+    }
+}
+
+impl CompareSide {
+    pub fn label(&self) -> String {
+        match self {
+            CompareSide::Client { name, .. } => name.clone(),
+            CompareSide::File(p) => path_label(p),
+        }
+    }
+
+    /// The `data.sah` this side reads.
+    pub fn sah(&self) -> Result<PathBuf> {
+        match self {
+            CompareSide::Client { dir, .. } => Ok(ClientFiles::locate(dir)?.sah),
+            CompareSide::File(p) => Ok(p.clone()),
+        }
+    }
+}
+
+/// What a finished (or running) comparison was made of.
+#[derive(Clone, Debug, PartialEq)]
+pub struct CompareRan {
+    pub left: CompareSide,
+    pub right: CompareSide,
+    pub old_sah: PathBuf,
+    pub new_sah: PathBuf,
+}
+
+/// Compare: OLD is the left side, NEW the right side; "added" is in NEW only, "removed" in OLD only.
 pub struct ComparePanel {
-    pub other: String,
+    pub left: Option<CompareSide>,
+    pub right: Option<CompareSide>,
+    pub ran: Option<CompareRan>,
     pub entries: Vec<DiffEntry>,
     pub summary: DiffSummary,
     handle: Option<TaskHandle<(Vec<DiffEntry>, DiffSummary)>>,
     pub show: [bool; 4],
-    pub swap: bool,
+}
+
+impl ComparePanel {
+    pub fn is_running(&self) -> bool {
+        self.handle.is_some()
+    }
+
+    /// "Make patch from differences": OLD = the left side, NEW = the right side, as compared (nothing when the comparison is not the current one).
+    pub fn patch_request(&self) -> Option<TabRequest> {
+        let r = self.ran.as_ref().filter(|_| self.is_current())?;
+        Some(TabRequest::PatchFromDiff { old: r.old_sah.clone(), new: r.new_sah.clone(), old_label: r.left.label(), new_label: r.right.label() })
+    }
+
+    /// The comparison shown is the one of the two sides chosen now.
+    pub fn is_current(&self) -> bool {
+        self.handle.is_none() && self.ran.as_ref().is_some_and(|r| Some(&r.left) == self.left.as_ref() && Some(&r.right) == self.right.as_ref())
+    }
+}
+
+/// Nothing differs: not one file is added, removed, different or unknown.
+pub fn nothing_differs(s: &DiffSummary) -> bool {
+    s.added + s.removed + s.different + s.unknown == 0
+}
+
+/// What "Make patch from differences" would put in the patch: the added, different and removed files.
+pub fn patch_worthy(s: &DiffSummary) -> bool {
+    s.added + s.removed + s.different > 0
 }
 
 pub struct PreviewState {
@@ -398,6 +469,24 @@ pub struct PreviewState {
 pub enum OpenSource {
     Client { name: String, dir: PathBuf },
     File(PathBuf),
+}
+
+/// The queued changes of one client, kept aside while another client is active (memory only).
+pub struct Queue {
+    /// The client folder the queue was built on; it is only ever applied there.
+    pub dir: PathBuf,
+    pending: Vec<Pending>,
+    history: History<QueueEdit>,
+}
+
+impl Queue {
+    pub fn len(&self) -> usize {
+        self.pending.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.pending.is_empty()
+    }
 }
 
 pub struct ArchiveView {
@@ -423,6 +512,8 @@ pub struct ArchiveView {
     pub preview: PreviewState,
     textures: Vec<(String, egui::TextureHandle)>,
     pub pending: Vec<Pending>,
+    /// The client folder `pending` was built on (set by every queue edit); Apply refuses a queue that is not this client's.
+    pending_owner: Option<PathBuf>,
     history: History<QueueEdit>,
     pub add_dialog: Option<AddDialog>,
     /// A replacement file whose checks ask first: the puts to queue and the findings.
@@ -451,6 +542,10 @@ impl Default for ArchiveView {
     fn default() -> Self {
         Self::new()
     }
+}
+
+fn has_sah_file(dir: &Path) -> bool {
+    dir.is_dir() && std::fs::read_dir(dir).map(|r| r.flatten().any(|e| e.file_name().to_string_lossy().eq_ignore_ascii_case("data.sah"))).unwrap_or(false)
 }
 
 fn lower_key(path: &str) -> String {
@@ -503,6 +598,7 @@ impl ArchiveView {
             },
             textures: Vec::new(),
             pending: Vec::new(),
+            pending_owner: None,
             history: History::new(500),
             add_dialog: None,
             replace_ask: None,
@@ -543,6 +639,7 @@ impl ArchiveView {
         self.loaded = None;
         self.opening = None;
         self.pending.clear();
+        self.pending_owner = None;
         self.history = History::new(500);
         self.selected.clear();
         self.selected_folder = None;
@@ -599,11 +696,44 @@ impl ArchiveView {
             Some(OpenSource::File(p)) => OpenSource::File(p.clone()),
             None => return,
         };
-        let (folder, pending, history) = (self.folder.clone(), std::mem::take(&mut self.pending), std::mem::replace(&mut self.history, History::new(500)));
+        let (folder, pending, history, owner) = (self.folder.clone(), std::mem::take(&mut self.pending), std::mem::replace(&mut self.history, History::new(500)), self.pending_owner.take());
         self.open(src, cx);
         self.folder = folder;
         self.pending = pending;
         self.history = history;
+        self.pending_owner = owner;
+    }
+
+    /// Takes the queue of the open client aside (with its undo history) so that another source can be opened; `None` when nothing is queued.
+    pub fn take_queue(&mut self) -> Option<Queue> {
+        if self.pending.is_empty() {
+            return None;
+        }
+        let dir = self.pending_owner.take().or_else(|| self.client_dir().map(Path::to_path_buf))?;
+        Some(Queue { dir, pending: std::mem::take(&mut self.pending), history: std::mem::replace(&mut self.history, History::new(500)) })
+    }
+
+    /// Puts a queue back after its client was opened again (call after `open`, which starts with an empty queue).
+    pub fn put_queue(&mut self, q: Queue) {
+        self.pending = q.pending;
+        self.history = q.history;
+        self.pending_owner = Some(q.dir);
+    }
+
+    /// Drops the open client's queue (its client was removed or renamed).
+    pub fn drop_queue(&mut self) {
+        self.pending.clear();
+        self.pending_owner = None;
+        self.history = History::new(500);
+    }
+
+    /// The client folder the queue was built on (`None` when nothing is queued).
+    pub fn queue_dir(&self) -> Option<&Path> {
+        if self.pending.is_empty() {
+            None
+        } else {
+            self.pending_owner.as_deref()
+        }
     }
 
     // ---------------------------------------------------------------------------------------- polling
@@ -1023,7 +1153,13 @@ impl ArchiveView {
         }
     }
 
+    /// True when the queue (if any) was built on the client folder that is open now. A queue is never applied anywhere else.
+    fn queue_is_ours(&self) -> bool {
+        self.pending.is_empty() || self.pending_owner.as_deref() == self.client_dir()
+    }
+
     fn push_edit(&mut self, label: &str, edits: Vec<QueueEdit>) {
+        self.pending_owner = self.client_dir().map(Path::to_path_buf);
         let mut model = std::mem::take(&mut self.pending);
         self.history.push(&mut model, label, edits, None);
         self.pending = model;
@@ -1122,6 +1258,10 @@ impl ArchiveView {
     /// "Apply to client…": the confirmation, then the exclusive apply.
     pub fn request_apply(&mut self, cx: &mut ToolkitCx<'_>) {
         if self.pending.is_empty() || self.client_dir().is_none() || !matches!(self.apply, ApplyFlow::Idle) {
+            return;
+        }
+        if !self.queue_is_ours() {
+            cx.shell.status("These queued changes were built on another client; they are not applied here");
             return;
         }
         let plan = self.pending_plan("archive edit");
@@ -1444,17 +1584,46 @@ impl ArchiveView {
         self.check = Some(CheckPanel { report: None, handle: Some(handle), deep });
     }
 
-    pub fn run_compare(&mut self, other: PathBuf, cx: &mut ToolkitCx<'_>) {
-        let Some(a) = self.loaded.as_ref().and_then(|l| l.archive.clone()) else { return };
-        let label = other.display().to_string();
-        let o2 = other.clone();
-        let handle = cx.shell.tasks().spawn(TaskSpec { title: format!("Comparing with {label}"), cancellable: true, exclusive: None }, move |job| {
-            let b = Archive::open(&o2)?;
-            let d = diff(&Side::Archive(&b), &Side::Archive(&a), &DiffOptions { content: true, ..Default::default() }, job)?;
+    /// Opens the Compare dialog: OLD (left) is the open client or archive, NEW (right) is chosen next.
+    pub fn begin_compare(&mut self) {
+        if self.compare.is_some() {
+            return;
+        }
+        let left = match &self.source {
+            Some(OpenSource::Client { name, dir }) => Some(CompareSide::Client { name: name.clone(), dir: dir.clone() }),
+            Some(OpenSource::File(p)) => Some(CompareSide::File(p.clone())),
+            None => None,
+        };
+        self.compare = Some(ComparePanel { left, right: None, ran: None, entries: Vec::new(), summary: DiffSummary::default(), handle: None, show: [true, true, true, true] });
+    }
+
+    /// Compares OLD = `left` with NEW = `right` (any saved client or archive file on each side) as a task.
+    pub fn run_compare(&mut self, left: CompareSide, right: CompareSide, cx: &mut ToolkitCx<'_>) {
+        let (old_sah, new_sah) = match (left.sah(), right.sah()) {
+            (Ok(a), Ok(b)) => (a, b),
+            (Err(e), _) | (_, Err(e)) => {
+                cx.shell.error("Cannot compare", &e);
+                return;
+            }
+        };
+        let title = format!("Comparing {} with {}", left.label(), right.label());
+        let (o2, n2) = (old_sah.clone(), new_sah.clone());
+        let handle = cx.shell.tasks().spawn(TaskSpec { title, cancellable: true, exclusive: None }, move |job| {
+            let a = Archive::open(&o2)?;
+            let b = Archive::open(&n2)?;
+            let d = diff(&Side::Archive(&a), &Side::Archive(&b), &DiffOptions { content: true, ..Default::default() }, job)?;
             let s = summarize(&d);
             Ok((d, s))
         });
-        self.compare = Some(ComparePanel { other: label, entries: Vec::new(), summary: DiffSummary::default(), handle: Some(handle), show: [true, true, true, true], swap: false });
+        self.compare = Some(ComparePanel {
+            left: Some(left.clone()),
+            right: Some(right.clone()),
+            ran: Some(CompareRan { left, right, old_sah, new_sah }),
+            entries: Vec::new(),
+            summary: DiffSummary::default(),
+            handle: Some(handle),
+            show: [true, true, true, true],
+        });
     }
 
     /// Opens the "Add to archive" dialog for dropped or chosen files and folders.
@@ -1662,7 +1831,7 @@ impl ArchiveView {
             c("archive-make-patch", "Make patch from pending changes", None, !self.pending.is_empty()),
             c("archive-discard", "Discard pending changes", None, !self.pending.is_empty()),
             c("archive-check", "Check the archive", None, open),
-            c("archive-compare", "Compare with another archive...", None, open),
+            c("archive-compare", "Compare two clients or archives...", None, true),
             c("archive-compact", "Compact data.saf...", None, edit && !busy),
             c("archive-reload", "Reload the archive", Some(K::new(M::NONE, Key::F5)), self.source.is_some()),
             c("archive-copy-paths", "Copy selected paths", Some(K::new(M::COMMAND, Key::C)), !self.selected.is_empty()),
@@ -1750,7 +1919,7 @@ impl ArchiveView {
                 if ui.add_enabled(has_saf, egui::Button::new("Check")).clicked() {
                     acts.push(Act::Check(false));
                 }
-                if ui.add_enabled(has_saf, egui::Button::new("Compare...")).clicked() {
+                if ui.button("Compare...").on_hover_text("Compare any two saved clients or archive files: OLD on the left, NEW on the right").clicked() {
                     acts.push(Act::Compare);
                 }
                 if ui.add_enabled(can_edit && !self.is_applying(), egui::Button::new("Compact...")).clicked() {
@@ -1796,7 +1965,7 @@ impl ArchiveView {
         if !self.pending.is_empty() {
             egui::Panel::bottom("toolkit-pending").show(ui, |ui| {
                 ui.horizontal_wrapped(|ui| {
-                    ui.label(RichText::new(format!("Pending changes ({}):", self.pending.len())).strong());
+                    ui.label(RichText::new(format!("Pending changes ({}) for {}:", self.pending.len(), self.source_label().unwrap_or_default())).strong());
                     for (i, p) in self.pending.iter().enumerate() {
                         let mark = match &p.kind {
                             PendingKind::Put { replaces: true, .. } => "~",
@@ -2358,23 +2527,70 @@ impl ArchiveView {
         if self.compare.is_some() {
             let mut open = true;
             let mut make_patch = false;
+            let mut run = false;
+            let mut file_for: Option<bool> = None;
             let mut select: Option<String> = None;
             let pal = cx.shell.pal();
+            let saved: Vec<shaiya_ui::Client> = cx.shell.shared().clients.clone();
             let c = self.compare.as_mut().expect("checked");
-            egui::Window::new("Compare").open(&mut open).default_size([560.0, 420.0]).show(&ctx, |ui| {
-                ui.label(format!("{} -> this archive", c.other));
-                if c.handle.is_some() {
+            egui::Window::new("Compare").open(&mut open).default_size([560.0, 460.0]).show(&ctx, |ui| {
+                ui.label(RichText::new("OLD is the left side and NEW the right side. A patch made from the differences turns OLD into NEW.").color(pal.weak));
+                for (is_right, title) in [(false, "OLD (left)"), (true, "NEW (right)")] {
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new(title).strong());
+                        let shown = if is_right { c.right.as_ref() } else { c.left.as_ref() }.map(|s| s.label()).unwrap_or_else(|| "(choose a client or archive file)".to_string());
+                        egui::ComboBox::from_id_salt(if is_right { "toolkit-compare-right" } else { "toolkit-compare-left" }).selected_text(shown).width(260.0).show_ui(ui, |ui| {
+                            for cl in &saved {
+                                if !has_sah_file(Path::new(&cl.path)) {
+                                    continue;
+                                }
+                                let side = CompareSide::Client { name: cl.name.clone(), dir: PathBuf::from(&cl.path) };
+                                let slot = if is_right { &mut c.right } else { &mut c.left };
+                                if ui.selectable_label(slot.as_ref() == Some(&side), &cl.name).clicked() {
+                                    *slot = Some(side);
+                                    ui.close();
+                                }
+                            }
+                            ui.separator();
+                            if ui.button("Archive file...").clicked() {
+                                file_for = Some(is_right);
+                                ui.close();
+                            }
+                        });
+                    });
+                }
+                ui.horizontal(|ui| {
+                    if ui.button("Swap sides").clicked() {
+                        std::mem::swap(&mut c.left, &mut c.right);
+                    }
+                    let ready = c.left.is_some() && c.right.is_some() && !c.is_running();
+                    if ui.add_enabled(ready, egui::Button::new("Compare")).clicked() {
+                        run = true;
+                    }
+                });
+                if c.is_running() {
                     ui.label("Comparing...");
                     return;
                 }
+                if !c.is_current() {
+                    if c.ran.is_some() {
+                        ui.label(RichText::new("The sides changed; press Compare to see the differences.").color(pal.weak));
+                    }
+                    return;
+                }
                 let s = c.summary;
+                let (old, new) = c.ran.as_ref().map(|r| (r.left.label(), r.right.label())).unwrap_or_default();
+                ui.label(format!("OLD {old}  ->  NEW {new}"));
                 ui.label(format!("{} added, {} removed, {} different, {} same", s.added, s.removed, s.different, s.same));
+                if nothing_differs(&s) {
+                    ui.label(RichText::new("Nothing differs: OLD and NEW hold the same files with the same contents, so there is nothing to make a patch from.").color(pal.ok));
+                }
                 ui.horizontal(|ui| {
                     for (i, name) in ["added", "removed", "different", "unknown"].iter().enumerate() {
                         ui.checkbox(&mut c.show[i], *name);
                     }
                 });
-                egui::ScrollArea::vertical().max_height(280.0).show(ui, |ui| {
+                egui::ScrollArea::vertical().max_height(260.0).show(ui, |ui| {
                     for e in &c.entries {
                         let (idx, col, mark) = match e.change {
                             Change::Added => (0, pal.ok, "+"),
@@ -2388,15 +2604,34 @@ impl ArchiveView {
                         }
                     }
                 });
-                if ui.button("Make patch from differences").clicked() {
+                let worthy = patch_worthy(&s);
+                if ui
+                    .add_enabled(worthy, egui::Button::new("Make patch from differences"))
+                    .on_hover_text("The patch holds the added and different files of NEW (right) and removes the files only OLD (left) has")
+                    .on_disabled_hover_text("Nothing differs, so the patch would be empty")
+                    .clicked()
+                {
                     make_patch = true;
                 }
+                if worthy {
+                    ui.label(RichText::new(format!("OLD = {old} (left), NEW = {new} (right)")).color(pal.weak));
+                }
             });
-            if make_patch {
-                requests.push(TabRequest::PatchFromDiff(PathBuf::from(&c.other)));
+            if let Some(is_right) = file_for {
+                if let Some(p) = cx.shell.pick_file("compare", &[("SAH index", &["sah"])]) {
+                    let slot = if is_right { &mut c.right } else { &mut c.left };
+                    *slot = Some(CompareSide::File(p));
+                }
             }
+            if make_patch {
+                requests.extend(c.patch_request());
+            }
+            let start = if run { c.left.clone().zip(c.right.clone()) } else { None };
             if !open {
                 self.compare = None;
+            }
+            if let Some((l, r)) = start {
+                self.run_compare(l, r, cx);
             }
             if let Some(p) = select {
                 self.select_path(&p, cx);
@@ -2574,11 +2809,7 @@ impl ArchiveView {
                 Act::Discard => self.discard_asked = true,
                 Act::Unqueue(i) => self.unqueue(i),
                 Act::Check(d) => self.run_check(d, cx),
-                Act::Compare => {
-                    if let Some(p) = cx.shell.pick_file("compare", &[("SAH index", &["sah"])]) {
-                        self.run_compare(p, cx);
-                    }
-                }
+                Act::Compare => self.begin_compare(),
                 Act::Compact => self.request_compact(),
                 Act::Reload => {
                     if self.pending.is_empty() {
@@ -2627,7 +2858,8 @@ enum MenuChoice {
 /// What the Archive tab asks the app frame to do on its behalf.
 pub enum TabRequest {
     PatchFromPending,
-    PatchFromDiff(PathBuf),
+    /// Compare: build a patch with OLD = `old` and NEW = `new` (the labels are the names shown to the user).
+    PatchFromDiff { old: PathBuf, new: PathBuf, old_label: String, new_label: String },
     /// A button of the Start page.
     Start(crate::start::StartAction),
 }

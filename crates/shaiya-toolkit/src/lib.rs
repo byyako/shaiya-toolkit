@@ -9,6 +9,7 @@ pub mod explain;
 pub mod health;
 pub mod inspect;
 pub mod keys;
+pub mod multi_apply;
 pub mod patch_builder;
 pub mod preview;
 pub mod publish_form;
@@ -19,7 +20,8 @@ pub mod sign_tab;
 pub mod start;
 
 use apply_tab::ApplyTab;
-use archive_view::{ArchiveView, OpenSource, TabRequest};
+use archive_view::{ArchiveView, OpenSource, Queue, TabRequest};
+use multi_apply::MultiApply;
 use start::StartAction;
 use clients::{ClientInfo, ClientsAction, ClientsUi};
 use health::HealthAction;
@@ -151,6 +153,10 @@ pub struct ToolkitApp {
     pub health: health::HealthView,
     /// The saved client (or opened folder) the tabs work on.
     pub current: Option<ClientInfo>,
+    /// The queued changes of the clients that are not the active one, by client folder (memory only; the active client's queue is `archive.pending`).
+    queues: BTreeMap<PathBuf, (String, Queue)>,
+    /// "Apply to several test clients...".
+    pub multi: MultiApply,
     ini_stamp: Option<(PathBuf, u64)>,
     folder_prompt: Option<FolderPrompt>,
     was_focused: bool,
@@ -173,10 +179,10 @@ fn ext_of(p: &Path) -> String {
 impl ToolkitApp {
     // ---------------------------------------------------------------------------------------- client handling
 
-    /// Opens a saved client by name (a missing folder is reported, not opened).
+    /// Opens a saved client by name (a missing folder is reported, not opened). The queue of the client that was active stays with it.
     pub fn select_client(&mut self, name: &str, cx: &mut ToolkitCx<'_>) {
-        if !self.archive.pending.is_empty() {
-            cx.shell.status("Apply or discard the pending changes first");
+        if self.archive.is_applying() {
+            cx.shell.status("Wait for the change in the Archive tab to finish first");
             return;
         }
         let Some(c) = cx.shell.shared().clients.iter().find(|c| c.name.eq_ignore_ascii_case(name)).cloned() else {
@@ -192,20 +198,65 @@ impl ToolkitApp {
         cx.settings.last_client = Some(c.name);
     }
 
+    /// Keeps the active client's queue aside, under its folder, before another source is opened.
+    fn stash_queue(&mut self) {
+        let name = self.current.as_ref().map(|c| c.name.clone()).or_else(|| self.archive.source_name()).unwrap_or_default();
+        if let Some(q) = self.archive.take_queue() {
+            self.queues.insert(q.dir.clone(), (name, q));
+        }
+    }
+
+    /// The number of queued changes of the client in `dir`, whether it is the active one or not.
+    pub fn queued_for(&self, dir: &Path) -> usize {
+        if self.archive.queue_dir() == Some(dir) {
+            self.archive.pending.len()
+        } else {
+            self.queues.get(dir).map(|(_, q)| q.len()).unwrap_or(0)
+        }
+    }
+
+    /// Every client that has queued changes: (name, folder, count), the active one first.
+    pub fn queued_clients(&self) -> Vec<(String, PathBuf, usize)> {
+        let mut v = Vec::new();
+        if let Some(dir) = self.archive.queue_dir() {
+            let name = self.current.as_ref().map(|c| c.name.clone()).or_else(|| self.archive.source_name()).unwrap_or_default();
+            v.push((name, dir.to_path_buf(), self.archive.pending.len()));
+        }
+        for (dir, (name, q)) in &self.queues {
+            if !q.is_empty() {
+                v.push((name.clone(), dir.clone(), q.len()));
+            }
+        }
+        v
+    }
+
+    /// The client was removed from the list or renamed: its queued changes are dropped (the question was asked before).
+    pub fn drop_queue_of(&mut self, name: &str) {
+        if self.current.as_ref().is_some_and(|c| c.name.eq_ignore_ascii_case(name)) {
+            self.archive.drop_queue();
+        }
+        self.queues.retain(|_, (n, _)| !n.eq_ignore_ascii_case(name));
+    }
+
     fn open_client_dir(&mut self, name: &str, dir: PathBuf, cx: &mut ToolkitCx<'_>) {
+        self.stash_queue();
         let (check_version, current_version) = clients::version_numbers(&dir);
         self.current = Some(ClientInfo { name: name.to_string(), dir: dir.clone(), check_version, current_version });
         self.ini_stamp = None;
-        self.archive.open(OpenSource::Client { name: name.to_string(), dir }, cx);
+        self.archive.open(OpenSource::Client { name: name.to_string(), dir: dir.clone() }, cx);
+        if let Some((_, q)) = self.queues.remove(&dir) {
+            self.archive.put_queue(q);
+        }
         self.set_tab(Tab::Archive, cx);
     }
 
-    /// Opens any archive file read only (its own folder's changes are not offered).
+    /// Opens any archive file read only (its own folder's changes are not offered). The active client's queue stays with that client.
     pub fn open_archive_file(&mut self, path: PathBuf, cx: &mut ToolkitCx<'_>) {
-        if !self.archive.pending.is_empty() {
-            cx.shell.status("Apply or discard the pending changes first");
+        if self.archive.is_applying() {
+            cx.shell.status("Wait for the change in the Archive tab to finish first");
             return;
         }
+        self.stash_queue();
         self.current = None;
         cx.shell.add_recent(&path);
         self.archive.open(OpenSource::File(path), cx);
@@ -297,7 +348,8 @@ impl ToolkitApp {
         }
     }
 
-    fn handle_requests(&mut self, requests: Vec<TabRequest>, cx: &mut ToolkitCx<'_>) {
+    /// Carries out what the Archive tab asked for (a patch from the queue or from Compare, a Start page button).
+    pub fn handle_requests(&mut self, requests: Vec<TabRequest>, cx: &mut ToolkitCx<'_>) {
         for r in requests {
             match r {
                 TabRequest::PatchFromPending => {
@@ -306,9 +358,9 @@ impl ToolkitApp {
                     self.set_tab(Tab::Patch, cx);
                 }
                 TabRequest::Start(action) => self.run_start(action, cx),
-                TabRequest::PatchFromDiff(other) => {
-                    // old = the other archive, new = the open one
-                    self.patch.from_diff(other, None, &self.archive, cx);
+                TabRequest::PatchFromDiff { old, new, old_label, new_label } => {
+                    // OLD = the left side of Compare, NEW = the right side
+                    self.patch.from_diff_named(old, new, &old_label, &new_label, cx);
                     self.set_tab(Tab::Patch, cx);
                 }
             }
@@ -381,15 +433,15 @@ impl ToolkitApp {
             None => {}
             Some(0) => {
                 self.folder_prompt = None;
-                if self.archive.pending.is_empty() {
+                if self.archive.is_applying() {
+                    cx.shell.status("Wait for the change in the Archive tab to finish first");
+                } else {
                     let name = dir.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| "client".into());
                     let known = cx.shell.shared().clients.iter().find(|c| Path::new(&c.path) == dir).map(|c| c.name.clone());
                     match known {
                         Some(n) => self.select_client(&n, cx),
                         None => self.open_client_dir(&name, dir, cx),
                     }
-                } else {
-                    cx.shell.status("Apply or discard the pending changes first");
                 }
             }
             Some(1) => {
@@ -430,7 +482,7 @@ impl ToolkitApp {
             egui::ComboBox::from_id_salt("toolkit-client").selected_text(shown).width(220.0).show_ui(ui, |ui| {
                 for c in &clients {
                     let found = has_sah(Path::new(&c.path));
-                    let label = clients::picker_label(c, &cx.shell.folder_text(&c.name, Path::new(&c.path)), found);
+                    let label = clients::queued_label(clients::picker_label(c, &cx.shell.folder_text(&c.name, Path::new(&c.path)), found), self.queued_for(Path::new(&c.path)));
                     let text = if found { RichText::new(label) } else { RichText::new(label).color(pal.weak) };
                     if ui.add_enabled(found, egui::Button::selectable(current.as_deref() == Some(c.name.as_str()), text)).clicked() {
                         act = Some(A::Select(c.name.clone()));
@@ -552,6 +604,8 @@ impl ToolApp for ToolkitApp {
             clients: ClientsUi::default(),
             health: health::HealthView::default(),
             current: None,
+            queues: BTreeMap::new(),
+            multi: MultiApply::default(),
             ini_stamp: None,
             folder_prompt: None,
             was_focused: true,
@@ -606,9 +660,11 @@ impl ToolApp for ToolkitApp {
         if self.tab != Tab::SData {
             self.sdata.tick(&self.archive, cx);
         }
+        self.clients.queued = self.queued_clients().into_iter().map(|(n, _, c)| (n, c)).collect();
         let actions = self.clients.ui(&ctx, cx, &mut self.archive);
         for a in actions {
             match a {
+                ClientsAction::DropQueue(n) => self.drop_queue_of(&n),
                 ClientsAction::Open(n) => self.select_client(&n, cx),
                 ClientsAction::Health(n) => self.open_health(Some(&n), cx),
                 ClientsAction::Reload(dir) => {
@@ -618,6 +674,10 @@ impl ToolApp for ToolkitApp {
                 }
             }
         }
+        if std::mem::take(&mut self.apply.want_multi) {
+            self.multi.open_dialog(self.apply.patch_paths(), cx);
+        }
+        self.multi.ui(&ctx, cx, &mut self.archive);
         for a in self.health.ui(&ctx, cx, &mut self.archive) {
             match a {
                 HealthAction::Reload(dir) => {
@@ -723,6 +783,7 @@ impl ToolApp for ToolkitApp {
         let client = self.current.as_ref();
         v.push(Command { id: "patch-build", label: "Build the patch".into(), shortcut: None, enabled: self.patch.build_blocked(&self.keys).is_none() });
         v.push(Command { id: "apply-patches", label: "Apply the listed patches...".into(), shortcut: None, enabled: self.apply.apply_blocked(client).is_none() });
+        v.push(Command { id: "apply-multi", label: "Apply patches to several test clients...".into(), shortcut: None, enabled: !self.apply.is_busy() });
         v.push(Command { id: "history-rollback", label: "Undo last applied change (roll back)...".into(), shortcut: None, enabled: self.undo_state().is_ok() });
         v.push(Command { id: "hash-selected", label: "Hash selected files".into(), shortcut: None, enabled: !self.inspect.is_empty() });
         v.push(Command { id: "client-health", label: "Client health...".into(), shortcut: None, enabled: true });
@@ -744,6 +805,10 @@ impl ToolApp for ToolkitApp {
                 self.set_tab(Tab::Apply, cx);
                 self.apply.request_apply(self.current.as_ref(), &self.keys);
             }
+            "apply-multi" => {
+                self.set_tab(Tab::Apply, cx);
+                self.multi.open_dialog(self.apply.patch_paths(), cx);
+            }
             "history-rollback" => self.undo_last_change(cx),
             "hash-selected" => self.inspect.hash_selected(cx),
             "client-health" => self.open_health(None, cx),
@@ -764,11 +829,11 @@ impl ToolApp for ToolkitApp {
     }
 
     fn unsaved(&self) -> Vec<String> {
-        self.archive.unsaved()
+        self.queued_clients().into_iter().map(|(name, _, n)| format!("{name}: {}", shaiya_inspect::counted(n as u64, "pending archive change", "pending archive changes"))).collect()
     }
 
     fn save_all(&mut self, cx: &mut ToolkitCx<'_>) -> Result<(), String> {
-        if self.archive.unsaved().is_empty() {
+        if self.unsaved().is_empty() {
             return Ok(());
         }
         self.set_tab(Tab::Archive, cx);
