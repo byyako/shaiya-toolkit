@@ -15,6 +15,7 @@ use shaiya_archive::Archive;
 use shaiya_core::Error;
 use shaiya_patch::{self as patch, Plan, VerifyKey};
 use shaiya_ui::{Confirm, Cx, TaskHandle, TaskOutcome, TaskSpec};
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -30,6 +31,8 @@ pub struct Changed {
     pub of: usize,
     /// The journal of each applied patch, in the client folder.
     pub journals: Vec<PathBuf>,
+    /// The apply ended in an internal error: how many patches went in is not known, so the client may be partly changed.
+    pub unknown: bool,
 }
 
 /// How a run ended.
@@ -40,6 +43,10 @@ pub struct Outcome {
     pub not_touched: Vec<String>,
     /// The client the run stopped at and why (an error, or "stopped at your request").
     pub stopped: Option<(String, String)>,
+    /// Clients left out because they share the folder of an earlier chosen client: (client, the client whose folder it is).
+    pub same_folder: Vec<(String, String)>,
+    /// The run stopped on a client whose apply had started: the recover step of the apply may have written to it before it failed.
+    pub recover_may_have_written: bool,
 }
 
 impl Outcome {
@@ -49,6 +56,10 @@ impl Outcome {
         for c in &self.changed {
             let names: Vec<String> = c.journals.iter().map(|j| j.strip_prefix(&c.dir).unwrap_or(j).display().to_string()).collect();
             let journals = if names.is_empty() { String::new() } else { format!("; journals: {}", names.join(", ")) };
+            if c.unknown {
+                v.push(format!("May be partly changed: {} (an internal error stopped it; check its history{journals})", c.client));
+                continue;
+            }
             let part = if c.applied < c.of { format!("only {} of {} applied", c.applied, shaiya_inspect::counted(c.of as u64, "patch", "patches")) } else { format!("{} applied", shaiya_inspect::counted(c.applied as u64, "patch", "patches")) };
             v.push(format!("Changed: {} ({part}{journals})", c.client));
         }
@@ -57,6 +68,12 @@ impl Outcome {
         }
         if !self.not_touched.is_empty() {
             v.push(format!("Not touched: {}", self.not_touched.join(", ")));
+            if self.recover_may_have_written {
+                v.push("A client that failed while applying may still have had an unfinished earlier change recovered (written) before its patches started; check its history.".to_string());
+            }
+        }
+        for (c, of) in &self.same_folder {
+            v.push(format!("{c} is the same folder as {of}: the patches were applied there once."));
         }
         if self.stopped.is_none() {
             v.push("Done: every chosen client was changed.".to_string());
@@ -79,6 +96,8 @@ struct Cur {
     dir: PathBuf,
     key: Option<VerifyKey>,
     stage: Stage,
+    /// The journal files of the client when its apply started (`None` before that).
+    journals_before: Option<BTreeSet<PathBuf>>,
 }
 
 struct Run {
@@ -122,9 +141,18 @@ impl MultiApply {
         if self.is_running() || patches.is_empty() || clients.is_empty() {
             return;
         }
-        let total = clients.len();
+        // a folder is applied once, however many saved clients point at it
+        let mut todo: Vec<(String, PathBuf)> = Vec::new();
+        let mut outcome = Outcome::default();
+        for (n, d) in clients {
+            match todo.iter().find(|(_, d2)| *d2 == d) {
+                Some((first, _)) => outcome.same_folder.push((n, first.clone())),
+                None => todo.push((n, d)),
+            }
+        }
+        let total = todo.len();
         self.last = None;
-        self.run = Some(Run { patches, todo: clients, total, cur: None, outcome: Outcome::default() });
+        self.run = Some(Run { patches, todo, total, cur: None, outcome });
         self.begin_next(cx);
     }
 
@@ -144,6 +172,17 @@ impl MultiApply {
         }
         for (n, _, on) in &mut self.clients {
             *on = clients.iter().any(|c| c.eq_ignore_ascii_case(n));
+        }
+    }
+
+    /// Why Start must wait: the Archive tab or the Apply tab is writing to a client (`None` when it can start).
+    pub fn blocked(archive_applying: bool, apply_tab_busy: bool) -> Option<&'static str> {
+        if archive_applying {
+            Some("Wait for the change in the Archive tab to finish.")
+        } else if apply_tab_busy {
+            Some("Wait for the apply in the Apply tab to finish.")
+        } else {
+            None
         }
     }
 
@@ -168,7 +207,7 @@ impl MultiApply {
         let info = ClientInfo { name: name.clone(), dir: dir.clone(), check_version: clients::version_numbers(&dir).0, current_version: clients::version_numbers(&dir).1 };
         let mut keys = KeyForm::default();
         keys.load(Some(&info), cx.settings);
-        run.cur = Some(Cur { name, dir, key: keys.verify_key(), stage: Stage::Planning(h) });
+        run.cur = Some(Cur { name, dir, key: keys.verify_key(), stage: Stage::Planning(h), journals_before: None });
     }
 
     /// The run stops here: the current client (if it was not changed) and every client not started are "not touched".
@@ -178,11 +217,15 @@ impl MultiApply {
             if !run.outcome.changed.iter().any(|x| x.dir == c.dir) {
                 run.outcome.not_touched.push(c.name.clone());
             }
+            run.outcome.recover_may_have_written = c.journals_before.is_some();
             run.outcome.stopped = Some((c.name, why.clone()));
         } else {
             run.outcome.stopped = Some((String::new(), why.clone()));
         }
         run.outcome.not_touched.extend(run.todo.iter().map(|(n, _)| n.clone()));
+        // a client left out as the same folder is as untouched as the client whose folder it is
+        let more: Vec<String> = run.outcome.same_folder.iter().filter(|(_, of)| run.outcome.not_touched.contains(of)).map(|(n, _)| n.clone()).collect();
+        run.outcome.not_touched.extend(more);
         cx.shell.status(format!("Apply to several clients stopped: {why}"));
         self.last = Some(run.outcome);
     }
@@ -202,15 +245,18 @@ impl MultiApply {
             Stage::Planning(mut h) => match h.poll() {
                 None => cur.stage = Stage::Planning(h),
                 Some(TaskOutcome::Done(plans)) => {
-                    let rows = match ClientFiles::locate(&dir) {
-                        Ok(files) => explain::patch_rows(&plans, &files),
-                        Err(_) => Vec::new(),
+                    let rows = match confirm_rows(&plans, ClientFiles::locate(&dir)) {
+                        Ok(rows) => rows,
+                        Err(why) => {
+                            self.stop(why, cx);
+                            return;
+                        }
                     };
                     let list: Vec<String> = run.patches.iter().map(|p| file_name(p)).collect();
                     let list = if list.len() <= 3 { list.join(" and ") } else { format!("{} patches", list.len()) };
                     let sigs = if cur.key.is_some() { "a valid signature is required and checked" } else { "not used (unsigned patches)" };
                     let which = run.total - run.todo.len();
-                    let text = format!("Apply {list} to {name}? Client {which} of {}. Signatures: {sigs}.", run.total);
+                    let text = format!("Apply {list} to {name} ({})? Client {which} of {}. Signatures: {sigs}.", dir.display(), run.total);
                     cur.stage = Stage::Confirm(rows, text);
                 }
                 Some(TaskOutcome::Failed(e)) => self.stop(format!("cannot plan the patches: {e}"), cx),
@@ -232,6 +278,7 @@ impl MultiApply {
                 if arc.as_ref().map(|a| Arc::strong_count(a) == 1).unwrap_or(true) {
                     drop(arc);
                     let (patches, key, d2) = (run.patches.clone(), cur.key.clone(), dir.clone());
+                    cur.journals_before = Some(journal_files(&dir));
                     let n = patches.len();
                     let h = cx.shell.tasks().spawn(TaskSpec { title: format!("Applying {} to {name}", shaiya_inspect::counted(n as u64, "patch", "patches")), cancellable: true, exclusive: Some(dir.display().to_string()) }, move |job| Ok(apply_patches_to(&patches, &d2, key, job)));
                     cur.stage = Stage::Running(h);
@@ -244,6 +291,7 @@ impl MultiApply {
                 None => cur.stage = Stage::Running(h),
                 Some(outcome) => {
                     let of = run.patches.len();
+                    let mut unknown = false;
                     let (applied, err): (Applied, Option<String>) = match outcome {
                         TaskOutcome::Done(a) => {
                             let e = a.error.as_ref().map(|e| if matches!(e, Error::Cancelled) { "cancelled".to_string() } else { e.to_string() });
@@ -251,10 +299,19 @@ impl MultiApply {
                         }
                         TaskOutcome::Failed(e) => (Applied { reports: Vec::new(), error: None }, Some(e.to_string())),
                         TaskOutcome::Cancelled => (Applied { reports: Vec::new(), error: None }, Some("cancelled".to_string())),
-                        TaskOutcome::Panicked(m) => (Applied { reports: Vec::new(), error: None }, Some(format!("internal error (a bug): {m}"))),
+                        TaskOutcome::Panicked(m) => {
+                            unknown = true;
+                            (Applied { reports: Vec::new(), error: None }, Some(format!("internal error (a bug): {m}")))
+                        }
                     };
-                    if !applied.reports.is_empty() {
-                        run.outcome.changed.push(Changed { client: name.clone(), dir: dir.clone(), applied: applied.reports.len(), of, journals: applied.reports.iter().filter_map(|r| r.journal.clone()).collect() });
+                    if unknown {
+                        // the patches that went in before the panic are not known: the client may be partly changed, with the journals that appeared
+                        let before = cur.journals_before.take().unwrap_or_default();
+                        let journals: Vec<PathBuf> = journal_files(&dir).into_iter().filter(|j| !before.contains(j)).collect();
+                        run.outcome.changed.push(Changed { client: name.clone(), dir: dir.clone(), applied: 0, of, journals, unknown: true });
+                        archive.changed_counter += 1;
+                    } else if !applied.reports.is_empty() {
+                        run.outcome.changed.push(Changed { client: name.clone(), dir: dir.clone(), applied: applied.reports.len(), of, journals: applied.reports.iter().filter_map(|r| r.journal.clone()).collect(), unknown: false });
                         archive.changed_counter += 1;
                     }
                     // the open client's archive is read again whether or not the apply went through
@@ -270,7 +327,7 @@ impl MultiApply {
         }
     }
 
-    pub fn ui(&mut self, ctx: &egui::Context, cx: &mut ToolkitCx<'_>, archive: &mut ArchiveView) {
+    pub fn ui(&mut self, ctx: &egui::Context, cx: &mut ToolkitCx<'_>, archive: &mut ArchiveView, apply_busy: bool) {
         self.tick(cx, archive);
         if !self.open {
             return;
@@ -280,7 +337,7 @@ impl MultiApply {
         let mut start = false;
         let mut add = false;
         let running = self.is_running();
-        let busy = archive.is_applying();
+        let busy = Self::blocked(archive.is_applying(), apply_busy);
         egui::Window::new("Apply to several test clients").open(&mut open).default_width(560.0).show(ctx, |ui| {
             ui.label(RichText::new("The patches are applied to each chosen client in turn. Each client gets its own confirmation (what changes, what is written, how to undo it, the game must be closed) and its own journal. If one client fails, the run stops there; the clients already done stay changed and can be rolled back from Apply & history.").color(pal.weak));
             ui.add_space(4.0);
@@ -305,15 +362,21 @@ impl MultiApply {
                 ui.add_enabled(!running, egui::Checkbox::new(on, n.as_str()));
             }
             ui.add_space(6.0);
-            let ready = !running && !busy && self.patches.iter().any(|(_, on)| *on) && self.clients.iter().any(|(_, _, on)| *on);
+            let ready = !running && busy.is_none() && self.patches.iter().any(|(_, on)| *on) && self.clients.iter().any(|(_, _, on)| *on);
             ui.horizontal(|ui| {
                 if ui.add_enabled(ready, egui::Button::new("Start")).clicked() {
                     start = true;
                 }
                 if running {
                     ui.label(RichText::new("Working...").color(pal.weak));
-                } else if busy {
-                    ui.label(RichText::new("Wait for the change in the Archive tab to finish.").color(pal.weak));
+                } else if let Some(why) = busy {
+                    ui.label(RichText::new(why).color(pal.weak));
+                }
+                if !running {
+                    let chosen: Vec<&PathBuf> = self.clients.iter().filter(|(_, _, on)| *on).map(|(_, d, _)| d).collect();
+                    if chosen.iter().enumerate().any(|(i, d)| chosen[..i].contains(d)) {
+                        ui.label(RichText::new("Clients that share a folder get the patches once.").color(pal.weak));
+                    }
                 }
             });
             if let Some(run) = &self.run {
@@ -344,6 +407,54 @@ impl MultiApply {
     }
 }
 
+/// What the confirmation shows for the plan: the Changes, Writes, Undo and Game rows. When the client folder cannot be read the run stops
+/// with the reason; a confirmation without the rows is never shown.
+fn confirm_rows(plans: &[Plan], files: Result<ClientFiles, Error>) -> Result<Rows, String> {
+    match files {
+        Ok(files) => Ok(explain::patch_rows(plans, &files)),
+        Err(e) => Err(format!("cannot show what would change, so nothing was applied there: {e}")),
+    }
+}
+
+/// The files of the client's journal folder (best effort: none when it does not exist yet).
+fn journal_files(dir: &Path) -> BTreeSet<PathBuf> {
+    std::fs::read_dir(dir.join(shaiya_archive::journal::DEFAULT_DIR)).map(|r| r.flatten().map(|e| e.path()).collect()).unwrap_or_default()
+}
+
 fn has_sah(dir: &Path) -> bool {
     dir.is_dir() && std::fs::read_dir(dir).map(|r| r.flatten().any(|e| e.file_name().to_string_lossy().eq_ignore_ascii_case("data.sah"))).unwrap_or(false)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_unreadable_client_gives_an_error_and_no_rows() {
+        let e = confirm_rows(&[], Err(Error::Cancelled)).unwrap_err();
+        assert!(e.contains("nothing was applied there"), "{e}");
+    }
+
+    #[test]
+    fn start_waits_for_either_apply() {
+        assert!(MultiApply::blocked(false, false).is_none());
+        assert!(MultiApply::blocked(true, false).unwrap().contains("Archive tab"));
+        assert!(MultiApply::blocked(false, true).unwrap().contains("Apply tab"));
+    }
+
+    #[test]
+    fn the_report_says_partly_changed_and_the_recover_note() {
+        let o = Outcome {
+            changed: vec![Changed { client: "A".into(), dir: PathBuf::from("a"), applied: 0, of: 2, journals: vec![PathBuf::from("a/j/1.json")], unknown: true }],
+            not_touched: vec!["B".into()],
+            stopped: Some(("A".into(), "internal error (a bug): x".into())),
+            same_folder: vec![("A2".into(), "A".into())],
+            recover_may_have_written: true,
+        };
+        let l = o.lines().join("\n");
+        assert!(l.contains("May be partly changed: A") && l.contains("check its history") && l.contains("journals:"), "{l}");
+        assert!(!l.contains("Changed: A"), "{l}");
+        assert!(l.contains("Not touched: B") && l.contains("unfinished earlier change recovered"), "{l}");
+        assert!(l.contains("A2 is the same folder as A"), "{l}");
+    }
 }

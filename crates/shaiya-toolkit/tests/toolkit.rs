@@ -2244,3 +2244,278 @@ fn apply_to_several_clients_a_game_running_on_the_second_leaves_the_first_applie
     assert_eq!(file_hashes(b.path()), b_before, "the second client is byte-identical");
     assert_eq!(file_hashes(c.path()), c_before, "the third was never started");
 }
+
+// ------------------------------------------------------------------------------------------------ T9 W10fix
+
+#[test]
+fn a_dropped_folder_named_like_a_saved_client_does_not_make_that_clients_removal_ask() {
+    let mut w = open_world("t10fix-dropname");
+    let b = client_of("t10fix-dropname-b", &[("b.txt", b"b file")]);
+    add_saved(&mut w, "EU test", b.path());
+    // a folder that is not saved, called "EU test" like the saved client, is opened by dropping it
+    let parent = TempDir::new("t10fix-dropname-parent");
+    let d = parent.path().join("EU test");
+    std::fs::create_dir_all(&d).unwrap();
+    synthetic(&d);
+    w.h.drop_files(std::slice::from_ref(&d));
+    w.h.frames(2);
+    w.h.app.shell.inject_answer("toolkit-drop-folder", 0);
+    assert!(w.h.wait_until(WAIT, |h| h.app.app.archive.is_open() && h.app.app.archive.client_dir() == Some(d.as_path())), "the dropped folder opens");
+    w.h.frames(2);
+    let src = TempDir::new("t10fix-dropname-src");
+    queue_one(&mut w, &src.path().join("q.txt"), "queued/one.txt");
+    assert_eq!(w.h.app.app.queued_for(&d), 1);
+    // the saved "EU test" is another folder with no queue: removing it asks nothing and leaves the dropped folder's queue alone
+    w.h.frames(2);
+    with_cx(&mut w.h, |app, cx| app.clients.begin_remove("EU test", cx));
+    w.h.frames(2);
+    assert!(!w.h.text().contains("queued change"), "no question: {}", w.h.text());
+    assert!(!w.h.app.shell.shared().clients.iter().any(|c| c.name == "EU test"), "removed at once");
+    assert_eq!(w.h.app.app.queued_for(&d), 1, "the other folder's queue is still there");
+}
+
+#[test]
+fn a_queue_on_a_folder_blocks_the_archive_pair_swap_for_every_client_on_that_folder() {
+    let mut w = open_world("t10fix-swap");
+    let a = w.client_dir();
+    add_saved(&mut w, "US twin", &a); // a second saved client on the same folder
+    let b = client_of("t10fix-swap-b", &[("b.txt", b"b file")]);
+    add_saved(&mut w, "EU test", b.path());
+    w.h.frames(2);
+    assert!(!w.h.app.app.clients.swap_blocked(&a) && !w.h.app.app.clients.swap_blocked(b.path()), "nothing queued yet");
+    let src = TempDir::new("t10fix-swap-src");
+    queue_one(&mut w, &src.path().join("q.txt"), "queued/one.txt");
+    w.h.frames(2);
+    assert!(w.h.app.app.clients.swap_blocked(&a), "the active client's queue blocks the folder");
+    assert!(!w.h.app.app.clients.swap_blocked(b.path()));
+    // the queue is stashed when another client opens: the twin on the same folder is still blocked
+    open_saved(&mut w, "EU test", b.path());
+    w.h.frames(2);
+    assert_eq!(w.h.app.app.queued_for(&a), 1);
+    assert!(w.h.app.app.clients.swap_blocked(&a), "a stashed queue blocks it as well, whichever saved client is asked");
+    assert!(!w.h.app.app.clients.swap_blocked(b.path()));
+    assert!(shaiya_toolkit::clients::SWAP_BLOCKED_HOVER.contains("Apply or discard this client's queued changes first"));
+    // once the queue is dropped the folder is free again
+    w.h.app.app.drop_queue_of(&a);
+    w.h.frames(2);
+    assert!(!w.h.app.app.clients.swap_blocked(&a));
+}
+
+#[test]
+fn a_restored_queue_keeps_its_folder_when_nothing_is_loaded_and_is_not_lost_on_the_next_switch() {
+    let mut w = open_world("t10fix-owner");
+    let a = w.client_dir();
+    let b = client_of("t10fix-owner-b", &[("b.txt", b"b file")]);
+    add_saved(&mut w, "EU test", b.path());
+    let src = TempDir::new("t10fix-owner-src");
+    open_saved(&mut w, "EU test", b.path());
+    queue_one(&mut w, &src.path().join("q1.txt"), "queued/one.txt");
+    open_saved(&mut w, "US test", &a);
+    assert_eq!(w.h.app.app.queued_for(b.path()), 1, "EU test's queue is stashed");
+    // EU test's index becomes unreadable: it opens with an error, and its queue is restored onto nothing
+    let good = std::fs::read(b.path().join("data.sah")).unwrap();
+    std::fs::write(b.path().join("data.sah"), b"not an index").unwrap();
+    with_cx(&mut w.h, |app, cx| app.select_client("EU test", cx));
+    assert!(w.h.wait_until(WAIT, |h| !h.app.app.archive.is_opening()), "the open ends");
+    w.h.frames(2);
+    assert!(w.h.app.app.archive.client_dir().is_none(), "nothing is loaded");
+    assert_eq!(w.h.app.app.queued_for(b.path()), 1, "the queue is shown as EU test's");
+    // another edit while nothing is loaded must not forget whose queue it is
+    queue_one(&mut w, &src.path().join("q2.txt"), "queued/two.txt");
+    assert_eq!(w.h.app.app.archive.pending.len(), 2);
+    assert_eq!(w.h.app.app.queued_for(b.path()), 2, "still EU test's queue");
+    // the next switch keeps it (stashed under EU test), without the question or a loss
+    std::fs::write(b.path().join("data.sah"), good).unwrap();
+    open_saved(&mut w, "US test", &a);
+    assert_eq!(w.h.app.app.queued_for(b.path()), 2, "the queue was stashed, not cleared");
+    open_saved(&mut w, "EU test", b.path());
+    assert_eq!(w.h.app.app.archive.pending.len(), 2, "and it comes back");
+}
+
+#[test]
+fn the_client_picker_marks_a_client_with_queued_changes() {
+    let mut w = open_world("t10fix-label");
+    let a = w.client_dir();
+    let b = client_of("t10fix-label-b", &[("b.txt", b"b file")]);
+    add_saved(&mut w, "EU test", b.path());
+    let src = TempDir::new("t10fix-label-src");
+    queue_one(&mut w, &src.path().join("q.txt"), "queued/one.txt");
+    open_saved(&mut w, "EU test", b.path());
+    let clients = w.h.app.shell.shared().clients.clone();
+    let (us, eu) = (clients.iter().find(|c| c.name == "US test").unwrap().clone(), clients.iter().find(|c| c.name == "EU test").unwrap().clone());
+    let (lus, leu) = with_cx(&mut w.h, |app, cx| (app.picker_label_of(&us, true, cx), app.picker_label_of(&eu, true, cx)));
+    assert!(lus.contains("US test") && lus.ends_with(" - 1 queued"), "the stashed queue is marked: {lus}");
+    assert!(!leu.contains("queued"), "{leu}");
+    assert_eq!(w.h.app.app.queued_for(&a), 1);
+    // the combo list itself is drawn only while the picker is open, and the harness cannot click a widget by its label: the label
+    // text is checked here, where the picker takes it from
+}
+
+#[test]
+fn queues_are_memory_only_a_new_toolkit_instance_has_none() {
+    let mut w = open_world("t10fix-memory");
+    let a = w.client_dir();
+    let src = TempDir::new("t10fix-memory-src");
+    queue_one(&mut w, &src.path().join("q.txt"), "queued/one.txt");
+    assert_eq!(w.h.app.app.queued_for(&a), 1);
+    let fresh = world("t10fix-memory-fresh");
+    assert!(fresh.h.app.app.queued_clients().is_empty());
+    assert_eq!(fresh.h.app.app.queued_for(&a), 0);
+}
+
+#[test]
+fn the_palette_command_apply_multi_opens_the_dialog_with_the_listed_patches() {
+    let mut w = open_world("t10fix-palette");
+    let src = TempDir::new("t10fix-palette-src");
+    let patch = build_patch(src.path(), "ps0001.patch");
+    go(&mut w.h, Tab::Patch);
+    assert!(<ToolkitApp as shaiya_ui::ToolApp>::commands(&w.h.app.app).iter().any(|c| c.id == "apply-multi" && c.enabled), "listed and enabled");
+    assert!(!w.h.app.app.multi.open);
+    with_cx(&mut w.h, |app, cx| {
+        app.apply.add_patches(vec![patch.clone()]);
+        shaiya_ui::ToolApp::run_command(app, "apply-multi", cx);
+    });
+    w.h.frames(3);
+    assert!(w.h.app.app.multi.open, "the dialog is open");
+    assert_eq!(w.h.app.app.tab, Tab::Apply, "on the Apply tab");
+    let t = w.h.text();
+    assert!(t.contains("Apply to several test clients") && t.contains("ps0001.patch") && t.contains("US test"), "{t}");
+}
+
+#[test]
+fn compare_swap_sides_turns_old_into_new_and_the_patch_request_follows() {
+    let mut w = open_world("t10fix-swap-sides");
+    let a = client_of("t10fix-swap-sides-a", &[("a.txt", b"one"), ("c.txt", b"three")]);
+    let b = client_of("t10fix-swap-sides-b", &[("a.txt", b"ONE!"), ("d.txt", b"four")]);
+    add_saved(&mut w, "Old one", a.path());
+    add_saved(&mut w, "New one", b.path());
+    w.h.app.app.archive.begin_compare();
+    let l = shaiya_toolkit::archive_view::CompareSide::Client { name: "Old one".into(), dir: a.path().to_path_buf() };
+    let r = shaiya_toolkit::archive_view::CompareSide::Client { name: "New one".into(), dir: b.path().to_path_buf() };
+    with_cx(&mut w.h, |app, cx| app.archive.run_compare(l.clone(), r.clone(), cx));
+    assert!(w.h.wait_until(WAIT, |h| h.app.app.archive.compare.as_ref().is_some_and(|c| !c.is_running())));
+    let c = w.h.app.app.archive.compare.as_mut().unwrap();
+    assert!(c.patch_request().is_some());
+    c.swap_sides();
+    assert_eq!((c.left.clone(), c.right.clone()), (Some(r.clone()), Some(l.clone())));
+    assert!(!c.is_current() && c.patch_request().is_none(), "the shown comparison is of the other direction until Compare is pressed again");
+    with_cx(&mut w.h, |app, cx| app.archive.run_compare(r.clone(), l.clone(), cx));
+    assert!(w.h.wait_until(WAIT, |h| h.app.app.archive.compare.as_ref().is_some_and(|c| !c.is_running())));
+    let c = w.h.app.app.archive.compare.as_ref().unwrap();
+    // what was added in NEW is now removed, and the other way round
+    assert_eq!((c.summary.added, c.summary.removed, c.summary.different), (1, 1, 1), "{:?}", c.summary);
+    match c.patch_request().expect("current") {
+        shaiya_toolkit::archive_view::TabRequest::PatchFromDiff { old_label, new_label, .. } => assert_eq!((old_label.as_str(), new_label.as_str()), ("New one", "Old one")),
+        _ => panic!("a patch request"),
+    }
+}
+
+#[test]
+fn compare_archive_file_choice_sets_that_side_and_a_cancelled_picker_changes_nothing() {
+    let mut w = open_world("t10fix-file-side");
+    let a = client_of("t10fix-file-side-a", &[("a.txt", b"one")]);
+    let b = client_of("t10fix-file-side-b", &[("a.txt", b"ONE!"), ("n.txt", b"new")]);
+    add_saved(&mut w, "Old one", a.path());
+    w.h.app.app.archive.begin_compare();
+    let left = shaiya_toolkit::archive_view::CompareSide::Client { name: "Old one".into(), dir: a.path().to_path_buf() };
+    let file = b.path().join("data.sah");
+    let c = w.h.app.app.archive.compare.as_mut().unwrap();
+    c.left = Some(left.clone());
+    c.choose_file(true, None);
+    assert!(c.right.is_none(), "a cancelled picker leaves the side as it was");
+    c.choose_file(true, Some(file.clone()));
+    let right = shaiya_toolkit::archive_view::CompareSide::File(file);
+    assert_eq!((c.left.clone(), c.right.clone()), (Some(left.clone()), Some(right.clone())));
+    c.choose_file(true, None);
+    assert_eq!(c.right, Some(right.clone()), "and it keeps a side that was chosen");
+    with_cx(&mut w.h, |app, cx| app.archive.run_compare(left, right, cx));
+    assert!(w.h.wait_until(WAIT, |h| h.app.app.archive.compare.as_ref().is_some_and(|c| !c.is_running())));
+    let s = w.h.app.app.archive.compare.as_ref().unwrap().summary;
+    assert_eq!((s.added, s.different), (1, 1), "{s:?}");
+}
+
+#[test]
+fn apply_to_several_clients_applies_a_shared_folder_once_and_names_it() {
+    let mut w = open_world("t10fix-twin");
+    let a = w.client_dir();
+    add_saved(&mut w, "US twin", &a);
+    let b = TempDir::new("t10fix-twin-b");
+    synthetic(b.path());
+    add_saved(&mut w, "EU test", b.path());
+    let src = TempDir::new("t10fix-twin-src");
+    let patch = build_patch(src.path(), "ps0001.patch");
+    go(&mut w.h, Tab::Apply);
+    start_multi(&mut w, &patch, &["US test", "US twin", "EU test"]);
+    multi_confirm(&mut w, 1, 2, 0); // two folders, not three clients
+    // the confirmation names the folder it is about
+    assert!(w.h.text().contains(&a.display().to_string()), "{}", w.h.text());
+    multi_confirm(&mut w, 2, 2, 0);
+    assert!(w.h.wait_until(WAIT, |h| h.app.app.multi.last.is_some() && !h.app.app.multi.is_running()));
+    let o = w.h.app.app.multi.last.clone().unwrap();
+    assert!(o.stopped.is_none() && o.not_touched.is_empty(), "{o:?}");
+    assert_eq!(o.same_folder, [("US twin".to_string(), "US test".to_string())]);
+    let list = shaiya_archive::journal::list(&a, &a.join(shaiya_archive::journal::DEFAULT_DIR)).unwrap();
+    assert_eq!(list.len(), 1, "one journal on the shared folder, not two");
+    w.h.frames(2);
+    assert!(w.h.text().contains("US twin is the same folder as US test"), "{}", w.h.text());
+}
+
+#[test]
+fn apply_to_several_clients_lists_a_client_on_the_failed_folder_as_not_touched() {
+    let mut w = open_world("t10fix-twin-fail");
+    let b = TempDir::new("t10fix-twin-fail-b");
+    synthetic(b.path());
+    std::fs::write(b.path().join("data.sah"), b"not an index").unwrap();
+    add_saved_unchecked(&mut w, "B broken", b.path());
+    add_saved_unchecked(&mut w, "B twin", b.path());
+    let c = TempDir::new("t10fix-twin-fail-c");
+    synthetic(c.path());
+    add_saved(&mut w, "C fine", c.path());
+    let src = TempDir::new("t10fix-twin-fail-src");
+    let patch = build_patch(src.path(), "ps0001.patch");
+    start_multi(&mut w, &patch, &["B broken", "B twin", "C fine"]);
+    assert!(w.h.wait_until(WAIT, |h| h.app.app.multi.last.is_some()), "the run stops at the first");
+    let o = w.h.app.app.multi.last.clone().unwrap();
+    assert!(o.changed.is_empty(), "{o:?}");
+    let mut nt = o.not_touched.clone();
+    nt.sort();
+    assert_eq!(nt, ["B broken", "B twin", "C fine"], "every client that was not applied is listed, the same-folder one too");
+    // the recover note belongs to a client whose apply had started; this one only failed to plan
+    assert!(!o.recover_may_have_written, "{o:?}");
+}
+
+#[test]
+fn apply_to_several_clients_stops_at_a_read_only_second_client_on_every_system() {
+    let mut w = open_world("t10fix-ro");
+    let a = w.client_dir();
+    let b = TempDir::new("t10fix-ro-b");
+    synthetic(b.path());
+    let c = TempDir::new("t10fix-ro-c");
+    synthetic(c.path());
+    add_saved(&mut w, "EU test", b.path());
+    add_saved(&mut w, "AS test", c.path());
+    let src = TempDir::new("t10fix-ro-src");
+    let patch = build_patch(src.path(), "ps0001.patch");
+    let (b_before, c_before) = (file_hashes(b.path()), file_hashes(c.path()));
+    // the second client's data.saf cannot be written (what the in-use check finds on every system)
+    let saf = b.path().join("data.saf");
+    let mut perm = std::fs::metadata(&saf).unwrap().permissions();
+    perm.set_readonly(true);
+    std::fs::set_permissions(&saf, perm).unwrap();
+    start_multi(&mut w, &patch, &["US test", "EU test", "AS test"]);
+    multi_confirm(&mut w, 1, 3, 0);
+    multi_confirm(&mut w, 2, 3, 0);
+    assert!(w.h.wait_until(WAIT, |h| h.app.app.multi.last.is_some()), "the run stops at the second client");
+    let mut perm = std::fs::metadata(&saf).unwrap().permissions();
+    #[allow(clippy::permissions_set_readonly_false)]
+    perm.set_readonly(false);
+    std::fs::set_permissions(&saf, perm).unwrap();
+    let o = w.h.app.app.multi.last.clone().unwrap();
+    assert_eq!(o.changed.iter().map(|c| c.client.as_str()).collect::<Vec<_>>(), ["US test"], "{o:?}");
+    assert!(o.stopped.as_ref().is_some_and(|s| s.0 == "EU test" && !s.1.is_empty()), "{o:?}");
+    assert_eq!(o.not_touched, ["EU test", "AS test"]);
+    assert!(has_entry(&a, "interface/new.txt"), "the first client is applied");
+    assert_eq!(file_hashes(b.path()), b_before, "the second client is byte-identical");
+    assert_eq!(file_hashes(c.path()), c_before, "the third was never started");
+    assert!(!c.path().join(shaiya_archive::journal::DEFAULT_DIR).exists());
+}

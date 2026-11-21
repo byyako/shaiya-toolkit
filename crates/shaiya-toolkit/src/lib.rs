@@ -215,6 +215,11 @@ impl ToolkitApp {
         }
     }
 
+    /// The line of a saved client in the Client picker: name, folder, and the queued changes of that folder ("US test - 3 queued").
+    pub fn picker_label_of(&self, c: &shaiya_ui::Client, found: bool, cx: &ToolkitCx<'_>) -> String {
+        clients::queued_label(clients::picker_label(c, &cx.shell.folder_text(&c.name, Path::new(&c.path)), found), self.queued_for(Path::new(&c.path)))
+    }
+
     /// Every client that has queued changes: (name, folder, count), the active one first.
     pub fn queued_clients(&self) -> Vec<(String, PathBuf, usize)> {
         let mut v = Vec::new();
@@ -230,12 +235,12 @@ impl ToolkitApp {
         v
     }
 
-    /// The client was removed from the list or renamed: its queued changes are dropped (the question was asked before).
-    pub fn drop_queue_of(&mut self, name: &str) {
-        if self.current.as_ref().is_some_and(|c| c.name.eq_ignore_ascii_case(name)) {
+    /// A client was removed from the list or renamed: the queued changes of its folder are dropped (the question was asked before).
+    pub fn drop_queue_of(&mut self, dir: &Path) {
+        if self.archive.queue_dir() == Some(dir) {
             self.archive.drop_queue();
         }
-        self.queues.retain(|_, (n, _)| !n.eq_ignore_ascii_case(name));
+        self.queues.remove(dir);
     }
 
     fn open_client_dir(&mut self, name: &str, dir: PathBuf, cx: &mut ToolkitCx<'_>) {
@@ -482,7 +487,7 @@ impl ToolkitApp {
             egui::ComboBox::from_id_salt("toolkit-client").selected_text(shown).width(220.0).show_ui(ui, |ui| {
                 for c in &clients {
                     let found = has_sah(Path::new(&c.path));
-                    let label = clients::queued_label(clients::picker_label(c, &cx.shell.folder_text(&c.name, Path::new(&c.path)), found), self.queued_for(Path::new(&c.path)));
+                    let label = self.picker_label_of(c, found, cx);
                     let text = if found { RichText::new(label) } else { RichText::new(label).color(pal.weak) };
                     if ui.add_enabled(found, egui::Button::selectable(current.as_deref() == Some(c.name.as_str()), text)).clicked() {
                         act = Some(A::Select(c.name.clone()));
@@ -661,11 +666,11 @@ impl ToolApp for ToolkitApp {
         if self.tab != Tab::SData {
             self.sdata.tick(&self.archive, cx);
         }
-        self.clients.queued = self.queued_clients().into_iter().map(|(n, _, c)| (n, c)).collect();
+        self.clients.queued = self.queued_clients();
         let actions = self.clients.ui(&ctx, cx, &mut self.archive);
         for a in actions {
             match a {
-                ClientsAction::DropQueue(n) => self.drop_queue_of(&n),
+                ClientsAction::DropQueue(d) => self.drop_queue_of(&d),
                 ClientsAction::Open(n) => self.select_client(&n, cx),
                 ClientsAction::Health(n) => self.open_health(Some(&n), cx),
                 ClientsAction::Reload(dir) => {
@@ -678,7 +683,7 @@ impl ToolApp for ToolkitApp {
         if std::mem::take(&mut self.apply.want_multi) {
             self.multi.open_dialog(self.apply.patch_paths(), cx);
         }
-        self.multi.ui(&ctx, cx, &mut self.archive);
+        self.multi.ui(&ctx, cx, &mut self.archive, self.apply.is_busy());
         for a in self.health.ui(&ctx, cx, &mut self.archive) {
             match a {
                 HealthAction::Reload(dir) => {

@@ -425,6 +425,19 @@ pub struct ComparePanel {
 }
 
 impl ComparePanel {
+    /// "Swap sides": OLD becomes NEW and the other way round (the shown comparison is then no longer the current one).
+    pub fn swap_sides(&mut self) {
+        std::mem::swap(&mut self.left, &mut self.right);
+    }
+
+    /// The answer of the "Archive file..." picker for one side: a file picked is that side; no file (the picker was cancelled) leaves it as it was.
+    pub fn choose_file(&mut self, is_right: bool, picked: Option<PathBuf>) {
+        if let Some(p) = picked {
+            let slot = if is_right { &mut self.right } else { &mut self.left };
+            *slot = Some(CompareSide::File(p));
+        }
+    }
+
     pub fn is_running(&self) -> bool {
         self.handle.is_some()
     }
@@ -709,7 +722,8 @@ impl ArchiveView {
         if self.pending.is_empty() {
             return None;
         }
-        let dir = self.pending_owner.take().or_else(|| self.client_dir().map(Path::to_path_buf))?;
+        let dir = self.pending_owner.clone().or_else(|| self.client_dir().map(Path::to_path_buf))?;
+        self.pending_owner = None;
         Some(Queue { dir, pending: std::mem::take(&mut self.pending), history: std::mem::replace(&mut self.history, History::new(500)) })
     }
 
@@ -1159,7 +1173,10 @@ impl ArchiveView {
     }
 
     fn push_edit(&mut self, label: &str, edits: Vec<QueueEdit>) {
-        self.pending_owner = self.client_dir().map(Path::to_path_buf);
+        // nothing loaded (a restored client whose open failed): the queue keeps the folder it was built on
+        if let Some(d) = self.client_dir().map(Path::to_path_buf) {
+            self.pending_owner = Some(d);
+        }
         let mut model = std::mem::take(&mut self.pending);
         self.history.push(&mut model, label, edits, None);
         self.pending = model;
@@ -2561,7 +2578,7 @@ impl ArchiveView {
                 }
                 ui.horizontal(|ui| {
                     if ui.button("Swap sides").clicked() {
-                        std::mem::swap(&mut c.left, &mut c.right);
+                        c.swap_sides();
                     }
                     let ready = c.left.is_some() && c.right.is_some() && !c.is_running();
                     if ui.add_enabled(ready, egui::Button::new("Compare")).clicked() {
@@ -2618,10 +2635,7 @@ impl ArchiveView {
                 }
             });
             if let Some(is_right) = file_for {
-                if let Some(p) = cx.shell.pick_file("compare", &[("SAH index", &["sah"])]) {
-                    let slot = if is_right { &mut c.right } else { &mut c.left };
-                    *slot = Some(CompareSide::File(p));
-                }
+                c.choose_file(is_right, cx.shell.pick_file("compare", &[("SAH index", &["sah"])]));
             }
             if make_patch {
                 requests.extend(c.patch_request());

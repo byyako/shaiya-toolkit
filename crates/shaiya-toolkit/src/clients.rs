@@ -175,9 +175,19 @@ struct EditClient {
     text: String,
 }
 
+/// The hover text of "Use another archive pair..." while the client's folder has queued changes.
+pub const SWAP_BLOCKED_HOVER: &str = "Apply or discard this client's queued changes first";
+
+/// The queued changes of the folder `dir`, whichever saved client (or opened folder) they belong to.
+fn queued_in(queued: &[(String, PathBuf, usize)], dir: &Path) -> usize {
+    queued.iter().find(|(_, d, _)| d.as_path() == dir).map(|(_, _, c)| *c).unwrap_or(0)
+}
+
 /// A removal or rename waiting for the answer about the queue.
 struct DropAsk {
     name: String,
+    /// The client's folder: the queue belongs to the folder, not to the name.
+    dir: PathBuf,
     queued: usize,
     /// `None`: remove from the list; `Some(new)`: rename.
     rename_to: Option<String>,
@@ -200,8 +210,8 @@ pub enum ClientsAction {
     Health(String),
     /// A swap finished or failed: reload the open archive when it is this folder.
     Reload(PathBuf),
-    /// This client was removed from the list or renamed: drop its queued changes.
-    DropQueue(String),
+    /// A client was removed from the list or renamed: drop the queued changes of its folder.
+    DropQueue(PathBuf),
 }
 
 pub struct ClientsUi {
@@ -210,8 +220,8 @@ pub struct ClientsUi {
     statuses: Vec<(String, ClientStatus)>,
     edit: Option<EditClient>,
     swap: SwapFlow,
-    /// Clients with queued changes: (name, how many). Set by the app every frame.
-    pub queued: Vec<(String, usize)>,
+    /// Folders with queued changes: (client name, folder, how many). Set by the app every frame.
+    pub queued: Vec<(String, PathBuf, usize)>,
     /// Removing or renaming a client that has queued changes asks first.
     drop_ask: Option<DropAsk>,
     /// The Changes / Writes / Undo / Game rows of the open swap confirmation (made when the swap was asked for).
@@ -327,7 +337,7 @@ impl ClientsUi {
             let clients = cx.shell.shared().clients.clone();
             let shown: Vec<String> = clients.iter().map(|c| cx.shell.folder_text(&c.name, Path::new(&c.path))).collect();
             let queued = self.queued.clone();
-            let queued_of = move |n: &str| queued.iter().find(|(q, _)| q.eq_ignore_ascii_case(n)).map(|(_, c)| *c).unwrap_or(0);
+            let queued_of = move |dir: &str| queued_in(&queued, Path::new(dir));
             egui::Window::new("Manage client folders").open(&mut open).default_width(720.0).show(ctx, |ui| {
                 if clients.is_empty() {
                     ui.label("No client folders yet. Use Add client folder... in the toolbar.");
@@ -370,7 +380,7 @@ impl ClientsUi {
                             if ui.button("Edit note...").clicked() {
                                 edit = Some((c.name.clone(), EditKind::Note));
                             }
-                            if ui.add_enabled(st.found && queued_of(&c.name) == 0, egui::Button::new("Use another archive pair...")).on_hover_text(if queued_of(&c.name) > 0 { "Apply or discard this client's queued changes first" } else { "Swap in another data.sah/data.saf; the current pair is kept" }).clicked() {
+                            if ui.add_enabled(st.found && queued_of(&c.path) == 0, egui::Button::new("Use another archive pair...")).on_hover_text(if queued_of(&c.path) > 0 { SWAP_BLOCKED_HOVER } else { "Swap in another data.sah/data.saf; the current pair is kept" }).clicked() {
                                 swap_for = Some((c.name.clone(), PathBuf::from(&c.path)));
                             }
                             if ui.button("Remove from list").on_hover_text("The files are not touched").clicked() {
@@ -463,15 +473,24 @@ impl ClientsUi {
         out
     }
 
-    fn queued_of(&self, name: &str) -> usize {
-        self.queued.iter().find(|(q, _)| q.eq_ignore_ascii_case(name)).map(|(_, c)| *c).unwrap_or(0)
+    /// True while the folder has queued changes of any client (the active one's or a stashed one's): the archive pair cannot be swapped then.
+    pub fn swap_blocked(&self, dir: &Path) -> bool {
+        queued_in(&self.queued, dir) > 0
+    }
+
+    /// The queued changes of the folder of the saved client `name` (the queue belongs to the folder), with that folder.
+    fn queued_of(&self, name: &str, cx: &ToolkitCx<'_>) -> (PathBuf, usize) {
+        let Some(c) = cx.shell.shared().clients.iter().find(|c| c.name.eq_ignore_ascii_case(name)) else { return (PathBuf::new(), 0) };
+        let dir = PathBuf::from(&c.path);
+        let n = queued_in(&self.queued, &dir);
+        (dir, n)
     }
 
     /// Remove from the list: at once, or after the question when the client has queued changes.
     pub fn begin_remove(&mut self, name: &str, cx: &mut ToolkitCx<'_>) {
-        let q = self.queued_of(name);
+        let (dir, q) = self.queued_of(name, cx);
         if q > 0 {
-            self.drop_ask = Some(DropAsk { name: name.to_string(), queued: q, rename_to: None });
+            self.drop_ask = Some(DropAsk { name: name.to_string(), dir, queued: q, rename_to: None });
         } else {
             if let Err(e) = remove_client(cx.shell, name) {
                 cx.shell.error("Cannot change the client list", &e);
@@ -482,9 +501,9 @@ impl ClientsUi {
 
     /// Rename: at once, or after the question when the client has queued changes. False when the new name was refused.
     pub fn begin_rename(&mut self, name: &str, new_name: &str, cx: &mut ToolkitCx<'_>) -> bool {
-        let q = self.queued_of(name);
+        let (dir, q) = self.queued_of(name, cx);
         if q > 0 && new_name != name {
-            self.drop_ask = Some(DropAsk { name: name.to_string(), queued: q, rename_to: Some(new_name.to_string()) });
+            self.drop_ask = Some(DropAsk { name: name.to_string(), dir, queued: q, rename_to: Some(new_name.to_string()) });
             return true;
         }
         let r = rename_client(cx.shell, name, new_name);
@@ -514,7 +533,7 @@ impl ClientsUi {
                     None => remove_client(cx.shell, &a.name),
                 };
                 match r {
-                    Ok(()) => out.push(ClientsAction::DropQueue(a.name.clone())),
+                    Ok(()) => out.push(ClientsAction::DropQueue(a.dir.clone())),
                     Err(e) => cx.shell.error("Cannot change the client list", &e),
                 }
                 self.refresh(cx.shell);
