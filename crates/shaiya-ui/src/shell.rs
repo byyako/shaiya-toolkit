@@ -1,12 +1,13 @@
 //! The shell: window chrome, menus, Activity panel, status bar, error banner, modals, dialogs, drag and drop, shortcuts, settings
 //! persistence and the frame loop that every toolkit GUI shares.
 
-use crate::args::{self, Parsed, ShellOptions};
+use crate::args::{self, Parsed, ShellOptions, ShotOptions};
 use crate::backups::Backups;
 use crate::fonts;
 use crate::log;
 use crate::palette::{self, Palette};
 use crate::recovery::Recovery;
+use crate::shot::{self, Idle};
 use crate::settings::{self, Env, Os, Paths, Shared, ShellSettings, ToolFile};
 use crate::tasks::{LogLine, TaskView, Tasks};
 use crate::theme::{self, Pal, Theme};
@@ -71,9 +72,27 @@ pub struct Shell {
     dialogs: bool,
     opener: fn(&Path) -> Result<(), String>,
     quit_requested: bool,
+    hide_paths: bool,
+    shot_inputs: Vec<PathBuf>,
 }
 
 impl Shell {
+    /// Whether this run is a `--shot`: saved folders are then shown by name, never by path (see [`shot::folder_label`]), and nothing a
+    /// screenshot shows may print an absolute path, a user name or a machine name.
+    pub fn hide_paths(&self) -> bool {
+        self.hide_paths
+    }
+
+    /// How a saved folder is shown: its path, or under `--shot` its name.
+    pub fn folder_text(&self, name: &str, path: &Path) -> String {
+        shot::folder_label(self.hide_paths, name, path)
+    }
+
+    /// The files and folders named on the command line of a `--shot` run (they are not opened as files; the scene decides what to do).
+    pub fn shot_inputs(&self) -> &[PathBuf] {
+        &self.shot_inputs
+    }
+
     pub fn tasks(&mut self) -> &mut Tasks {
         &mut self.tasks
     }
@@ -434,6 +453,29 @@ struct Smoke {
     report: Option<PathBuf>,
 }
 
+/// Where a `--shot` run is: the scene is set up on the first frame, then the shell waits for idle between the tool's steps, asks for the
+/// screenshot, waits for the pixels, writes the PNG and exits.
+struct ShotRun {
+    opts: ShotOptions,
+    phase: ShotPhase,
+    idle: Idle,
+    deadline: Instant,
+    headless: bool,
+    image: std::sync::Arc<std::sync::Mutex<Option<std::sync::Arc<egui::ColorImage>>>>,
+}
+
+enum ShotPhase {
+    Setup,
+    Settle,
+    Capture,
+    /// Headless only: the scene is ready.
+    Ready,
+    Failed(String),
+}
+
+/// A `--shot` run that has not finished in this time is a failure (a scene that never goes idle must not hang a build).
+const SHOT_TIMEOUT: Duration = Duration::from_secs(120);
+
 /// The eframe app that wraps a tool: owns the shell, the tool's settings and the tool.
 pub struct ShellApp<A: ToolApp> {
     pub shell: Shell,
@@ -451,6 +493,7 @@ pub struct ShellApp<A: ToolApp> {
     quit: Quit,
     quit_confirmed: bool,
     smoke: Option<Smoke>,
+    shot: Option<ShotRun>,
     adapter: Option<String>,
     frame_no: u64,
     applied_look: Option<(Theme, f32)>,
@@ -507,7 +550,7 @@ impl<A: ToolApp> ShellApp<A> {
             banner: None,
             confirms: Vec::new(),
             answers: HashMap::new(),
-            pending_open: opts.files.clone(),
+            pending_open: if opts.shot.is_some() { Vec::new() } else { opts.files.clone() },
             activity: Vec::new(),
             activity_filter: Level::Info,
             cjk,
@@ -516,7 +559,13 @@ impl<A: ToolApp> ShellApp<A> {
             dialogs: true,
             opener: crate::reveal::open_path,
             quit_requested: false,
+            hide_paths: opts.shot.is_some(),
+            shot_inputs: if opts.shot.is_some() { opts.files.clone() } else { Vec::new() },
         };
+        if opts.shot.is_some() {
+            // no welcome line in a screenshot
+            shell.settings.first_run_done = true;
+        }
         let mut tool_settings = file.tool;
         let app = {
             let mut cx = Cx { shell: &mut shell, settings: &mut tool_settings };
@@ -538,6 +587,7 @@ impl<A: ToolApp> ShellApp<A> {
             quit: Quit::None,
             quit_confirmed: false,
             smoke: opts.smoke.clone().map(|report| Smoke { report }),
+            shot: opts.shot.clone().map(|opts| ShotRun { opts, phase: ShotPhase::Setup, idle: Idle::default(), deadline: Instant::now() + SHOT_TIMEOUT, headless: false, image: Default::default() }),
             adapter,
             frame_no: 0,
             applied_look: None,
@@ -588,6 +638,10 @@ impl<A: ToolApp> ShellApp<A> {
     // ------------------------------------------------------------------------------------------------------------ look
 
     fn apply_look(&mut self, ctx: &egui::Context) {
+        if self.shot.is_some() {
+            // windows and menus appear at once, so a screenshot never catches one half faded in
+            ctx.all_styles_mut(|s| s.animation_time = 0.0);
+        }
         let want = (self.shell.shared.theme, self.shell.shared.ui_scale);
         if self.applied_look != Some(want) {
             ctx.set_theme(want.0.preference());
@@ -869,6 +923,7 @@ impl<A: ToolApp> ShellApp<A> {
             }
         }
         self.smoke_step(&ctx);
+        self.shot_step(&ctx);
     }
 
     fn finish_quit(&mut self, ctx: &egui::Context) {
@@ -876,6 +931,83 @@ impl<A: ToolApp> ShellApp<A> {
         self.flush_settings(true);
         log::info("exit");
         ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+    }
+
+    /// `--shot`: set up the scene, wait for idle between the tool's steps, take the screenshot, write the PNG, exit 0 (or 1 with the reason).
+    /// In the test harness (`shot_headless`) nothing is photographed and nothing exits: the result is read with [`ShellApp::shot_result`].
+    fn shot_step(&mut self, ctx: &egui::Context) {
+        let Some(mut s) = self.shot.take() else { return };
+        ctx.request_repaint();
+        let mut failed: Option<String> = None;
+        if !s.headless && Instant::now() > s.deadline {
+            failed = Some(format!("the scene {:?} did not settle within {} seconds", s.opts.scene, SHOT_TIMEOUT.as_secs()));
+        }
+        if failed.is_none() {
+            match &s.phase {
+                ShotPhase::Setup => {
+                    let (mut cx, app) = self.cx();
+                    match app.shot_scene(&s.opts.scene, &mut cx) {
+                        Ok(()) => s.phase = ShotPhase::Settle,
+                        Err(why) => failed = Some(format!("scene {:?}: {why}", s.opts.scene)),
+                    }
+                }
+                ShotPhase::Settle => {
+                    if s.idle.observe(self.shell.tasks.running(), self.shell.tasks.spawned()) {
+                        let (mut cx, app) = self.cx();
+                        if app.shot_step(&mut cx) {
+                            s.idle.reset();
+                        } else if s.headless {
+                            s.phase = ShotPhase::Ready;
+                        } else {
+                            let slot = s.image.clone();
+                            ctx.request_screenshot(move |img| *slot.lock().unwrap_or_else(|p| p.into_inner()) = Some(img));
+                            s.phase = ShotPhase::Capture;
+                        }
+                    }
+                }
+                ShotPhase::Capture => {
+                    let img = s.image.lock().unwrap_or_else(|p| p.into_inner()).take();
+                    if let Some(img) = img {
+                        let (w, h) = (img.size[0] as u32, img.size[1] as u32);
+                        let png = crate::png::png_encode(w, h, &crate::png::rgba_of(&img));
+                        match std::fs::write(&s.opts.out, &png) {
+                            Ok(()) => {
+                                println!("screenshot {w}x{h}, {} bytes: {}", png.len(), s.opts.out.display());
+                                self.flush_settings(true);
+                                std::process::exit(0);
+                            }
+                            Err(e) => failed = Some(format!("cannot write {}: {e}", s.opts.out.display())),
+                        }
+                    }
+                }
+                ShotPhase::Ready | ShotPhase::Failed(_) => {}
+            }
+        }
+        if let Some(why) = failed {
+            if !s.headless {
+                eprintln!("error: {why}");
+                std::process::exit(1);
+            }
+            s.phase = ShotPhase::Failed(why);
+        }
+        self.shot = Some(s);
+    }
+
+    /// Makes the `--shot` machinery of this app run without a window: no screenshot, no exit (used by the test harness).
+    pub fn shot_headless(&mut self) {
+        if let Some(s) = &mut self.shot {
+            s.headless = true;
+        }
+    }
+
+    /// The state of a headless `--shot` run: `None` while the scene is being set up, `Some(Ok)` when it is ready to be photographed,
+    /// `Some(Err)` when it failed.
+    pub fn shot_result(&self) -> Option<Result<(), String>> {
+        match self.shot.as_ref().map(|s| &s.phase) {
+            Some(ShotPhase::Ready) => Some(Ok(())),
+            Some(ShotPhase::Failed(why)) => Some(Err(why.clone())),
+            _ => None,
+        }
     }
 
     fn smoke_step(&mut self, ctx: &egui::Context) {
@@ -1454,7 +1586,7 @@ pub fn run<A: ToolApp>() -> ExitCode {
         }
     };
     let info = A::info();
-    let opts = match parsed {
+    let mut opts = match parsed {
         Parsed::Help => {
             println!("{}\n\n{}", info.name, args::USAGE);
             return ExitCode::SUCCESS;
@@ -1465,6 +1597,10 @@ pub fn run<A: ToolApp>() -> ExitCode {
         }
         Parsed::Run(o) => o,
     };
+    if opts.shot.is_some() {
+        // the same text on every machine: no system font search
+        opts.load_fonts = false;
+    }
     if !opts.no_settings {
         log::install_panic_hook();
     }
@@ -1480,6 +1616,13 @@ pub fn run<A: ToolApp>() -> ExitCode {
         };
         let f: ToolFile<serde_json::Value> = paths.map_or_else(ToolFile::default, |p| ToolFile::load(&p.settings_file()));
         (f.shell.window, f.shell.maximized)
+    };
+    let size = match &opts.shot {
+        Some(s) => {
+            let [w, h] = s.size.unwrap_or(args::SHOT_DEFAULT_SIZE);
+            ([w as f32, h as f32], false)
+        }
+        None => size,
     };
     let mut viewport = egui::ViewportBuilder::default()
         .with_inner_size(size.0)

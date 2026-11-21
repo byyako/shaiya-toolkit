@@ -58,7 +58,7 @@ Root: `SHAIYA_TOOLKIT_HOME`, else `portable.txt` next to the program (`shaiya-to
 
 ## Flags every GUI has
 
-`[FILES...]`, `--data-dir DIR`, `--no-settings`, `--smoke [REPORT_FILE]`.
+`[FILES...]`, `--data-dir DIR`, `--no-settings`, `--smoke [REPORT_FILE]`, `--shot OUT.png [--size WxH] [--scene NAME]`.
 
 ## Reserved shortcuts
 
@@ -77,4 +77,4 @@ h.key(egui::Key::P, egui::Modifiers::COMMAND | egui::Modifiers::SHIFT);
 h.wait_until(Duration::from_secs(5), |h| /* a task finished */ true);
 ```
 
-Run the real window with `--smoke report.txt` to check the graphics stack. Left out on purpose: network access of any kind, multiple windows per process, docking, plugins, custom themes, translations, screen-reader support, window position memory.
+Run the real window with `--smoke report.txt` to check the graphics stack. `--shot OUT.png` opens the real window, lets the tool set up a scene (`ToolApp::shot_scene`, then `ToolApp::shot_step` each time the background tasks are idle), takes a screenshot with `ViewportCommand::Screenshot`, writes the PNG (`shaiya_ui::png::png_encode`) and exits 0, or 1 with the reason; it implies `--no-settings` unless `--data-dir` is given, and `Shell::folder_text` shows a saved folder by name instead of by path while it runs. In the test harness (`Harness::wait_scene`) the same machinery runs without a window. Left out on purpose: network access of any kind, multiple windows per process, docking, plugins, custom themes, translations, screen-reader support, window position memory.

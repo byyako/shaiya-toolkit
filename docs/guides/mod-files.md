@@ -12,6 +12,8 @@ Close the game before any step that changes the client.
 
 ## Browse and find
 
+![The Archive tab on a made-up demo client](../assets/screenshots/toolkit-archive.png)
+
 ```
 shaiya archive stats "@mymod"
 shaiya archive list "@mymod" "*.dds" --long
@@ -71,6 +73,8 @@ Before an edit or a build, the toolkit looks at each file and prints what it fin
 
 ## Or make a patch instead
 
+![The Patch builder filled from two pending changes of the Archive tab](../assets/screenshots/toolkit-patch-builder.png)
+
 When other people need the same change, or you want one file that bundles several edits, build a patch from your folder and apply it. A patch is also the easiest way to hand a modification to a friend:
 
 ```
@@ -79,6 +83,8 @@ shaiya patch apply "@mymod" ps0001.patch
 ```
 
 ## Undo
+
+![Apply & history lists the changes the toolkit made, with the state of their rollback](../assets/screenshots/toolkit-apply-history.png)
 
 ```
 shaiya patch history "@mymod"

@@ -22,6 +22,7 @@ egui = { workspace = true }
 rfd = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+miniz_oxide = { workspace = true }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 eframe = { workspace = true, features = ["x11", "wayland"] }

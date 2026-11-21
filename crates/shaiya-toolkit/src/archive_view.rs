@@ -1732,12 +1732,17 @@ impl ArchiveView {
         // header
         {
             let l = self.loaded.as_ref().expect("checked");
+            // under --shot a saved client is shown by its name, never by its path
+            let client_name = match &self.source {
+                Some(OpenSource::Client { name, .. }) => name.clone(),
+                _ => String::new(),
+            };
             let saf = match (l.saf_len, l.dead) {
                 (Some(n), Some(d)) => format!("data.saf {}, {} unused", human_size(n), human_size(d)),
                 _ => "data.saf not found".to_string(),
             };
             ui.horizontal_wrapped(|ui| {
-                ui.label(RichText::new(l.sah.parent().map(|p| p.display().to_string()).unwrap_or_default()).strong());
+                ui.label(RichText::new(l.sah.parent().map(|p| cx.shell.folder_text(&client_name, p)).unwrap_or_default()).strong());
                 ui.label(format!("data.sah v{}, {} ({} shadowed)  ·  {saf}", l.sah_version, shaiya_inspect::counted((l.visible) as u64, "file", "files"), l.rows.len() - l.visible));
                 if !has_saf {
                     ui.label(RichText::new("browsing the index only: preview, extract and changes are off").color(pal.warning));

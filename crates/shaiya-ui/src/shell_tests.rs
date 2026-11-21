@@ -311,3 +311,28 @@ fn a_sibling_next_to_the_program_is_found() {
     assert_eq!(crate::shell::sibling_in(&running, "shaiya-svmap-editor", Os::Mac), Some(bundle.join("shaiya-svmap-editor")));
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn a_tool_without_scenes_fails_a_shot_with_a_reason_and_opens_no_files() {
+    use crate::ShotOptions;
+    let mut h = Harness::<Dummy>::new(ShellOptions {
+        no_settings: true,
+        files: vec![PathBuf::from("a-folder")],
+        shot: Some(ShotOptions { out: PathBuf::from("never.png"), size: None, scene: "start".into() }),
+        ..Default::default()
+    });
+    let r = h.wait_scene(Duration::from_secs(30));
+    assert_eq!(r, Err("scene \"start\": this program has no screenshot scenes".to_string()));
+    assert!(h.app.app.opened.is_empty(), "the files of a --shot run are inputs of the scene, not dropped files");
+    assert_eq!(h.app.shell.shot_inputs(), [PathBuf::from("a-folder")]);
+    assert!(h.app.shell.hide_paths());
+}
+
+#[test]
+fn a_run_without_shot_shows_paths_and_has_no_shot_result() {
+    let mut h = Harness::<Dummy>::bare();
+    h.frames(3);
+    assert!(!h.app.shell.hide_paths());
+    assert!(h.app.shell.shot_inputs().is_empty());
+    assert_eq!(h.app.shot_result(), None);
+}

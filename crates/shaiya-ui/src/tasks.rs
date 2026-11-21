@@ -338,6 +338,11 @@ impl Tasks {
         TaskHandle { id, rx, cancel: handle_cancel, state: handle_state, finished: false }
     }
 
+    /// How many tasks were started so far (a counter that only grows; `--shot` uses it to see that nothing new was started).
+    pub fn spawned(&self) -> u64 {
+        self.next_id - 1
+    }
+
     /// Tasks that have not ended.
     pub fn running(&self) -> usize {
         self.states.iter().filter(|s| !s.is_finished()).count()

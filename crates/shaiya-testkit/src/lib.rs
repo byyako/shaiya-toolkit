@@ -1,6 +1,9 @@
 //! Test helpers for the Shaiya toolkit (dev-dependency only). Std only, independent of the code it tests: it writes the formats by hand,
 //! so it is an oracle, not a mirror. It returns bytes and paths, never toolkit types. No game data.
 
+pub mod demo;
+pub use demo::demo_client;
+
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
 

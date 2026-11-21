@@ -157,45 +157,9 @@ fn analyse(img: &egui::ColorImage) -> ShotResult {
     ShotResult { triangle_px: n }
 }
 
-/// PNG encoder (filter 0, zlib by miniz_oxide): enough for a screenshot, no image crate.
-pub(crate) fn png_encode(w: u32, h: u32, rgba: &[u8]) -> Vec<u8> {
-    fn crc(data: &[u8]) -> u32 {
-        let mut c = !0u32;
-        for &b in data {
-            c ^= b as u32;
-            for _ in 0..8 {
-                c = if c & 1 != 0 {
-                    0xEDB88320 ^ (c >> 1)
-                } else {
-                    c >> 1
-                };
-            }
-        }
-        !c
-    }
-    fn chunk(out: &mut Vec<u8>, kind: &[u8; 4], data: &[u8]) {
-        out.extend_from_slice(&(data.len() as u32).to_be_bytes());
-        let mut body = kind.to_vec();
-        body.extend_from_slice(data);
-        out.extend_from_slice(&body);
-        out.extend_from_slice(&crc(&body).to_be_bytes());
-    }
-    let mut raw = Vec::with_capacity((w as usize * 4 + 1) * h as usize);
-    for row in rgba.chunks(w as usize * 4) {
-        raw.push(0);
-        raw.extend_from_slice(row);
-    }
-    let z = miniz_oxide::deflate::compress_to_vec_zlib(&raw, 6);
-    let mut out = vec![0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A];
-    let mut ihdr = Vec::new();
-    ihdr.extend_from_slice(&w.to_be_bytes());
-    ihdr.extend_from_slice(&h.to_be_bytes());
-    ihdr.extend_from_slice(&[8, 6, 0, 0, 0]);
-    chunk(&mut out, b"IHDR", &ihdr);
-    chunk(&mut out, b"IDAT", &z);
-    chunk(&mut out, b"IEND", &[]);
-    out
-}
+/// PNG encoder: moved to `shaiya-ui` (the `--shot` flag of the shell uses it too).
+pub(crate) use shaiya_ui::png::png_encode;
+
 
 const EDITOR_USAGE: &str = "shaiya-svmap-editor [-h|--help] [-V|--version] [file.svmap ...] [--folder <Map dir>] [--client <client dir>] [--map <id> ...]
   headless: --shot <out.png> [--perf] [--layers +name,-name,...] [--view x,z,zoom] [--select section:index] [--size WxH]
@@ -469,13 +433,6 @@ fn main() -> eframe::Result {
 mod tests {
     use super::*;
 
-    #[test]
-    fn png_has_signature_and_chunks() {
-        let png = png_encode(2, 2, &[255u8; 16]);
-        assert_eq!(&png[..8], &[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A]);
-        assert!(png.windows(4).any(|w| w == b"IDAT"));
-        assert!(png.ends_with(&[0xAE, 0x42, 0x60, 0x82]));
-    }
 
     #[test]
     fn analyse_finds_saturated_pixels() {

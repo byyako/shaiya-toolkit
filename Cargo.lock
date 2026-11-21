@@ -2747,7 +2747,6 @@ dependencies = [
  "eframe",
  "egui",
  "egui-wgpu",
- "miniz_oxide 0.9.1",
  "rfd",
  "serde",
  "serde_json",
@@ -2804,6 +2803,7 @@ version = "0.3.2"
 dependencies = [
  "eframe",
  "egui",
+ "miniz_oxide 0.9.1",
  "rfd",
  "serde",
  "serde_json",
@@ -4123,6 +4123,7 @@ dependencies = [
  "miniz_oxide 0.9.1",
  "serde_json",
  "shaiya-core",
+ "shaiya-testkit",
  "zip",
 ]
 

@@ -14,11 +14,11 @@
 6. **GUI harness tests** (`shaiya-ui`, `shaiya-toolkit`): headless frames with synthetic input: the empty state, drop, tasks with progress, cancel, the theme switch, the command palette, settings written with `--data-dir` and read back, `--no-settings` writing nothing, the contrast of both palettes; in Shaiya Toolkit also adding a client, opening an archive, search, folder navigation, previews, queueing changes and applying them, the apply and roll-back flow, the patch builder, signing and verifying, the SData tab, and the Retry dialog when a file is open on Windows.
 7. **Editor tests** (`shaiya-svmap-editor`): headless harness tests of the app with synthetic input (windows, tools, undo, saving, the Help guide and its lints), plus the opt-in tests below that need `SVMAP_ORIGINALS` or `SHAIYA_CLIENT`. The Windows-only ones are `#[cfg(windows)]`.
 8. **Opt-in tests on your own client** (below).
-9. **Real-window smoke:** `shaiya-toolkit --smoke report.txt`, and `shaiya-svmap-editor --smoke out.png`.
+9. **Real-window smoke:** `shaiya-toolkit --smoke report.txt`, and `shaiya-svmap-editor --smoke out.png`. The Toolkit scenes of `--shot` are run headless by `crates/shaiya-toolkit/tests/shots.rs` (each scene leaves the expected tab and data and shows no path); `--shot` itself needs a desktop session ([how the pictures are retaken](docs-site.md#screenshots)).
 
 ## The testkit
 
-`shaiya-testkit` (dev-dependency, std only) returns bytes and paths, never toolkit types: `TempDir`, `SahBuilder` (writes `data.sah` / `data.saf` by hand from the documented layout, so it is an oracle and not a mirror of the code under test), `ZipBuilder` (writes a ZIP by hand with stored entries and entry names exactly as given, so `../x` and case-twin names can be tested without the `zip` crate), `tga_stub` and `bmp_stub` (tiny images for preview tests), `pe_stub`, `truncate`, `flip`, `env_client`, `env_test_clients`, `env_scratch`.
+`shaiya-testkit` (dev-dependency, std only) returns bytes and paths, never toolkit types: `TempDir`, `SahBuilder` (writes `data.sah` / `data.saf` by hand from the documented layout, so it is an oracle and not a mirror of the code under test), `demo_client(dir)` (a synthetic client folder of made-up files, marked by `shaiya-demo-client.txt`: an index with an `Item.SData`, a texture, a box `.smod` and a field `.wld`, `Version.ini`, loose files; `cargo xtask demo-client DIR` writes it for the screenshots), `ZipBuilder` (writes a ZIP by hand with stored entries and entry names exactly as given, so `../x` and case-twin names can be tested without the `zip` crate), `tga_stub` and `bmp_stub` (tiny images for preview tests), `pe_stub`, `truncate`, `flip`, `env_client`, `env_test_clients`, `env_scratch`.
 
 ## Opt-in variables
 

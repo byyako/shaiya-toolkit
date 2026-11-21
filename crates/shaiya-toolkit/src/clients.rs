@@ -490,11 +490,13 @@ impl ClientsUi {
     }
 }
 
-/// A one-line name for a path in the picker.
-pub fn picker_label(c: &Client, found: bool) -> String {
+/// A one-line name for a client in the picker: its name and where it is. `shown` is the folder as `Shell::folder_text` gives it (the
+/// path, or under `--shot` the name, so that the name is not repeated).
+pub fn picker_label(c: &Client, shown: &str, found: bool) -> String {
+    let line = if shown == c.name { c.name.clone() } else { format!("{}  ({shown})", c.name) };
     if found {
-        format!("{}  ({})", c.name, c.path)
+        line
     } else {
-        format!("{}  ({}) - not found", c.name, c.path)
+        format!("{line} - not found")
     }
 }

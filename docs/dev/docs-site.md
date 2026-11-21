@@ -14,6 +14,20 @@ Add every new page to `nav` in `mkdocs.yml`. A page that is not in `nav` fails t
 
 Screenshots live in `docs/assets/screenshots/`. Put them in with normal Markdown image syntax and a relative path, so they show on GitHub too. While a PNG is not committed, the hook leaves the image line out and logs it at INFO level, and the build still passes.
 
+### Retaking the Shaiya Toolkit pictures
+
+The `toolkit-*.png` pictures are taken by the program itself, from a synthetic client that holds made-up files only. Never take them from a real client: a picture must show no game art, no absolute path, no user name and no host name. Each PNG stays under the 1 MiB limit of `cargo xtask guard`.
+
+```
+cargo build -p shaiya-toolkit -p xtask
+cargo xtask demo-client SCRATCH/demo-archive
+shaiya-toolkit SCRATCH/demo-archive --shot docs/assets/screenshots/toolkit-archive.png --scene archive
+```
+
+Make a new demo folder for each scene (`demo-client` refuses a folder that is not empty): the `apply-history` scene makes one real change in the folder, so the next scene would show it. Scenes: `start`, `archive`, `patch-builder`, `apply-history`, `sdata-table`, `health`, `map-preview`, `model-preview`, `inspect`; the default window is 1280x800 points, `--size WxH` changes it. The run needs a desktop session with a graphics adapter (it opens the real window); it exits with 0 after writing the file, or with 1 and a reason, and gives up after two minutes. Under `--shot` a saved client is shown by its name, never by its path.
+
+Then open every PNG you took (in an image viewer, not only by its file name) and check it: no path, no user or host name, no game art, nothing from your own disk. Delete the demo folders afterwards. The CI Windows job also runs `--shot` once beside the smoke step, without blocking, to show that it still works.
+
 - PNG, at most 1 MiB (`cargo xtask guard` enforces this); aim for 300 KB or less, about 1600 px wide.
 - No game art: no textures, models or UI images from game files. Use a synthetic archive, or show file names only.
 - No personal paths or user names in the window.

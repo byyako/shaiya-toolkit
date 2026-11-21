@@ -4,9 +4,10 @@ Shaiya Toolkit is the desktop app (`shaiya-toolkit`): browse and edit a client's
 
 ```
 shaiya-toolkit [FILES...] [--data-dir DIR] [--no-settings] [--smoke [REPORT_FILE]]
+shaiya-toolkit DEMO_DIR --shot OUT.png [--size WxH] [--scene NAME]
 ```
 
-`--data-dir` keeps settings and the saved client folders in `DIR`; `--no-settings` writes no settings; `--smoke` opens the real window, renders five frames, writes `ok <adapter> <backend>` (or the error) to the report file and exits with 0 or 1, a quick check that the graphics stack works. Files named on the command line are handled like files dropped on the window. Only one copy of Shaiya Toolkit should change a client folder at a time, and not while the game is running from it.
+`--data-dir` keeps settings and the saved client folders in `DIR`; `--no-settings` writes no settings; `--smoke` opens the real window, renders five frames, writes `ok <adapter> <backend>` (or the error) to the report file and exits with 0 or 1, a quick check that the graphics stack works. `--shot` is for the screenshots of these docs and is described under [Screenshots](#screenshots). Files named on the command line are handled like files dropped on the window. Only one copy of Shaiya Toolkit should change a client folder at a time, and not while the game is running from it.
 
 ## Client folders
 
@@ -22,13 +23,25 @@ The toolbar picker lists your saved client folders (the same list as `shaiya cli
 
 With no client or archive open, the Archive tab shows a **Start** page: one line for each job and a button that opens the right place. **Add client folder...** asks for a folder and a name; **Open other archive...** opens any `data.sah` read-only; **Open Patch builder** and **Open Apply & history** switch to those tabs; **Open Publish** opens the Patch builder with its publish section open; **Open Health** opens the [Health window](#client-health) for the open client (also when it is no longer in the saved list), or the first saved client that is there. The page goes away as soon as an archive opens.
 
+![The Start page](../assets/screenshots/toolkit-start.png)
+
 ## Client health
 
 **File > Client health...** opens a window for one client: the open client, or else the first saved client that has a `data.sah` (pick another saved client at the top; **Check again** reads it again). It only looks: nothing in the client folder changes until you confirm a clean-up. It shows the index check (problems and warnings), the size of `data.saf` with its dead space and a **Compact...** link (the Archive tab's Compact confirmation when that client is the open one; otherwise it says to open the client first), the journals with a **Prune...** link (the Apply & history confirmation, again only when that client is the open one), a change that did not finish, `Version.ini` `StartUpdate=UPDATE_START` (explained, never edited), the leftovers with a checkbox each, and the earlier cleanup folders with **Put back...**. Only the leftovers that no undo, swap back or uninstall may need are ticked at first. **Clean up...** moves the ticked files into `shaiya-toolkit-backups/cleanup-<UTC>/` in the client folder and deletes none of them (an interrupted change is finished or discarded first by the same recovery every Toolkit write runs); **Put back...** moves them back and does not run that recovery. What each leftover is, what is never offered, and the command line: [Client health and clean-up](../guides/client-health.md).
 
+![The Client health window for the demo client](../assets/screenshots/toolkit-health.png)
+
 ## The six tabs
 
 **Archive.** The folder tree on the left, the file table in the middle, a preview on the right.
+
+![The Archive tab with a texture selected](../assets/screenshots/toolkit-archive.png)
+
+The map and model previews, on the synthetic demo client:
+
+![A map previewed as a grey top view](../assets/screenshots/toolkit-map-preview.png)
+
+![A model previewed as a textured picture](../assets/screenshots/toolkit-model-preview.png)
 
 - Search (Ctrl+F): plain text matches part of a path; text with `*`, `?` or `[` is a [glob pattern](shaiya.md#conventions-every-command-follows-them). Filters for file type and size; a toggle shows shadowed entries.
 - Preview: images (DDS, TGA, BMP) with a checkerboard, a `world/<id>.wld` map as a grey top view (north up) with its size and height range (a dungeon map names its `.dg` file and has no picture yet), an `.smod` model as the textured, lit picture of the SVMap Editor's Models window with "N modules, N triangles, N textures (N missing)" (`.3DC` and `.3DO` models stay hex and say "no preview (format not documented yet)"), text with a choice of encoding (code page 949 first), SData with its checksum state and a "Show plaintext" switch, anything else as hex (Ctrl+G jumps to an offset). Files with no `data.saf` next to the index open in an index-only mode: no previews, extraction or changes.
@@ -41,9 +54,13 @@ With no client or archive open, the Archive tab shows a **Start** page: one line
   - **Discard** drops the queue (asks first). Quitting with a non-empty queue asks too; "Save all" never writes a client by itself.
 - **Check** (and **Deep check**) reports problems, warnings and info grouped by code, with clickable paths; Copy report and Save report. **Compare...** diffs against another archive (added, removed, different, unknown) and can "Make patch from differences". **Compact...** rewrites `data.saf` without unused space; the confirmation says how many earlier changes can then no longer be rolled back.
 
+![The Patch builder filled from two pending changes](../assets/screenshots/toolkit-patch-builder.png)
+
 **Patch builder.** Three sources, or the differences of two archives, or the pending changes: a folder of archive files (paths inside it become archive paths), a folder of loose files (copied into the client folder, for example `game.exe`), and a removal list. With a client selected, the box "Leave out files that are already the same in NAME" (on by default) compares every archive file with the client's copy (same size and SHA-256, read-only) and leaves the identical ones out of the patch; the table shows them as "same, left out" and Build waits for the comparison. The contents table shows what each entry does to the selected client (new, replaces, not present, overwrites) and a problems column; Build is disabled while a name is invalid. Output name (suggested as the next `psNNNN.patch` from the client's `Version.ini`), timestamp, optional signing (a closed section "Signing (only for an updater that checks signatures)": a secret key file and CheckVersion; a patch is built unsigned unless you use it, and the result line says "unsigned" or "signed"). Warnings match the CLI (the original updater only fetches `psNNNN.patch`; `remove.txt` needs the toolkit or a replacement updater). The same checks list their findings under the table and mark the files they are about. After a build: Show folder, Apply to a client..., Verify.
 
 **Publish for the regular updater.** A section of the Patch builder (the Start page's **Publish a patch** opens it). Add one or more `psNNNN.patch` files (or **Use the patch just built**), choose a server folder, the layout (`Shaiya/UpdateVersion.ini` with `Shaiya/patch/`, or both in the folder), the CheckVersion (needed for a new `UpdateVersion.ini`) and optionally the UpdaterVersion, then **Check the plan**. The plan lists each patch (new, or already published as the same file), what the ini becomes (`PatchFileVersion 109 -> 110`), warnings (removals are ignored by the original updater) and the file checks; a refusal is shown in red and **Publish** stays disabled. A broken file (encrypted twice, or a failing checksum) asks once, **Publish anyway** or Cancel. **Publish** then shows the four confirmation rows; there is no undo, and the Undo row says which ini values to set back by hand. It writes only into the server folder (never into a client folder, which is refused), copies and reads back each patch, and writes the ini last. See [Version.ini and UpdateVersion.ini](../formats/version-ini.md).
+
+![Apply & history with one journaled change](../assets/screenshots/toolkit-apply-history.png)
 
 **Apply & history.** Add patches (drop or Add...; drag to reorder), see for each its structure check and signature state, set a public key and CheckVersion (stored per client; "Require a valid signature" turns on with a key), read the plan (added, replaced, removed, missing, loose files, bytes to append), and **Apply N patches...**. The lower half is the history of journals for this client with the rollback state and the reason when blocked (it is read again when you switch to the tab and when the window gets focus back, so a change made by the command line shows up); **Roll back...** undoes the newest possible one; **Prune...** keeps only the newest N.
 
@@ -51,7 +68,11 @@ With no client or archive open, the Archive tab shows a **Start** page: one line
 
 **Sign & verify.** Optional: the original updater does not check signatures. Generate a key pair (secret first; existing files are refused, never overwritten), sign patches or an updater executable (`.sig` next to each file; an existing one asks "Replace signature"), and verify signatures against a public key, optionally against a client (is the patch applied?). Shaiya Toolkit never stores key contents; the secret key's *path* is remembered only if you tick "Remember where my secret key is".
 
+![An SData table of made-up items](../assets/screenshots/toolkit-sdata-table.png)
+
 **SData.** Drop SData files or folders, or add all SData of the open client. The table shows encrypted or plain, checksum state and plaintext size. **View table** (or a double-click on a name) opens the selected file as a table: rows and columns (only the rows on screen are drawn), a filter box (every word must occur in the row, any letter case), the row count ("3 of 3,000 rows" while filtering), **Copy rows** (tab separated, with the column names), **Export CSV...** (the shown rows), a choice of code page for the names, and for `NpcQuest.SData` a choice between its tables. A file no layout fits is shown as hex under the sentence "No table layout fits this file (N bytes); shown as hex". The view is read only. For a layout read from a client's own loader it says the layout was chosen because it reads the whole file and was checked against the game's own loader only on the clients listed as verified in the [version matrix](../version-matrix.md), followed by "Loader-verified on: <clients>."; for a FIT-ONLY layout (one that reads the whole file but was not read from any client's loader) it says "FIT-ONLY: this layout reads the whole file, but it was not read from any client's own loader. Columns are named by position; values may be split wrongly." See [FIT-ONLY layouts](../formats/item-sdata.md#fit-only-layouts). The Archive tab's preview of an SData file has the same **View table** button. Decrypt to folder..., Encrypt to folder... (with "Match the originals' headers", which is what makes an unchanged file come out byte-identical) and Check. Outputs always go to a folder you choose; in-place conversion is a CLI feature.
+
+![The Inspect tab](../assets/screenshots/toolkit-inspect.png)
 
 **Inspect.** The file inspector: open or drop files, see what each is (SAH index, SAF data, SData encrypted or plain, patch, signature, `game.exe` build) with Name, Kind, Size and Details, the same text `shaiya info` prints. SHA-256 per row or for the selection runs in the background with progress in Activity and can be cancelled. Copy as text / Copy as JSON put the selected rows on the clipboard, handy for bug reports (never attach game files to a report; hashes are enough).
 
@@ -123,6 +144,10 @@ Menus: File, Edit, View, Tools, Help. **Tools** lists the command palette and th
 Korean and Chinese names need a font: Shaiya Toolkit looks for a system font at start (Malgun Gothic or Microsoft YaHei on Windows, Apple SD Gothic Neo or PingFang on macOS, Noto Sans CJK or a similar font on Linux). Name a font file in Preferences, or set `SHAIYA_TOOLKIT_FONT`, to use another one.
 
 Settings and logs: see [install.md](../install.md#portable-mode-and-where-settings-live). Journals and backups are kept in each client folder, see [undo and recovery](../guides/undo-and-recovery.md).
+
+## Screenshots
+
+`shaiya-toolkit DEMO_DIR --shot OUT.png [--size WxH] [--scene NAME]` opens the real window on a synthetic demo client, waits until the background work is idle, saves a PNG of the window to `OUT.png` and exits with 0, or with 1 and a reason on standard error. `--size` is the window size in points (default 1280x800; the PNG has the display's pixels). `--shot` reads and writes no settings unless `--data-dir` is given, and a saved client folder is then shown by its name, never by its path. `DEMO_DIR` is made by `cargo xtask demo-client DIR`: a folder of made-up files only, marked by `shaiya-demo-client.txt`; a scene refuses any folder without that marker, because `apply-history` makes one real change in the folder it is given. Scenes: `start`, `archive`, `patch-builder`, `apply-history`, `sdata-table`, `health`, `map-preview`, `model-preview`, `inspect`. How the pictures of these docs are retaken: [Editing these docs](../dev/docs-site.md#screenshots).
 
 ## Left out on purpose
 

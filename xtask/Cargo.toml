@@ -16,3 +16,4 @@ shaiya-core = { workspace = true }
 miniz_oxide = { workspace = true }
 serde_json = { workspace = true }
 zip = { workspace = true }
+shaiya-testkit = { workspace = true }

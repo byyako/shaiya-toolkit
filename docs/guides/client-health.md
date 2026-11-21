@@ -7,6 +7,8 @@ What the toolkit can tell you about a client folder, which leftover files it fin
 - Shaiya Toolkit: **File > Client health...**, the **Health...** button of a client in **File > Manage client folders...**, the **Check a client folder's health** row of the Start page, or the command palette. The window opens for the open client (or, when none is open, the first saved client with a `data.sah`), has a picker for the saved clients, and **Check again**.
 - Command line: `shaiya clients health NAME|DIR` and `shaiya clients clean` ([the commands](../tools/shaiya.md#shaiya-clients)).
 
+![The Client health window for a made-up demo client](../assets/screenshots/toolkit-health.png)
+
 ## What it reports
 
 | Line | What it says |

@@ -14,7 +14,9 @@ pub mod palette;
 pub mod recovery;
 pub mod reveal;
 pub mod settings;
+pub mod png;
 mod shell;
+pub mod shot;
 pub mod tasks;
 pub mod theme;
 pub mod undo;
@@ -24,7 +26,7 @@ pub mod testing;
 #[cfg(test)]
 mod shell_tests;
 
-pub use args::ShellOptions;
+pub use args::{ShellOptions, ShotOptions};
 pub use settings::{Client, Shared};
 pub use shell::{run, sibling_path, Confirm, Shell, ShellApp};
 pub use tasks::{TaskHandle, TaskOutcome, TaskSpec, Tasks};
@@ -128,4 +130,15 @@ pub trait ToolApp: 'static {
     fn save(&mut self, _cx: &mut Cx<'_, Self::Settings>) {}
     fn save_as(&mut self, _cx: &mut Cx<'_, Self::Settings>) {}
     fn close_document(&mut self, _cx: &mut Cx<'_, Self::Settings>) {}
+    /// `--shot`: shows the named scene (a tab, a window, a selected file). Called once, on the first frame, with the folders and files named
+    /// on the command line in [`Shell::shot_inputs`]. An unknown scene, or one that cannot be set up, is an `Err` with the reason (the run
+    /// then exits with 1). A tool without scenes keeps this default.
+    fn shot_scene(&mut self, _name: &str, _cx: &mut Cx<'_, Self::Settings>) -> Result<(), String> {
+        Err("this program has no screenshot scenes".to_string())
+    }
+    /// `--shot`: called each time the background work is idle after the scene was set up. A scene that needs more steps (open a client, then
+    /// select a file in it) takes the next one and returns true; false means the scene is ready to be photographed.
+    fn shot_step(&mut self, _cx: &mut Cx<'_, Self::Settings>) -> bool {
+        false
+    }
 }

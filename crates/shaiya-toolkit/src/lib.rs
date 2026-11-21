@@ -14,6 +14,7 @@ pub mod preview;
 pub mod publish_form;
 pub mod sdata_tab;
 pub mod sdata_table;
+pub mod shot;
 pub mod sign_tab;
 pub mod start;
 
@@ -155,6 +156,8 @@ pub struct ToolkitApp {
     was_focused: bool,
     /// The SData table window, when one is open.
     pub table: Option<SDataTableView>,
+    /// The `--shot` scene that is being set up (see `shot.rs`).
+    pub(crate) scene: Option<shot::SceneRun>,
 }
 
 type ToolkitCx<'a> = Cx<'a, ToolkitSettings>;
@@ -427,7 +430,7 @@ impl ToolkitApp {
             egui::ComboBox::from_id_salt("toolkit-client").selected_text(shown).width(220.0).show_ui(ui, |ui| {
                 for c in &clients {
                     let found = has_sah(Path::new(&c.path));
-                    let label = clients::picker_label(c, found);
+                    let label = clients::picker_label(c, &cx.shell.folder_text(&c.name, Path::new(&c.path)), found);
                     let text = if found { RichText::new(label) } else { RichText::new(label).color(pal.weak) };
                     if ui.add_enabled(found, egui::Button::selectable(current.as_deref() == Some(c.name.as_str()), text)).clicked() {
                         act = Some(A::Select(c.name.clone()));
@@ -553,6 +556,7 @@ impl ToolApp for ToolkitApp {
             folder_prompt: None,
             was_focused: true,
             table: None,
+            scene: None,
         };
         app.archive.show_shadowed = cx.settings.show_shadowed;
         // the last used client opens at start, as a task; a client whose folder is gone is not opened
@@ -769,6 +773,14 @@ impl ToolApp for ToolkitApp {
         }
         self.set_tab(Tab::Archive, cx);
         Err("apply or discard the pending changes in the Archive tab".to_string())
+    }
+
+    fn shot_scene(&mut self, name: &str, cx: &mut ToolkitCx<'_>) -> Result<(), String> {
+        self.begin_scene(name, cx)
+    }
+
+    fn shot_step(&mut self, cx: &mut ToolkitCx<'_>) -> bool {
+        self.scene_step(cx)
     }
 
     fn prefs(&mut self, ui: &mut egui::Ui, cx: &mut ToolkitCx<'_>) {

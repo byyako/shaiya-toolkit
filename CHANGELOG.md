@@ -4,6 +4,19 @@ All notable changes are listed here, newest first. The format follows [Keep a Ch
 
 ## [Unreleased]
 
+### Shaiya Toolkit
+
+- New `--shot OUT.png [--size WxH] [--scene NAME]` flag: it opens the real window, sets up a scene, waits until the background work is idle, saves a PNG of the window and exits with 0, or with 1 and a reason on standard error. It reads and writes no settings unless `--data-dir` is given, and shows a saved client folder by its name instead of its path. The scenes (`start`, `archive`, `patch-builder`, `apply-history`, `sdata-table`, `health`, `map-preview`, `model-preview`, `inspect`) work on a synthetic demo client made by `cargo xtask demo-client DIR`; a scene refuses a folder without the demo marker `shaiya-demo-client.txt`, because `apply-history` makes one real change in it.
+
+### Libraries
+
+- `shaiya-ui`: the shell flags gain `--shot`, `--size` and `--scene` (`ShellOptions::shot`, `ShotOptions`); new `ToolApp::shot_scene` and `ToolApp::shot_step` (default: no scenes); new `Shell::hide_paths`, `Shell::folder_text` and `Shell::shot_inputs`; new `png` module (`png_encode`, moved from the SVMap Editor, which calls it) and `shot` module (`Idle`, `folder_label`); `Harness::wait_scene` for the tests; `Tasks::spawned`. `shaiya-ui` now depends on `miniz_oxide`, which the editor used before.
+- `shaiya-testkit`: new `demo_client(dir)` and the pieces it is made of (`demo` module). It is a dev-only crate and is not published.
+
+### Documentation
+
+- The Shaiya Toolkit pages show pictures of the demo client (`docs/assets/screenshots/toolkit-*.png`: Start, Archive, map and model previews, Patch builder, Apply & history, SData table, Client health, Inspect); [Editing these docs](docs/dev/docs-site.md#screenshots) says how to retake them.
+
 ## [0.3.2] - 2026-11-20
 
 ### Shaiya Toolkit

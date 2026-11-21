@@ -58,6 +58,7 @@ impl<A: ToolApp> Harness<A> {
         let ctx = egui::Context::default();
         let mut app = ShellApp::<A>::new(ctx.clone(), &opts, None);
         app.shell.set_dialogs_enabled(false);
+        app.shot_headless();
         Harness { ctx, app, t: 0.0, text: String::new(), copied: Vec::new(), opened_urls: Vec::new(), size: Vec2::new(1280.0, 800.0) }
     }
 
@@ -130,6 +131,16 @@ impl<A: ToolApp> Harness<A> {
     /// Every URL the app asked the browser to open in the last frame.
     pub fn opened_urls(&self) -> &[String] {
         &self.opened_urls
+    }
+
+    /// For a harness built with `ShellOptions { shot: Some(..), .. }`: runs frames until the scene is set up and the background work is idle (the
+    /// moment the real `--shot` would take its screenshot). `Err` is the scene's failure or a timeout.
+    pub fn wait_scene(&mut self, timeout: Duration) -> Result<(), String> {
+        self.wait_until(timeout, |h| h.app.shot_result().is_some());
+        match self.app.shot_result() {
+            Some(r) => r,
+            None => Err("the scene did not settle in time".to_string()),
+        }
     }
 
     /// Runs frames (sleeping a little between them) until `done` returns true or the timeout passes. Returns whether it was reached.
