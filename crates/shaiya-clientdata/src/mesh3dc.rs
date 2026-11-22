@@ -148,7 +148,8 @@ impl C3dc {
     }
 
     /// Like [`C3dc::to_bytes`], but refuses a mesh that does not fit the file (a layout that does not match the meshes, a count above
-    /// what the reader accepts): it never writes bytes the reader would refuse or read differently.
+    /// what the reader accepts). The bytes are read back with [`C3dc::parse`] and refused unless they read with the same layout, so a
+    /// mesh that another layout also reads (or that the reader refuses) is an error, never bytes read differently.
     pub fn try_to_bytes(&self) -> Result<Vec<u8>> {
         let bad = |what: String| Error::Format { file: "mesh".into(), what, offset: 0 };
         let (count, with_bones) = match self.layout {
@@ -203,7 +204,11 @@ impl C3dc {
                 }
             }
         }
-        Ok(d)
+        match C3dc::parse(&d, "mesh") {
+            Ok(back) if back.layout == self.layout => Ok(d),
+            Ok(back) => Err(bad(format!("the bytes read back as {:?}, not {:?}", back.layout, self.layout))),
+            Err(e) => Err(bad(format!("the bytes do not read back: {e}"))),
+        }
     }
 
     /// The first mesh's texture name: cp949 text up to the NUL.
@@ -315,8 +320,26 @@ mod tests {
 
     #[test]
     fn a_none_error_is_the_skinned_one() {
-        let e = parse(&[1, 0, 0, 0]).unwrap_err().to_string();
-        assert!(e.contains("t.3dc"), "{e}");
+        // a cloak with one byte too many: the skinned and the cloak attempts fail differently
+        let mut d = cloak();
+        d.push(0);
+        let skinned_err = whole(&d, "t.3dc", 1, true).unwrap_err().to_string();
+        let cloak_err = whole(&d, "t.3dc", 1, false).unwrap_err().to_string();
+        assert_ne!(skinned_err, cloak_err);
+        assert_eq!(parse(&d).unwrap_err().to_string(), skinned_err);
+    }
+
+    #[test]
+    fn try_to_bytes_refuses_a_mesh_another_layout_also_reads() {
+        // skinned, empty texture, one bone whose element 10 holds bits 18, two vertices, no faces: also reads as a cloak
+        let mut bone = [0f32; 16];
+        bone[10] = f32::from_bits(18);
+        let v = parse(&skinned()).unwrap().meshes[0].vertices[0].clone();
+        let m = C3dcMesh { texture: Vec::new(), bones: vec![bone], vertices: vec![v.clone(), v], faces: Vec::new() };
+        let c = C3dc { layout: C3dcLayout::Skinned, meshes: vec![m] };
+        assert!(c.try_to_bytes().is_err());
+        // an ordinary mesh still writes
+        assert_eq!(parse(&skinned()).unwrap().try_to_bytes().unwrap(), skinned());
     }
 
     #[test]
