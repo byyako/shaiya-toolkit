@@ -75,6 +75,6 @@ These extensions are in the archives of the nine matrix clients and no page cove
 
 Two extensions are only partly covered. `.TXT` (35 files in `us-108`, 33 to 567): `world/<id>.txt` is [area-txt.md](area-txt.md) and `sysmsg-uni.txt` is [sysmsg.md](sysmsg.md); no other text file has a page. `.SData` (8 files in `us-108`, 8 to 71): the four tables above and the [wrapper](sdata-wrapper.md) are documented; every other table is shown as hex, except NpcSkill, which a skill layout reads ([version matrix](../version-matrix.md)).
 
-The extensions that have a page are `.DDS` and `.TGA` ([textures.md](textures.md)), `.SMOD`, `.WLD`, `.DG` and `.ZON` (first table). `.SVMAP` is the server's file ([svmap.md](svmap.md)); four matrix clients also hold some in their archives (56, 5, 98 and 16 files).
+The extensions that have a page are `.DDS` and `.TGA` ([textures.md](textures.md)), `.SMOD`, `.WLD`, `.DG`, `.ZON`, `.ANI`, `.3DC`, `.VANI`, `.MANI`, `.3DO` and `.3DE` (first table). `.SVMAP` is the server's file ([svmap.md](svmap.md)); four matrix clients also hold some in their archives (56, 5, 98 and 16 files).
 
 A format moves from this table to the first one when it has a page with a "Verified on" paragraph and the toolkit reads it. [Editing these docs](../dev/docs-site.md) says how pages are added.

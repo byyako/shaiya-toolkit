@@ -10,7 +10,7 @@ shaiya [GLOBAL FLAGS] <COMMAND> [ARGS]
 | [`archive`](#shaiya-archive) | List, check, extract, edit, compare, pack, swap `data.sah` / `data.saf` |
 | [`patch`](#shaiya-patch) | Build, verify, apply and roll back `psNNNN.patch` files; sign them |
 | [`sdata`](#shaiya-sdata) | Describe, check, decrypt and encrypt SData files; show a table as CSV or JSON |
-| [`anim`](#shaiya-anim) | Describe and check `.ANI` and `.3DC` files; compare a candidate `.ANI`'s skeleton with the file it replaces |
+| [`anim`](#shaiya-anim) | Describe `.ANI`, `.3DC`, `.VANI`, `.MANI`, `.3DO` and `.3DE` files and check `.ANI` files; compare a candidate `.ANI`'s skeleton with the file it replaces |
 | [`svmap`](#shaiya-svmap) | Server map files (`.svmap`): check, dump, build, round trip, compare; check a client's `.wld` files; spawn report; bulk-edit dry run |
 | [`clients`](#shaiya-clients) | The saved "my client folders" list (`@name`) |
 | [`version`](#shaiya-version) | Version, git revision, target |
@@ -354,7 +354,7 @@ Any `ARCHIVE` or `CLIENT` argument may then be `@name` (names are matched case-i
 ## `shaiya version`
 
 ```
-shaiya 0.3.2 (git 0123456789ab, x86_64-pc-windows-msvc)
+shaiya 0.4.0 (git 0123456789ab, x86_64-pc-windows-msvc)
 ```
 
-With `--json`: `{"version": "0.3.2", "git": "0123456789ab", "target": "x86_64-pc-windows-msvc"}`. `shaiya -V` prints the same line.
+With `--json`: `{"version": "0.4.0", "git": "0123456789ab", "target": "x86_64-pc-windows-msvc"}`. `shaiya -V` prints the same line.

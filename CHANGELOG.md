@@ -2,7 +2,7 @@
 
 All notable changes are listed here, newest first. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). One version number covers every program and library of the workspace.
 
-## [Unreleased]
+## [0.4.0] - 2026-11-22
 
 ### Shaiya Toolkit
 
@@ -22,13 +22,22 @@ All notable changes are listed here, newest first. The format follows [Keep a Ch
 - `shaiya-clientdata`: `mesh3dc::C3dc` reads a `.3DC` skinned mesh in its three layouts (skinned, skinned plus a second mesh, cloak without a bone block) to the last byte, refuses a file that two layouts read, and writes it back byte for byte (floats, the vertex `pad` field and the raw texture-name bytes are kept). On US EP4.5, all 2,431 `.3DC` files read and write back byte for byte; the eight other matrix clients are index only (files counted, none read).
 - `shaiya-clientdata`: pose and skinning for the preview. `anim::locals` and `anim::pose` compute the bone matrices of a `.ANI` at a time (row-vector math, slerp between rotation keys, linear translations, end keys held), `render::skin` poses a `.3DC` mesh by the vertex weights (a vertex that names a bone the animation lacks keeps its rest position and is counted), `render::c3dc_picture` draws a mesh at rest and `render::anim_frames` pre-renders up to 241 frames with one fixed view, a cancel check per frame and the bone origins for an overlay. `render::render_picture_at` takes the picture scale; `render_picture` gives the same pixels as before. An approximation of the game's playback, validated offline.
 - `shaiya-clientdata`: `vani::Vani` reads a `.VANI` vertex-animated model (items, steps, per-step vertices, the `frame_ms` field, whose meaning is inferred) to the last byte and writes it back byte for byte; a collision flag other than 0 or 1 is refused, and the collision branch is read from a synthetic file only (no stock file uses it). `mani::Mani` reads a `.MANI` (exactly 108 bytes, any other size is refused) as raw bytes with 20 typed fields whose meanings are all inferred and were not checked in the game. On US EP4.5, all 66 `.VANI` and all 23 `.MANI` files read and write back byte for byte, and every `.MANI` the nine matrix indexes list is 108 bytes; the eight other matrix clients are index only (files counted, none read). The Archive tab and `shaiya anim info` show them.
-- Version matrix: new rows for `.VANI` and `.MANI` (index counts for the nine clients, reads and writes back on US EP4.5, every listed `.MANI` is 108 bytes); format pages `vani.md` and `mani.md`.
 - `shaiya-clientdata`: `mesh3do::Mesh3do` reads a `.3DO` mesh (vertices, faces, an inferred frame rate and optional vertex frames) to the last byte and writes it back byte for byte; `mesh3de::Mesh3de` reads a `.3DE` effect mesh in its two layouts (with a frame block, or ending after the faces), accepts a file only when exactly one layout reads it, refuses any other file with "does not follow the .3DE layout the toolkit reads", and writes it back byte for byte. Floats and texture-name bytes are kept exactly; the meanings of the frame fields are inferred and were not checked in the game. On US EP4.5, all 271 `.3DO` files (one has frames: 11 at 20 per second) read and write back byte for byte, and 467 of the 469 `.3DE` files do; the other 2 (`004.3de`, `Deathknight007.3DE`) are refused and named on the format page. The eight other matrix clients are index only (files counted, none read). The Archive tab and `shaiya anim info` show them.
 - `shaiya-clientdata`: `render::morph_frames` pre-renders a model whose vertex positions change per frame (a `.VANI`'s steps, a `.3DO`'s frames; at most 241 pictures, one fixed view, textures asked once per name, a cancel check per picture) and `render::plain_mesh_picture` draws one mesh in plain grey.
-- Version matrix: new rows for `.3DO` and `.3DE` (index counts for the nine clients, reads and writes back on US EP4.5); format pages `3do.md` and `3de.md`; the two extensions are no longer listed as not documented.
 - `shaiya-testkit`: `anim` builds synthetic `.ANI` bytes and synthetic `.3DC` bytes (a skinned mesh, a cloak, a small arm mesh) without using the reader; `env_client_original` names the optional `SHAIYA_CLIENT_ORIGINAL` archive.
 - `shaiya-testkit`: the demo client also holds a made-up three-bone arm animation (`Demo/ANI/demo_wave.ANI`) and its mesh (`Demo/3DC/demo_arm.3DC`), built from `anim`; the screenshot scene `anim-preview` shows the Archive tab's player on it, paused at key 30. The documentation pictures were retaken on the demo client (all 10 pictures).
 - `cargo xtask guard` also refuses tracked files ending `.ani`, `.3dc`, `.3do`, `.3de`, `.vani`, `.mani` and `.smod`.
+
+### Fixed
+
+- A `.3DC` or `.3DO` whose bytes happened to look like text was shown as Text with no note; every `.3DC`, `.ANI`, `.VANI`, `.MANI`, `.3DO` and `.3DE` that does not read to the last byte now shows the reader's error and its bytes as hex.
+- The Archive tab no longer says "no preview (format not documented yet)" for `.3DC` or `.3DO`: both formats are documented and previewed.
+
+### Documentation
+
+- New guide [Replacing an animation](docs/guides/replacing-an-animation.md) (find the target, the skeleton rule, `shaiya anim compare`, put it in, look at it, undo) and format pages for [`.ANI`](docs/formats/ani.md), [`.3DC`](docs/formats/3dc.md), [`.VANI`](docs/formats/vani.md), [`.MANI`](docs/formats/mani.md), [`.3DO`](docs/formats/3do.md) and [`.3DE`](docs/formats/3de.md). Every page has a "Verified on" paragraph: files were read on US EP4.5 only, the eight other matrix clients have their index only (files counted, none read), and everything is validated offline. The only in-game observation is basic playback of one replaced victory emote on the `huwm` rig (the human male Fighter) on US EP4.5; everything else is validated offline only.
+- The [version matrix](docs/version-matrix.md) has new rows for the `.ANI`, `.3DC`, `.VANI`, `.MANI`, `.3DO` and `.3DE` counts and reads and for the animation preview; the formats overview lists the six formats as documented, and the "Known, not yet documented" table no longer lists them. The Shaiya Toolkit and `shaiya` pages, Mod files, Make a patch and the Archive tab docs describe the previews, `shaiya anim` and the new checks.
+- The Shaiya Toolkit pictures were retaken (all 10) and a new one shows the animation player (`docs/assets/screenshots/toolkit-anim-preview.png`).
 
 ## [0.3.2] - 2026-11-20
 
