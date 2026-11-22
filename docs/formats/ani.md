@@ -49,6 +49,10 @@ A negative key is not an error: 269 tracks start at key -1, all in the 7 files w
 
 Between a candidate and the file it replaces, `rig_check` compares the bone count, every parent and every reference matrix as raw bits (the skeleton), and separately the first field. A candidate passes when it has the same skeleton, the same first field (inferred to be the start key; not checked in the game) and no validation error.
 
+### Before a file goes in
+
+The Archive tab's Add and Replace checks and `shaiya archive add|replace` read a candidate `.ani` and report `anim-unreadable` (does not read to the last byte), `anim-invalid` (validation errors) and, when the client's archive already holds an animation at that path that reads, `anim-rig-differs` (its skeleton differs) and `anim-first-field-differs` (inferred: the start key; not checked in the game). The Toolkit asks before queueing only for `anim-rig-differs`; the command line prints warnings and keeps its exit code. A patch build has no client copy, so it has no rig check. See [Checks before files go in](../tools/shaiya.md#checks-before-files-go-in).
+
 ## How the toolkit poses a mesh
 
 The pose is the toolkit's own statement of the math, an approximation of the game's playback, validated offline (nothing here was checked in the game). Matrices are 4 x 4, stored row by row, used with row vectors (`v' = v * M`), with the translation in the last row; `A * B` means "A, then B".

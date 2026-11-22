@@ -144,3 +144,25 @@ fn archive_add_warns_about_broken_new_files() {
     got.sort();
     assert_eq!(got, ["empty-file", "sdata-crc-bad", "sdata-double-encrypted", "texture-unreadable"]);
 }
+
+#[test]
+fn archive_replace_with_another_skeleton_warns_and_still_exits_0() {
+    use shaiya_testkit::anim::{ani_bytes, arm_ani, translation_bits, BoneSpec};
+    use shaiya_testkit::SahBuilder;
+    let w = world();
+    let client = w.tmp.path().join("anim-client");
+    std::fs::create_dir_all(&client).unwrap();
+    SahBuilder::new(0).file(b"Character/Human/ANI/huwm_117_test.ANI", &arm_ani(60)).write_to(&client);
+    let name = "Character/Human/ANI/huwm_117_test.ANI";
+    let sh_ok = sh(&w.data, &["clients", "add", "anim", p(&client)]);
+    assert_eq!(code(&sh_ok), 0, "{}", err(&sh_ok));
+    let one_bone = ani_bytes(0, 10, &[BoneSpec { parent: -1, matrix: translation_bits(0.0, 0.0, 0.0), rot: Vec::new(), trans: Vec::new() }]);
+    let cand = w.tmp.path().join("cand.ANI");
+    write(&cand, &one_bone);
+    let o = sh(&w.data, &["archive", "replace", "@anim", p(&cand), "--as", name, "--in-place", "--json"]);
+    assert_eq!(code(&o), 0, "a finding never changes the exit code: {}", err(&o));
+    assert!(err(&o).contains("[anim-rig-differs]") && err(&o).contains("bone count 1 instead of 3"), "{}", err(&o));
+    assert_eq!(codes(&json(&o)), ["anim-rig-differs"]);
+    assert!(json(&o)["journal"].is_string(), "the journal is written: {}", out(&o));
+    assert_eq!(sh(&w.data, &["archive", "cat", "@anim", name]).stdout, one_bone, "the replacement went in");
+}

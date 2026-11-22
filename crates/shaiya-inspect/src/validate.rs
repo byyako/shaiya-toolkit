@@ -1,11 +1,14 @@
 //! Checks on one file before it goes into an archive or a patch. Findings are advice: they warn and never refuse anything.
 //!
 //! What is checked, and only that: the SEED wrapper of `.SData` files (checksum, a second wrapper inside the first, plain versus
-//! encrypted compared with the copy already in the client), whether the toolkit's own reader accepts a `.dds`/`.tga` header, and empty
-//! files. Nothing here parses an SData layout, so no SData file can be reported for its contents.
+//! encrypted compared with the copy already in the client), whether the toolkit's own reader accepts a `.dds`/`.tga` header, empty
+//! files, and `.ani` animations: whether the toolkit reads the file to its last byte, whether it passes the animation checks, and (when the
+//! client's copy is given and reads) whether its skeleton and first field match that copy. Nothing here parses an SData layout, so no
+//! SData file can be reported for its contents. The rig check needs the client's copy at the same path, so patches are not rig-checked.
 
 use serde::Serialize;
 use shaiya_archive::edit::Source;
+use shaiya_clientdata::anim::{self, Ani, RigDiff, Severity};
 use shaiya_clientdata::texture;
 use shaiya_core::Job;
 use shaiya_patch::BuildInput;
@@ -19,10 +22,17 @@ pub mod code {
     pub const SDATA_STATE_DIFFERS: &str = "sdata-state-differs";
     pub const TEXTURE_UNREADABLE: &str = "texture-unreadable";
     pub const EMPTY_FILE: &str = "empty-file";
+    pub const ANIM_UNREADABLE: &str = "anim-unreadable";
+    pub const ANIM_INVALID: &str = "anim-invalid";
+    /// The skeleton (bone count, parents, reference matrices) differs from the file it replaces.
+    pub const ANIM_RIG_DIFFERS: &str = "anim-rig-differs";
+    /// The first field (inferred: the start key) differs from the file it replaces; only a warning.
+    pub const ANIM_FIRST_FIELD_DIFFERS: &str = "anim-first-field-differs";
     /// Not a property of a file: the Toolkit's check did not finish, so the files are unchecked (it asks like a broken file).
     pub const CHECK_INCOMPLETE: &str = "check-incomplete";
     /// Every code, for tests and documentation.
-    pub const ALL: [&str; 5] = [SDATA_DOUBLE_ENCRYPTED, SDATA_CRC_BAD, SDATA_STATE_DIFFERS, TEXTURE_UNREADABLE, EMPTY_FILE];
+    pub const ALL: [&str; 9] =
+        [SDATA_DOUBLE_ENCRYPTED, SDATA_CRC_BAD, SDATA_STATE_DIFFERS, TEXTURE_UNREADABLE, EMPTY_FILE, ANIM_UNREADABLE, ANIM_INVALID, ANIM_RIG_DIFFERS, ANIM_FIRST_FIELD_DIFFERS];
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -34,9 +44,9 @@ pub struct Finding {
 }
 
 impl Finding {
-    /// The findings the Toolkit asks about once ("Add anyway" / Cancel) before it queues or builds: a double wrapper, a bad checksum, and a check that did not finish; every other finding only warns.
+    /// The findings the Toolkit asks about once ("Add anyway" / Cancel) before it queues or builds: a double wrapper, a bad checksum, an animation whose skeleton differs from the file it replaces, and a check that did not finish; every other finding only warns.
     pub fn asks(&self) -> bool {
-        self.code == code::SDATA_DOUBLE_ENCRYPTED || self.code == code::SDATA_CRC_BAD || self.code == code::CHECK_INCOMPLETE
+        self.code == code::SDATA_DOUBLE_ENCRYPTED || self.code == code::SDATA_CRC_BAD || self.code == code::ANIM_RIG_DIFFERS || self.code == code::CHECK_INCOMPLETE
     }
 
     /// The finding that stands in for a check that did not finish (cancelled, failed or crashed): the files are unchecked, so the
@@ -67,13 +77,17 @@ pub fn is_texture_name(name: &str) -> bool {
     ext_is(name, "dds") || ext_is(name, "tga")
 }
 
+pub fn is_anim_name(name: &str) -> bool {
+    ext_is(name, "ani")
+}
+
 /// Whether [`check_file`] has anything to say about a file of this name that needs its bytes (so callers can skip reading the rest).
 pub fn wants_bytes(name: &str) -> bool {
-    is_sdata_name(name) || is_texture_name(name)
+    is_sdata_name(name) || is_texture_name(name) || is_anim_name(name)
 }
 
 /// Checks one file. `bytes` is the whole file as it would go in; `client_copy` is the file of the same name already in the client
-/// (the whole file, SData only matters), when there is one. Returns nothing for a file that looks fine.
+/// (the whole file; it matters for SData and `.ani` files), when there is one. Returns nothing for a file that looks fine.
 pub fn check_file(name: &str, bytes: &[u8], client_copy: Option<&[u8]>) -> Vec<Finding> {
     let mut out = Vec::new();
     let mut add = |code: &'static str, message: String| out.push(Finding { path: name.to_string(), code, message });
@@ -110,8 +124,53 @@ pub fn check_file(name: &str, bytes: &[u8], client_copy: Option<&[u8]>) -> Vec<F
         if let Err(e) = texture::decode(bytes, name) {
             add(code::TEXTURE_UNREADABLE, format!("the toolkit cannot read this texture ({e}); the game may still accept it"));
         }
+    } else if is_anim_name(name) {
+        match Ani::parse(bytes, name) {
+            Err(e) => add(code::ANIM_UNREADABLE, format!("the toolkit cannot read this animation ({e}); the game may still accept it")),
+            Ok(ani) => {
+                let errors: Vec<_> = anim::validate(&ani).into_iter().filter(|i| i.severity == Severity::Error).collect();
+                if let Some(first) = errors.first() {
+                    let n = errors.len();
+                    let at = first.bone.map(|b| format!(" at bone {b}")).unwrap_or_default();
+                    add(code::ANIM_INVALID, format!("{n} validation error{}, first: {}{at}", if n == 1 { "" } else { "s" }, first.code));
+                }
+                let target = client_copy.filter(|c| !c.is_empty()).and_then(|c| Ani::parse(c, name).ok());
+                if let Some(target) = target {
+                    let diffs = anim::rig_check(&ani, &target);
+                    if !anim::same_skeleton(&diffs) {
+                        add(
+                            code::ANIM_RIG_DIFFERS,
+                            format!(
+                                "its skeleton differs from the file it replaces ({}); meshes are matched to bones by index, so a replacement must keep the skeleton of the file it replaces",
+                                skeleton_summary(&diffs)
+                            ),
+                        );
+                    }
+                    if let Some(RigDiff::FirstField { candidate, target }) = diffs.iter().find(|d| !d.is_skeleton()) {
+                        add(code::ANIM_FIRST_FIELD_DIFFERS, format!("its first field is {candidate}, the file it replaces has {target} (inferred: the start key; not checked in the game)"));
+                    }
+                }
+            }
+        }
     }
     out
+}
+
+/// "bone count 56 instead of 65; 3 parents; 12 reference matrices": the skeleton differences, counted.
+fn skeleton_summary(diffs: &[RigDiff]) -> String {
+    let mut parts = Vec::new();
+    if let Some(RigDiff::BoneCount { candidate, target }) = diffs.iter().find(|d| matches!(d, RigDiff::BoneCount { .. })) {
+        parts.push(format!("bone count {candidate} instead of {target}"));
+    }
+    let parents = diffs.iter().filter(|d| matches!(d, RigDiff::Parent { .. })).count();
+    if parents > 0 {
+        parts.push(format!("{parents} parent{}", if parents == 1 { "" } else { "s" }));
+    }
+    let matrices = diffs.iter().filter(|d| matches!(d, RigDiff::Matrix { .. })).count();
+    if matrices > 0 {
+        parts.push(format!("{matrices} reference matri{}", if matrices == 1 { "x" } else { "ces" }));
+    }
+    parts.join("; ")
 }
 
 /// Files larger than this are not read for the checks (a texture or SData of this size is not a client file).
@@ -344,6 +403,100 @@ mod tests {
         assert_eq!(v[0]["path"], "a.tga");
         assert!(f[0].line().starts_with("a.tga: "));
         assert!(f[0].line().ends_with("[texture-unreadable]"));
-        assert_eq!(code::ALL.len(), 5);
+        assert_eq!(code::ALL.len(), 9);
+    }
+
+    use shaiya_testkit::anim::{ani_bytes, arm_ani, identity_bits, translation_bits, BoneSpec};
+
+    fn bone(parent: i32, y: f32) -> BoneSpec {
+        BoneSpec { parent, matrix: translation_bits(0.0, y, 0.0), rot: Vec::new(), trans: Vec::new() }
+    }
+
+    const ANI: &str = "Character/Human/ANI/huwm_117_test.ANI";
+
+    #[test]
+    fn an_ani_with_the_same_skeleton_as_the_client_copy_has_no_finding() {
+        let copy = arm_ani(60);
+        // another end key, same bones
+        let cand = arm_ani(90);
+        assert!(check_file(ANI, &cand, Some(&copy)).is_empty());
+        assert!(check_file(ANI, &copy, Some(&copy)).is_empty());
+    }
+
+    #[test]
+    fn a_different_skeleton_asks() {
+        let copy = arm_ani(60);
+        let cand = ani_bytes(0, 10, &[bone(-1, 0.0), bone(0, 5.0)]);
+        let f = check_file(ANI, &cand, Some(&copy));
+        assert_eq!(codes(&f), [code::ANIM_RIG_DIFFERS]);
+        assert!(f[0].asks() && any_asks(&f));
+        assert!(f[0].message.contains("bone count 2 instead of 3") && f[0].message.contains("1 reference matrix"), "{}", f[0].message);
+        assert!(f[0].message.contains("must keep the skeleton"), "{}", f[0].message);
+        // a changed parent is counted too
+        let cand = ani_bytes(0, 10, &[bone(-1, 0.0), bone(0, 1.0), bone(0, 2.0)]);
+        let f = check_file(ANI, &cand, Some(&copy));
+        assert_eq!(codes(&f), [code::ANIM_RIG_DIFFERS]);
+        assert!(f[0].message.contains("(1 parent)"), "{}", f[0].message);
+    }
+
+    #[test]
+    fn an_unreadable_ani_warns_and_does_not_ask() {
+        let good = arm_ani(60);
+        let f = check_file(ANI, &good[..good.len() - 3], Some(&good));
+        assert_eq!(codes(&f), [code::ANIM_UNREADABLE]);
+        assert!(!f[0].asks() && f[0].message.contains("the game may still accept it"), "{}", f[0].message);
+        let mut extra = good.clone();
+        extra.push(0);
+        assert_eq!(codes(&check_file(ANI, &extra, None)), [code::ANIM_UNREADABLE], "bytes left over are not read");
+    }
+
+    #[test]
+    fn an_ani_with_an_error_warns() {
+        // the keys of bone 1 do not increase
+        let mut b1 = bone(0, 1.0);
+        b1.rot = vec![(10, [0.0, 0.0, 0.0, 1.0]), (5, [0.0, 0.0, 0.0, 1.0])];
+        let cand = ani_bytes(0, 10, &[bone(-1, 0.0), b1]);
+        let f = check_file(ANI, &cand, None);
+        assert_eq!(codes(&f), [code::ANIM_INVALID]);
+        assert!(!f[0].asks());
+        assert!(f[0].message.starts_with("1 validation error, first: keys-not-increasing at bone 1"), "{}", f[0].message);
+    }
+
+    #[test]
+    fn a_first_field_difference_only_warns() {
+        let copy = arm_ani(60);
+        let mut cand = copy.clone();
+        cand[..4].copy_from_slice(&(-1i32).to_le_bytes());
+        let f = check_file(ANI, &cand, Some(&copy));
+        assert_eq!(codes(&f), [code::ANIM_FIRST_FIELD_DIFFERS]);
+        assert!(!f[0].asks() && !any_asks(&f));
+        assert!(f[0].message.contains("first field is -1, the file it replaces has 0") && f[0].message.contains("inferred: the start key; not checked in the game"), "{}", f[0].message);
+        // together with a skeleton difference both are reported
+        let other = ani_bytes(-1, 10, &[bone(-1, 0.0)]);
+        assert_eq!(codes(&check_file(ANI, &other, Some(&copy))), [code::ANIM_RIG_DIFFERS, code::ANIM_FIRST_FIELD_DIFFERS]);
+    }
+
+    #[test]
+    fn no_client_copy_means_no_rig_check() {
+        let cand = ani_bytes(-1, 10, &[bone(-1, 0.0)]);
+        assert!(check_file(ANI, &cand, None).is_empty());
+        assert!(check_file(ANI, &cand, Some(&[])).is_empty());
+    }
+
+    #[test]
+    fn an_unreadable_client_copy_means_no_rig_check() {
+        let cand = arm_ani(60);
+        assert!(check_file(ANI, &cand, Some(b"not an animation")).is_empty());
+    }
+
+    #[test]
+    fn an_upper_case_ani_name_is_checked() {
+        let copy = arm_ani(60);
+        let cand = ani_bytes(0, 10, &[BoneSpec { parent: -1, matrix: identity_bits(), rot: Vec::new(), trans: Vec::new() }]);
+        for n in ["a/B.ANI", "a/b.ani", "a\\b.Ani"] {
+            assert_eq!(codes(&check_file(n, &cand, Some(&copy))), [code::ANIM_RIG_DIFFERS], "{n}");
+        }
+        assert!(is_anim_name("x.ANI") && !is_anim_name("x.ani.bak") && !is_anim_name("ani") && wants_bytes("x.Ani"));
+        assert!(check_file("a/b.anim", &cand, Some(&copy)).is_empty());
     }
 }

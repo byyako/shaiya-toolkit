@@ -64,8 +64,12 @@ They may come before or after the command.
 | `sdata-state-differs` | A `*.SData` file is plain where the copy already in the client's archive is encrypted, or the reverse (`archive add` and `archive replace` only; a patch has no client copy to compare with) |
 | `texture-unreadable` | A `*.dds` or `*.tga` file whose header the toolkit's own texture reader refuses; the game may still accept it |
 | `empty-file` | The file is 0 bytes |
+| `anim-unreadable` | A `*.ani` file the toolkit's own reader does not read to its last byte; the game may still accept it |
+| `anim-invalid` | A `*.ani` file that reads but has validation errors (the [animation checks](../formats/ani.md#what-the-toolkit-checks-validation-codes)): "N validation errors, first: CODE at bone I" |
+| `anim-rig-differs` | A `*.ani` file whose skeleton (bone count, parents or reference matrices) differs from the file it replaces; meshes are matched to bones by index, so a replacement must keep the skeleton. `archive add` and `archive replace` only; the Toolkit asks before queueing it, the command line only warns |
+| `anim-first-field-differs` | A `*.ani` file whose first field differs from the file it replaces (inferred: the start key; not checked in the game); only a warning |
 
-Only the file name's extension decides which files are looked at (`.SData`, `.dds`, `.tga` in any letter case). The checks read the file once and do not parse SData tables.
+Only the file name's extension decides which files are looked at (`.SData`, `.dds`, `.tga`, `.ani` in any letter case). The checks read the file once and do not parse SData tables. The rig check compares with the copy already in the client's archive (`archive add` and `archive replace` only; a patch has no client copy, so it gets `anim-unreadable` and `anim-invalid` but no rig check, and a copy that does not read gives no rig check).
 
 ## Exit codes
 

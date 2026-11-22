@@ -2626,3 +2626,47 @@ fn changing_the_mesh_restarts_the_preview_with_that_mesh() {
         other => panic!("{other:?}"),
     }
 }
+
+// ------------------------------------------------------------------------------------------------ T10 W6: the rig check before an .ANI goes in
+
+fn write_ani(dir: &std::path::Path, name: &str, bytes: &[u8]) -> std::path::PathBuf {
+    let f = dir.join(name);
+    std::fs::write(&f, bytes).unwrap();
+    f
+}
+
+#[test]
+fn replacing_an_ani_with_another_skeleton_asks_before_queueing() {
+    use shaiya_testkit::anim::{ani_bytes, translation_bits, BoneSpec};
+    let mut w = ani_world("t10-w6-asks");
+    let src = TempDir::new("t10-w6-asks-src");
+    let row = w.h.app.app.archive.find_row(ANI_PATH).expect("the synthetic animation");
+    let one_bone = ani_bytes(0, 10, &[BoneSpec { parent: -1, matrix: translation_bits(0.0, 0.0, 0.0), rot: Vec::new(), trans: Vec::new() }]);
+    let file = write_ani(src.path(), "other.ANI", &one_bone);
+    with_cx(&mut w.h, |app, cx| app.archive.replace_with_file(row, file.clone(), cx));
+    assert!(w.h.wait_until(WAIT, |h| h.app.app.archive.replace_ask.is_some()), "the rig check opens the question");
+    w.h.frames(3);
+    assert!(w.h.app.app.archive.pending.is_empty(), "nothing is queued before the answer");
+    let t = w.h.text();
+    assert!(t.contains("Add anyway") && t.contains("anim-rig-differs"), "{t}");
+    w.h.app.shell.inject_answer("toolkit-replace-findings", 1);
+    w.h.frames(3);
+    assert!(w.h.app.app.archive.replace_ask.is_none() && w.h.app.app.archive.pending.is_empty(), "Cancel queues nothing");
+    with_cx(&mut w.h, |app, cx| app.archive.replace_with_file(row, file.clone(), cx));
+    assert!(w.h.wait_until(WAIT, |h| h.app.app.archive.replace_ask.is_some()));
+    w.h.frames(3);
+    w.h.app.shell.inject_answer("toolkit-replace-findings", 0);
+    w.h.frames(3);
+    assert_eq!(w.h.app.app.archive.pending.len(), 1, "Add anyway queues it");
+}
+
+#[test]
+fn replacing_an_ani_with_the_same_skeleton_queues_at_once() {
+    let mut w = ani_world("t10-w6-same");
+    let src = TempDir::new("t10-w6-same-src");
+    let row = w.h.app.app.archive.find_row(ANI_PATH).expect("the synthetic animation");
+    let file = write_ani(src.path(), "same.ANI", &shaiya_testkit::anim::arm_ani(90));
+    with_cx(&mut w.h, |app, cx| app.archive.replace_with_file(row, file.clone(), cx));
+    assert!(w.h.wait_until(WAIT, |h| h.app.app.archive.pending.len() == 1), "queued without a question");
+    assert!(w.h.app.app.archive.replace_ask.is_none());
+}

@@ -1,4 +1,4 @@
-//! File checks (`shaiya_inspect::validate`) over every SData, `.dds` and `.tga` of each matrix client. Opt-in and read-only:
+//! File checks (`shaiya_inspect::validate`) over every SData, `.dds`, `.tga` and `.ani` of each matrix client. Opt-in and read-only:
 //! `SHAIYA_TEST_CLIENTS` and `SHAIYA_CLIENT` (see docs/dev/testing.md); nothing is written. Prints the finding counts per client and
 //! asserts that no original file is reported as SEED-encrypted twice (the one finding that makes the Toolkit ask).
 //!
@@ -15,6 +15,7 @@ use std::path::Path;
 struct Tally {
     sdata: usize,
     textures: usize,
+    animations: usize,
     unreadable: Vec<String>,
     other: Vec<(String, &'static str)>,
     counts: BTreeMap<&'static str, usize>,
@@ -24,6 +25,8 @@ impl Tally {
     fn add(&mut self, name: &str, bytes: &[u8]) {
         if validate::is_sdata_name(name) {
             self.sdata += 1;
+        } else if validate::is_anim_name(name) {
+            self.animations += 1;
         } else {
             self.textures += 1;
         }
@@ -78,7 +81,7 @@ fn file_checks_over_every_sdata_and_texture_of_each_client() {
             }
         };
         let per_code: Vec<String> = code::ALL.iter().map(|c| format!("{c} {}", t.counts.get(c).copied().unwrap_or(0))).collect();
-        eprintln!("{id}: {} SData, {} textures; {}", t.sdata, t.textures, per_code.join(", "));
+        eprintln!("{id}: {} SData, {} textures, {} animations; {}", t.sdata, t.textures, t.animations, per_code.join(", "));
         for (n, c) in t.other.iter().take(12) {
             eprintln!("  {c}: {n}");
         }
@@ -87,6 +90,13 @@ fn file_checks_over_every_sdata_and_texture_of_each_client() {
         }
         if t.counts.get(code::SDATA_DOUBLE_ENCRYPTED).copied().unwrap_or(0) > 0 {
             failures.push(format!("{id}: an original SData is reported as double-encrypted"));
+        }
+        // no client copy is given here, so no rig check runs; an original must read and validate
+        for c in [code::ANIM_UNREADABLE, code::ANIM_INVALID] {
+            let n = t.counts.get(c).copied().unwrap_or(0);
+            if n > 0 {
+                failures.push(format!("{id}: {n} original animations are reported as {c}"));
+            }
         }
     }
     assert!(failures.is_empty(), "{}", failures.join("\n"));

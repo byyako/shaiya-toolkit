@@ -288,11 +288,11 @@ type QueuedPut = (String, PathBuf, i32);
 /// One file to check: archive path, the file on disk, and the entry already in the archive at that path.
 type CheckItem = (String, PathBuf, Option<Entry>);
 
-/// The file checks for files about to be queued; an SData file is compared with the archive's copy of the same path.
+/// The file checks for files about to be queued; an SData or `.ani` file is compared with the archive's copy of the same path.
 fn check_items(items: &[CheckItem], archive: Option<&Archive>) -> Vec<Finding> {
     let mut out = Vec::new();
     for (path, source, entry) in items {
-        let copy = if validate::is_sdata_name(path) { archive.zip(entry.as_ref()).and_then(|(a, e)| a.read_entry(e).ok()) } else { None };
+        let copy = if validate::is_sdata_name(path) || validate::is_anim_name(path) { archive.zip(entry.as_ref()).and_then(|(a, e)| a.read_entry(e).ok()) } else { None };
         out.extend(validate::check_path(path, source, copy.as_deref()));
     }
     out

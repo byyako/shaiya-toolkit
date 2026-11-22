@@ -818,13 +818,14 @@ fn remove_cmd(ctx: &Ctx, a: &RemoveArgs, job: &Job) -> Result<i32> {
 }
 
 /// The file checks for the files an add or replace would put in; the copy already in the archive (when it opens and has the path)
-/// is what an SData file is compared with. Findings only warn.
+/// is what an SData or `.ani` file is compared with. Findings only warn and never change the exit code.
 fn put_findings(ctx: &Ctx, archive: &str, puts: &[Put]) -> Vec<shaiya_inspect::validate::Finding> {
-    use shaiya_inspect::validate::{check_source, is_sdata_name};
-    let existing = if puts.iter().any(|p| is_sdata_name(&p.path)) { open_full(ctx, archive).ok() } else { None };
+    use shaiya_inspect::validate::{check_source, is_anim_name, is_sdata_name};
+    let needs_copy = |path: &str| is_sdata_name(path) || is_anim_name(path);
+    let existing = if puts.iter().any(|p| needs_copy(&p.path)) { open_full(ctx, archive).ok() } else { None };
     let mut out = Vec::new();
     for p in puts {
-        let copy = existing.as_ref().filter(|_| is_sdata_name(&p.path)).and_then(|a| a.read(&p.path).ok());
+        let copy = existing.as_ref().filter(|_| needs_copy(&p.path)).and_then(|a| a.read(&p.path).ok());
         out.extend(check_source(&p.path, &p.source, copy.as_deref()));
     }
     out
