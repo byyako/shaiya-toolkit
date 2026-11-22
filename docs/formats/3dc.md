@@ -38,11 +38,25 @@ The toolkit keeps floats exactly as stored (NaN bits included) and the texture n
 
 Cloak meshes: the layout reads all 48 of them to the last byte; how the game moves them was not checked.
 
+## How the toolkit poses a mesh
+
+The pose is the toolkit's own statement of the math, an approximation of the game's playback, validated offline (nothing here was checked in the game). Matrices are 4 x 4, stored row by row, used with row vectors (`v' = v * M`), with the translation in the last row; `A * B` means "A, then B".
+
+- A rotation key `(x, y, z, w)` becomes a rotation matrix in that row-vector form (a quarter turn about y takes `(1, 0, 0)` to `(0, 0, -1)`).
+- `Local` of a root bone is its reference matrix; `Local` of any other bone is its reference matrix times the inverse of its parent's (a general 4 x 4 inverse; a singular or non-finite matrix gives NaN and the bone is counted).
+- At time `t` (in key units) a bone's `Local` gets the sampled rotation in its upper 3 x 3 and the sampled translation in its last row, when it has such keys. Before a track's first key its first value holds and at or after its last key its last value holds; in between, rotations are slerped the short way and translations are linear. A bone's world matrix is its `Local` times its parent's world matrix.
+- A `.3DC` vertex with weight `w` and bones `b1`, `b2` moves with `w * (B[b1] * World[b1]) + (1 - w) * (B[b2] * World[b2])`, where `B` are the mesh's own matrices. A vertex that names a bone the animation (or the mesh) does not have keeps its rest position and is counted.
+
+The game's own handling of the last segment of a track and of a track that starts late is not reproduced.
+
+On US EP4.5, each of the 16 character rigs posed with its first `<rig>_000_` animation and the default parts of that rig (torso, lower, hand, boots, face, hair) at the first and the last key keeps finite positions, leaves no vertex unposed and keeps a bounding box between 0.90 and 0.98 times that of the rest mesh (opt-in test).
+
 ## What the toolkit does with it
 
 | Program | Use |
 |---|---|
 | `shaiya-clientdata` `mesh3dc` | parses the three layouts, writes back in memory, names the texture and the highest bone a vertex uses |
+| `shaiya-clientdata` `render` | `skin` poses a mesh, `c3dc_picture` draws it at rest and `anim_frames` pre-renders an animation on it (library only; no program shows it yet) |
 
 No program shows a `.3DC` yet: the Archive tab lists, extracts and replaces it like any file and shows it as hex.
 

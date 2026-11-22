@@ -277,6 +277,197 @@ pub fn passes(candidate: &Ani, target: &Ani) -> bool {
     rig_check(candidate, target).is_empty() && !validate(candidate).iter().any(|i| i.severity == Severity::Error)
 }
 
+// ---- pose math --------------------------------------------------------------------------------------------------------------------
+//
+// The toolkit's own statement of the math (the preview is an approximation of the game's playback, validated offline):
+//
+// Matrices are 4 x 4, row-major `m[r * 4 + c]`, row vectors (`v' = v * M`), translation in `m[12..15]`, `A * B` = "A, then B".
+//
+// - A quaternion `q = (x, y, z, w)` is the rotation (row-vector form) with row 0 = `(1 - 2(yy + zz), 2(xy + zw), 2(xz - yw), 0)`, row 1 =
+//   `(2(xy - zw), 1 - 2(xx + zz), 2(yz + xw), 0)`, row 2 = `(2(xz + yw), 2(yz - xw), 1 - 2(xx + yy), 0)`, row 3 = `(0, 0, 0, 1)`.
+// - `Bind[i]` is the reference matrix of bone `i`. `Local[i] = Bind[i]` for a root (parent -1), else `Bind[i] * inverse(Bind[parent])`
+//   (general 4 x 4 inverse; a singular or non-finite matrix gives all NaN).
+// - The pose at time `t` (key units), bones in file order: start from `L = Local[i]`; with rotation keys the upper 3 x 3 of `L` becomes the
+//   rotation of the sampled quaternion (row 3 kept); with translation keys `L[12..15]` becomes the sampled vector. Sampling is plain:
+//   before the first key the first key's value, at or after the last key the last, else the keys `k`, `k + 1` with `key[k] <= t <
+//   key[k + 1]` and `f = (t - key[k]) / (key[k + 1] - key[k])`; rotations are slerped the short way (the second quaternion is negated
+//   when the dot product is negative; a normalised linear blend when the angle is under 1e-4), translations are linear.
+//   `World[i] = L` for a root, else `L * World[parent]`.
+// - Skinning a `.3DC` vertex lives in `render::skin`: `M = w * (B[b1] * World[b1]) + (1 - w) * (B[b2] * World[b2])`, `pos' = (pos, 1) * M`.
+
+/// A 4 x 4 matrix, row-major, for row vectors.
+pub type Mat4 = [f32; 16];
+
+pub const IDENTITY: Mat4 = [1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0];
+
+/// `a * b` ("a, then b"), row-major.
+pub fn mat_mul(a: &Mat4, b: &Mat4) -> Mat4 {
+    let mut o = [0f32; 16];
+    for r in 0..4 {
+        for c in 0..4 {
+            o[r * 4 + c] = (0..4).map(|k| a[r * 4 + k] * b[k * 4 + c]).sum();
+        }
+    }
+    o
+}
+
+/// The general 4 x 4 inverse (Gauss-Jordan in f64). A singular or non-finite matrix gives sixteen NaN.
+pub fn mat_inverse(m: &Mat4) -> Mat4 {
+    let nan = [f32::NAN; 16];
+    if m.iter().any(|c| !c.is_finite()) {
+        return nan;
+    }
+    let mut a = [[0f64; 8]; 4];
+    for r in 0..4 {
+        for c in 0..4 {
+            a[r][c] = m[r * 4 + c] as f64;
+        }
+        a[r][4 + r] = 1.0;
+    }
+    for col in 0..4 {
+        let pivot = (col..4).max_by(|&x, &y| a[x][col].abs().total_cmp(&a[y][col].abs())).unwrap_or(col);
+        if a[pivot][col] == 0.0 || !a[pivot][col].is_finite() {
+            return nan;
+        }
+        a.swap(col, pivot);
+        let d = a[col][col];
+        for v in a[col].iter_mut() {
+            *v /= d;
+        }
+        for r in 0..4 {
+            if r != col {
+                let f = a[r][col];
+                if f != 0.0 {
+                    for c in 0..8 {
+                        a[r][c] -= f * a[col][c];
+                    }
+                }
+            }
+        }
+    }
+    let mut o = [0f32; 16];
+    for r in 0..4 {
+        for c in 0..4 {
+            o[r * 4 + c] = a[r][4 + c] as f32;
+        }
+    }
+    if o.iter().any(|c| !c.is_finite()) {
+        return nan;
+    }
+    o
+}
+
+/// The rotation matrix (row-vector form) of the quaternion `(x, y, z, w)`.
+pub fn quat_matrix(q: [f32; 4]) -> Mat4 {
+    let [x, y, z, w] = q;
+    [
+        1.0 - 2.0 * (y * y + z * z), 2.0 * (x * y + z * w), 2.0 * (x * z - y * w), 0.0,
+        2.0 * (x * y - z * w), 1.0 - 2.0 * (x * x + z * z), 2.0 * (y * z + x * w), 0.0,
+        2.0 * (x * z + y * w), 2.0 * (y * z - x * w), 1.0 - 2.0 * (x * x + y * y), 0.0,
+        0.0, 0.0, 0.0, 1.0,
+    ]
+}
+
+/// `Local[i]` of every bone: the reference matrix for a root, else `Bind[i] * inverse(Bind[parent])`. A parent that is not an earlier bone is
+/// treated as no parent (such a file fails [`validate`]).
+pub fn locals(ani: &Ani) -> Vec<Mat4> {
+    (0..ani.bones.len())
+        .map(|i| {
+            let b = &ani.bones[i];
+            match usize::try_from(b.parent).ok().filter(|&p| p < i) {
+                Some(p) => mat_mul(&b.matrix, &mat_inverse(&ani.bones[p].matrix)),
+                None => b.matrix,
+            }
+        })
+        .collect()
+}
+
+fn slerp(a: [f32; 4], b: [f32; 4], f: f32) -> [f32; 4] {
+    let mut dot: f32 = a.iter().zip(&b).map(|(x, y)| x * y).sum();
+    let mut b = b;
+    if dot < 0.0 {
+        b = b.map(|c| -c);
+        dot = -dot;
+    }
+    let angle = dot.clamp(-1.0, 1.0).acos();
+    let mut q = [0f32; 4];
+    if angle < 1e-4 {
+        for i in 0..4 {
+            q[i] = a[i] + (b[i] - a[i]) * f;
+        }
+        let n = q.iter().map(|c| c * c).sum::<f32>().sqrt();
+        return if n > 0.0 { q.map(|c| c / n) } else { a };
+    }
+    let s = angle.sin();
+    let (wa, wb) = (((1.0 - f) * angle).sin() / s, (f * angle).sin() / s);
+    for i in 0..4 {
+        q[i] = a[i] * wa + b[i] * wb;
+    }
+    q
+}
+
+/// Where `t` falls in a track of `n >= 1` keys: `Ok((k, f))` between keys `k` and `k + 1`, `Err(k)` when key `k` holds (before the first
+/// key, at or after the last, or two equal keys).
+fn segment(key: impl Fn(usize) -> i32, n: usize, t: f32) -> std::result::Result<(usize, f32), usize> {
+    if t <= key(0) as f32 {
+        return Err(0);
+    }
+    if t >= key(n - 1) as f32 {
+        return Err(n - 1);
+    }
+    let (mut lo, mut hi) = (0usize, n - 1);
+    while hi - lo > 1 {
+        let mid = (lo + hi) / 2;
+        if key(mid) as f32 <= t {
+            lo = mid;
+        } else {
+            hi = mid;
+        }
+    }
+    let (a, b) = (key(lo) as f32, key(hi) as f32);
+    if b > a {
+        Ok((lo, (t - a) / (b - a)))
+    } else {
+        Err(lo)
+    }
+}
+
+/// The pose at time `t` (key units): `World[i]` of every bone, bones in file order. `locals` is [`locals`]`(ani)` (computed once per animation).
+pub fn pose(ani: &Ani, locals: &[Mat4], t: f32) -> Vec<Mat4> {
+    let mut world: Vec<Mat4> = Vec::with_capacity(ani.bones.len());
+    for (i, b) in ani.bones.iter().enumerate() {
+        let mut l = locals.get(i).copied().unwrap_or(IDENTITY);
+        if !b.rot.is_empty() {
+            let q = match segment(|k| b.rot[k].key, b.rot.len(), t) {
+                Err(k) => b.rot[k].q,
+                Ok((k, f)) => slerp(b.rot[k].q, b.rot[k + 1].q, f),
+            };
+            let r = quat_matrix(q);
+            for row in 0..3 {
+                for col in 0..3 {
+                    l[row * 4 + col] = r[row * 4 + col];
+                }
+            }
+        }
+        if !b.trans.is_empty() {
+            let v = match segment(|k| b.trans[k].key, b.trans.len(), t) {
+                Err(k) => b.trans[k].v,
+                Ok((k, f)) => {
+                    let (a, c) = (b.trans[k].v, b.trans[k + 1].v);
+                    [a[0] + (c[0] - a[0]) * f, a[1] + (c[1] - a[1]) * f, a[2] + (c[2] - a[2]) * f]
+                }
+            };
+            l[12..15].copy_from_slice(&v);
+        }
+        let w = match usize::try_from(b.parent).ok().filter(|&p| p < i) {
+            Some(p) => mat_mul(&l, &world[p]),
+            None => l,
+        };
+        world.push(w);
+    }
+    world
+}
+
 // ---- kinds and rigs -----------------------------------------------------------------------------------------------------------------
 
 /// The 16 character rigs: the file-name prefix and the race folder it lives in.
@@ -568,5 +759,110 @@ mod tests {
             let path = format!("Character/{race}/ANI/{name}_001_a.ANI");
             assert_eq!(rig_of(&path).rig, Some((name, race)), "{path}");
         }
+    }
+}
+
+#[cfg(test)]
+mod pose_tests {
+    use super::*;
+    use shaiya_testkit::anim::{ani_bytes, identity_bits, translation_bits, BoneSpec};
+
+    fn near(a: f32, b: f32, tol: f32) -> bool {
+        (a - b).abs() <= tol
+    }
+
+    fn build(end_key: i32, bones: &[BoneSpec]) -> Ani {
+        Ani::parse(&ani_bytes(0, end_key, bones), "t.ani").unwrap()
+    }
+
+    fn spec(parent: i32, matrix: [u32; 16], rot: Vec<(i32, [f32; 4])>, trans: Vec<(i32, [f32; 3])>) -> BoneSpec {
+        BoneSpec { parent, matrix, rot, trans }
+    }
+
+    /// The quaternion of a turn of `deg` degrees about the unit axis `(x, y, z)`.
+    fn turn(deg: f32, axis: [f32; 3]) -> [f32; 4] {
+        let (s, c) = (deg.to_radians() * 0.5).sin_cos();
+        [axis[0] * s, axis[1] * s, axis[2] * s, c]
+    }
+
+    /// The first row of the rotation of a root bone with rotation keys at time `t`.
+    fn root_row0(keys: Vec<(i32, [f32; 4])>, t: f32) -> [f32; 3] {
+        let a = build(100, &[spec(-1, identity_bits(), keys, Vec::new())]);
+        let w = pose(&a, &locals(&a), t);
+        [w[0][0], w[0][1], w[0][2]]
+    }
+
+    #[test]
+    fn quat_matrix_turns_x_to_minus_z_for_90_degrees_about_y() {
+        let m = quat_matrix(turn(90.0, [0.0, 1.0, 0.0]));
+        // row vector: (1, 0, 0) * M is row 0
+        assert!(near(m[0], 0.0, 1e-6) && near(m[1], 0.0, 1e-6) && near(m[2], -1.0, 1e-6), "{:?}", &m[0..3]);
+    }
+
+    #[test]
+    fn rotation_halfway_between_keys_is_45_degrees() {
+        let r = root_row0(vec![(0, turn(0.0, [0.0, 0.0, 1.0])), (10, turn(90.0, [0.0, 0.0, 1.0]))], 5.0);
+        let (s, c) = 45f32.to_radians().sin_cos();
+        assert!(near(r[0], c, 1e-5) && near(r[1], s, 1e-5) && near(r[2], 0.0, 1e-5), "{r:?}");
+    }
+
+    #[test]
+    fn before_the_first_key_and_after_the_last_the_end_keys_hold() {
+        let keys = vec![(10, turn(30.0, [0.0, 0.0, 1.0])), (20, turn(90.0, [0.0, 0.0, 1.0]))];
+        let (first, last) = (root_row0(keys.clone(), 10.0), root_row0(keys.clone(), 20.0));
+        for t in [-5.0, 0.0, 9.9] {
+            assert_eq!(root_row0(keys.clone(), t), first, "t = {t}");
+        }
+        for t in [20.0, 25.0, 1000.0] {
+            assert_eq!(root_row0(keys.clone(), t), last, "t = {t}");
+        }
+        assert!(near(first[1], 30f32.to_radians().sin(), 1e-5) && near(last[1], 1.0, 1e-5));
+        // a translation track holds its end keys too
+        let a = build(100, &[spec(-1, identity_bits(), Vec::new(), vec![(10, [1.0, 0.0, 0.0]), (20, [3.0, 0.0, 0.0])])]);
+        let l = locals(&a);
+        assert_eq!(pose(&a, &l, 0.0)[0][12], 1.0);
+        assert_eq!(pose(&a, &l, 15.0)[0][12], 2.0);
+        assert_eq!(pose(&a, &l, 99.0)[0][12], 3.0);
+    }
+
+    #[test]
+    fn short_way_slerp_for_opposite_signs() {
+        // the second key is the 45 degree turn written with every sign flipped: the short way from 0 to 45 degrees goes through 22.5
+        let q = turn(45.0, [0.0, 0.0, 1.0]);
+        let r = root_row0(vec![(0, [0.0, 0.0, 0.0, 1.0]), (10, q.map(|c| -c))], 5.0);
+        let (s, c) = 22.5f32.to_radians().sin_cos();
+        assert!(near(r[0], c, 1e-5) && near(r[1], s, 1e-5), "{r:?}");
+    }
+
+    #[test]
+    fn a_child_follows_its_parent() {
+        let a = build(
+            10,
+            &[
+                spec(-1, identity_bits(), Vec::new(), vec![(0, [0.0, 2.0, 0.0])]),
+                spec(0, translation_bits(0.0, 1.0, 0.0), Vec::new(), Vec::new()),
+            ],
+        );
+        let l = locals(&a);
+        assert!(near(l[1][13], 1.0, 1e-6), "child local = bind * inverse(parent bind)");
+        let w = pose(&a, &l, 0.0);
+        assert!(near(w[1][12], 0.0, 1e-6) && near(w[1][13], 3.0, 1e-6) && near(w[1][14], 0.0, 1e-6), "{:?}", &w[1][12..15]);
+    }
+
+    #[test]
+    fn the_inverse_undoes_a_matrix_and_a_singular_one_is_nan() {
+        let m = mat_mul(&quat_matrix(turn(40.0, [0.0, 1.0, 0.0])), &{
+            let mut t = IDENTITY;
+            t[12..15].copy_from_slice(&[1.0, 2.0, 3.0]);
+            t
+        });
+        let id = mat_mul(&m, &mat_inverse(&m));
+        for (i, v) in id.iter().enumerate() {
+            assert!(near(*v, IDENTITY[i], 1e-5), "{id:?}");
+        }
+        assert!(mat_inverse(&[0.0; 16]).iter().all(|c| c.is_nan()));
+        let mut bad = IDENTITY;
+        bad[3] = f32::NAN;
+        assert!(mat_inverse(&bad).iter().all(|c| c.is_nan()));
     }
 }

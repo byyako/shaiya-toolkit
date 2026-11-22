@@ -3,7 +3,8 @@
 //! "skipped: <VAR> not set" and returns when its variable is unset. The numbers are measured on US EP4.5 only.
 
 use shaiya_archive::Archive;
-use shaiya_clientdata::anim::{issue, passes, rig_of, validate, Severity, RIGS};
+use shaiya_clientdata::anim::{issue, locals, passes, pose, quat_matrix, rig_of, validate, Severity, RIGS};
+use shaiya_clientdata::render::skin;
 use shaiya_clientdata::mesh3dc::C3dcLayout;
 use shaiya_clientdata::{Ani, C3dc};
 use shaiya_testkit::{env_client, env_client_original};
@@ -225,4 +226,98 @@ fn mesh_matrices_are_not_the_inverse_of_the_animation_reference() {
         identity_total += identity;
     }
     println!("all rigs: {identity_total} of {bones_total} bones give the identity (expected 0 of 805)");
+}
+
+/// Percent of bones whose `Local` matrix agrees with the matrix of their first rotation key (see the test). Measured once on US EP4.5 and
+/// set to the measured percent minus 0.5, rounded down to 0.1 (measured 99.284 %, so 98.7); never tuned afterwards.
+const FLOOR_PERCENT: f64 = 98.7;
+
+#[test]
+fn first_rotation_keys_match_the_reference_pose() {
+    let Some(dir) = env_client() else { return };
+    let a = Archive::open(&dir).unwrap();
+    // per kind (first path segment): (bones with a rotation key that match, bones with a rotation key)
+    let mut per_kind: BTreeMap<String, (usize, usize)> = BTreeMap::new();
+    each_ani(&a, |path, bytes| {
+        let ani = Ani::parse(bytes, path).unwrap();
+        let local = locals(&ani);
+        let kind = path.split(['/', '\\']).next().unwrap_or("").to_string();
+        let e = per_kind.entry(kind).or_default();
+        for (b, l) in ani.bones.iter().zip(&local) {
+            let Some(first) = b.rot.first() else { continue };
+            let q = quat_matrix(first.q);
+            let ok = (0..3).all(|r| (0..3).all(|c| (l[r * 4 + c] - q[r * 4 + c]).abs() <= 1e-3));
+            e.1 += 1;
+            e.0 += ok as usize;
+        }
+    });
+    let (mut matches, mut total) = (0usize, 0usize);
+    for (kind, (m, t)) in &per_kind {
+        println!("{kind}: {m} of {t} tracks match ({:.2} %)", *m as f64 * 100.0 / (*t).max(1) as f64);
+        matches += m;
+        total += t;
+    }
+    let percent = matches as f64 * 100.0 / total.max(1) as f64;
+    println!("all kinds: {matches} of {total} ({percent:.3} %); floor {FLOOR_PERCENT} % (R2 measured 99.15 % in f64 with a rotation-only inverse)");
+    assert!(total > 100_000);
+    assert!(percent >= FLOOR_PERCENT, "{percent:.3} % is below the floor {FLOOR_PERCENT} %");
+}
+
+fn bbox_diagonal(points: &[[f32; 3]]) -> f32 {
+    let (mut lo, mut hi) = ([f32::MAX; 3], [f32::MIN; 3]);
+    for p in points {
+        for k in 0..3 {
+            lo[k] = lo[k].min(p[k]);
+            hi[k] = hi[k].max(p[k]);
+        }
+    }
+    ((0..3).map(|k| (hi[k] - lo[k]).powi(2)).sum::<f32>()).sqrt()
+}
+
+#[test]
+fn every_rig_poses_its_default_parts_without_running_away() {
+    let Some(dir) = env_client() else { return };
+    let a = Archive::open(&dir).unwrap();
+    let visible = a.index().visible();
+    let files: Vec<(String, &shaiya_archive::Entry)> = visible.iter().map(|f| (f.path.clone(), f.entry)).collect();
+    for (rig, race) in RIGS {
+        let ani_dir = format!("character/{race}/ani/{rig}_").to_ascii_lowercase();
+        let mut anis: Vec<&(String, &shaiya_archive::Entry)> = files.iter().filter(|(p, _)| p.to_ascii_lowercase().starts_with(&ani_dir) && is_ani(p)).collect();
+        anis.sort_by_key(|(p, _)| p.to_ascii_lowercase());
+        let pick = anis.iter().find(|(p, _)| p.to_ascii_lowercase().contains(&format!("{rig}_000_"))).or(anis.first()).unwrap_or_else(|| panic!("rig {rig} has no .ANI"));
+        let ani = Ani::parse(&a.read_entry(pick.1).unwrap(), &pick.0).unwrap();
+        let mesh_dir = format!("character/{race}/3dc/{rig}_").to_ascii_lowercase();
+        let mut parts: Vec<&(String, &shaiya_archive::Entry)> = files.iter().filter(|(p, _)| p.to_ascii_lowercase().starts_with(&mesh_dir) && is_3dc(p)).collect();
+        parts.sort_by_key(|(p, _)| p.to_ascii_lowercase());
+        let mut chosen = Vec::new();
+        for word in ["torso", "lower", "hand", "boots", "face", "hair"] {
+            for (path, entry) in parts.iter().filter(|(p, _)| p.to_ascii_lowercase().rsplit('/').next().is_some_and(|n| n.starts_with(&format!("{rig}_{word}")))) {
+                let Ok(c) = C3dc::parse(&a.read_entry(entry).unwrap(), path) else { continue };
+                let m = &c.meshes[0];
+                if c.layout == C3dcLayout::Skinned && m.vertices.iter().map(|v| v.bone1.max(v.bone2) as usize).max().is_some_and(|hi| hi < ani.bones.len()) {
+                    chosen.push(c);
+                    break;
+                }
+            }
+        }
+        assert!(!chosen.is_empty(), "rig {rig}: no default part");
+        let local = locals(&ani);
+        let rest: Vec<[f32; 3]> = chosen.iter().flat_map(|c| c.meshes[0].vertices.iter().map(|v| v.pos)).collect();
+        let rest_diag = bbox_diagonal(&rest);
+        let mut ratios = Vec::new();
+        for t in [0.0, ani.end_key as f32] {
+            let world = pose(&ani, &local, t);
+            let mut posed = Vec::new();
+            for c in &chosen {
+                let (p, unposed) = skin(&c.meshes[0], &world);
+                assert_eq!(unposed, 0, "rig {rig}");
+                posed.extend(p);
+            }
+            assert!(posed.iter().all(|p| p.iter().all(|c| c.is_finite())), "rig {rig} at t {t}: a position is not finite");
+            let ratio = bbox_diagonal(&posed) / rest_diag;
+            assert!((0.5..=2.0).contains(&ratio), "rig {rig} at t {t}: bounding box {ratio:.2}x the rest mesh");
+            ratios.push(ratio);
+        }
+        println!("rig {rig}: {} parts, {} at t 0 and {}: bounding box {:.2}x and {:.2}x of the rest mesh", chosen.len(), pick.0, ani.end_key, ratios[0], ratios[1]);
+    }
 }

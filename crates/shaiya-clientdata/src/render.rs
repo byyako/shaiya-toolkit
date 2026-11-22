@@ -1,6 +1,8 @@
 //! Pictures made from parsed client data, without a GUI: the terrain hillshade and the textured model picture. The SVMap Editor
 //! and the toolkit's Archive preview both call this code, so a map and a model look the same in both.
 
+use crate::anim::{locals, mat_mul, pose, Ani, Mat4};
+use crate::mesh3dc::{C3dc, C3dcMesh};
 use crate::smod::Smod;
 use crate::texture::Image;
 use crate::wld::{Terrain, CORNER_SPACING, HEIGHT_OFFSET, HEIGHT_SCALE};
@@ -117,6 +119,10 @@ pub fn mip_image_capped(img: &Image) -> MipImage {
 pub const PREVIEW_SIZE: [f32; 2] = [240.0, 220.0];
 /// The picture is rendered at this many pixels per point (egui's linear filter then smooths the edges).
 pub const PICTURE_SCALE: f32 = 2.0;
+/// Animation frames are rendered at this many pixels per point (240 x 220 pixels).
+pub const ANIM_PICTURE_SCALE: f32 = 1.0;
+/// At most this many frames of an animation are rendered (every key unit of an 8-second emote at 30 key units per second).
+pub const MAX_ANIM_FRAMES: usize = 241;
 /// At most this many triangles are rendered and this many edges drawn as the wire.
 pub const PREVIEW_TRIS: usize = 60_000;
 pub const PREVIEW_EDGES: usize = 90_000;
@@ -149,23 +155,51 @@ pub fn preview_view(v: V3) -> V3 {
     [x, v[1] * cp + z * sp, -v[1] * sp + z * cp]
 }
 
-impl PreviewFit {
-    /// The fit of model-space points into the picture with an 8 point margin; `None` without points.
-    pub fn of(points: impl Iterator<Item = V3>) -> Option<PreviewFit> {
-        let (mut lo, mut hi) = ([f32::MAX; 2], [f32::MIN; 2]);
-        for p in points {
-            let v = preview_view(p);
-            if !(v[0].is_finite() && v[1].is_finite()) {
-                continue;
-            }
-            lo = [lo[0].min(v[0]), lo[1].min(v[1])];
-            hi = [hi[0].max(v[0]), hi[1].max(v[1])];
+/// The extent of points in view space, grown point by point (non-finite points are skipped); [`ViewBounds::fit`] is [`PreviewFit::of`].
+#[derive(Clone, Copy, Debug)]
+pub struct ViewBounds {
+    lo: [f32; 2],
+    hi: [f32; 2],
+}
+
+impl Default for ViewBounds {
+    fn default() -> Self {
+        ViewBounds::new()
+    }
+}
+
+impl ViewBounds {
+    pub fn new() -> ViewBounds {
+        ViewBounds { lo: [f32::MAX; 2], hi: [f32::MIN; 2] }
+    }
+
+    pub fn add(&mut self, p: V3) {
+        let v = preview_view(p);
+        if !(v[0].is_finite() && v[1].is_finite()) {
+            return;
         }
+        self.lo = [self.lo[0].min(v[0]), self.lo[1].min(v[1])];
+        self.hi = [self.hi[0].max(v[0]), self.hi[1].max(v[1])];
+    }
+
+    pub fn fit(&self) -> Option<PreviewFit> {
+        let (lo, hi) = (self.lo, self.hi);
         if lo[0] > hi[0] {
             return None;
         }
         let scale = ((PREVIEW_SIZE[0] - 16.0) / (hi[0] - lo[0]).max(0.01)).min((PREVIEW_SIZE[1] - 16.0) / (hi[1] - lo[1]).max(0.01));
         Some(PreviewFit { mid: [(lo[0] + hi[0]) * 0.5, (lo[1] + hi[1]) * 0.5], scale })
+    }
+}
+
+impl PreviewFit {
+    /// The fit of model-space points into the picture with an 8 point margin; `None` without points.
+    pub fn of(points: impl Iterator<Item = V3>) -> Option<PreviewFit> {
+        let mut b = ViewBounds::new();
+        for p in points {
+            b.add(p);
+        }
+        b.fit()
     }
 
     /// A model-space point in picture points (origin top left), with its view depth.
@@ -188,7 +222,13 @@ pub struct PreviewTri {
 /// Then the wire: every edge, one pixel wide, blended over the surface where no nearer surface hides it (hidden lines left
 /// out, so the wire marks the shape without covering the textures).
 pub fn render_picture(tris: &[PreviewTri], textures: &[MipImage], edges: &[[V3; 2]], fit: PreviewFit) -> ModelPicture {
-    let (w, h) = ((PREVIEW_SIZE[0] * PICTURE_SCALE) as usize, (PREVIEW_SIZE[1] * PICTURE_SCALE) as usize);
+    render_picture_at(tris, textures, edges, fit, PICTURE_SCALE)
+}
+
+/// [`render_picture`] at `scale` pixels per point (the editor and the model preview use [`PICTURE_SCALE`]; animation frames use
+/// [`ANIM_PICTURE_SCALE`]).
+pub fn render_picture_at(tris: &[PreviewTri], textures: &[MipImage], edges: &[[V3; 2]], fit: PreviewFit, scale: f32) -> ModelPicture {
+    let (w, h) = ((PREVIEW_SIZE[0] * scale) as usize, (PREVIEW_SIZE[1] * scale) as usize);
     let mut rgba = vec![0u8; w * h * 4];
     let mut depth = vec![f32::MAX; w * h];
     // what each pixel shows: 0 nothing, 1 texture, 2 plain
@@ -201,7 +241,7 @@ pub fn render_picture(tris: &[PreviewTri], textures: &[MipImage], edges: &[[V3; 
     for t in tris {
         let p = t.pos.map(|v| {
             let q = fit.to_points(v);
-            [q[0] * PICTURE_SCALE, q[1] * PICTURE_SCALE, q[2]]
+            [q[0] * scale, q[1] * scale, q[2]]
         });
         if p.iter().flatten().any(|c| !c.is_finite()) {
             continue;
@@ -280,7 +320,7 @@ pub fn render_picture(tris: &[PreviewTri], textures: &[MipImage], edges: &[[V3; 
     let mut on_wire = vec![false; w * h];
     for e in edges {
         let (a, b) = (fit.to_points(e[0]), fit.to_points(e[1]));
-        let (a, b) = ([a[0] * PICTURE_SCALE, a[1] * PICTURE_SCALE, a[2]], [b[0] * PICTURE_SCALE, b[1] * PICTURE_SCALE, b[2]]);
+        let (a, b) = ([a[0] * scale, a[1] * scale, a[2]], [b[0] * scale, b[1] * scale, b[2]]);
         if a.iter().chain(&b).any(|c| !c.is_finite()) {
             continue;
         }
@@ -393,6 +433,199 @@ pub fn model_picture(sm: &Smod, tex: &mut dyn FnMut(&str) -> Option<Image>) -> M
     ModelPreview { edges, picture, missing, see_through, invisible, modules: sm.modules.len(), triangles: sm.modules.iter().map(|m| m.faces.len()).sum(), textures: tex_of.len() }
 }
 
+// ------------------------------------------------------------------------------------------------------------------ skinned meshes
+
+/// Skins the vertices of a `.3DC` mesh with the pose `world` (`World[i]` of every bone, see `anim::pose`): `M = w * (B[b1] * World[b1]) +
+/// (1 - w) * (B[b2] * World[b2])` (element-wise blend), `pos' = (pos, 1) * M` (x, y, z of the product, no divide), with `B` the mesh's own
+/// matrices. A vertex naming a bone at or above `min(mesh bones, animation bones)` keeps its rest position and is counted (the second
+/// number). An approximation of the game's playback, validated offline.
+pub fn skin(mesh: &C3dcMesh, world: &[Mat4]) -> (Vec<V3>, usize) {
+    let limit = mesh.bones.len().min(world.len());
+    let mut unposed = 0;
+    let mut out = Vec::with_capacity(mesh.vertices.len());
+    // B[i] * World[i], once per bone
+    let skin_matrix: Vec<Mat4> = (0..limit).map(|i| mat_mul(&mesh.bones[i], &world[i])).collect();
+    for v in &mesh.vertices {
+        let (b1, b2) = (v.bone1 as usize, v.bone2 as usize);
+        if b1 >= limit || b2 >= limit {
+            unposed += 1;
+            out.push(v.pos);
+            continue;
+        }
+        let (m1, m2) = (&skin_matrix[b1], &skin_matrix[b2]);
+        let (w, rest) = (v.weight, 1.0 - v.weight);
+        let p = v.pos;
+        let mut o = [0f32; 3];
+        for (c, oc) in o.iter_mut().enumerate() {
+            let a = p[0] * m1[c] + p[1] * m1[4 + c] + p[2] * m1[8 + c] + m1[12 + c];
+            let b = p[0] * m2[c] + p[1] * m2[4 + c] + p[2] * m2[8 + c] + m2[12 + c];
+            *oc = w * a + rest * b;
+        }
+        out.push(o);
+    }
+    (out, unposed)
+}
+
+/// Faces of the meshes that name existing vertices, as (mesh, corners), at most [`PREVIEW_TRIS`] over all meshes.
+fn mesh_faces(meshes: &[&C3dcMesh]) -> Vec<(usize, [usize; 3])> {
+    let mut out = Vec::new();
+    'all: for (k, m) in meshes.iter().enumerate() {
+        for f in &m.faces {
+            let c = f.map(|i| i as usize);
+            if c.iter().all(|&i| i < m.vertices.len()) {
+                if out.len() >= PREVIEW_TRIS {
+                    break 'all;
+                }
+                out.push((k, c));
+            }
+        }
+    }
+    out
+}
+
+/// Edges of `faces` as (mesh, vertex, vertex), each once, at most [`PREVIEW_EDGES`].
+fn mesh_edges(faces: &[(usize, [usize; 3])]) -> Vec<(usize, usize, usize)> {
+    let mut seen = std::collections::HashSet::new();
+    let mut out = Vec::new();
+    'all: for &(k, c) in faces {
+        for (a, b) in [(c[0], c[1]), (c[1], c[2]), (c[2], c[0])] {
+            if seen.insert((k, a.min(b), a.max(b))) {
+                out.push((k, a, b));
+                if out.len() >= PREVIEW_EDGES {
+                    break 'all;
+                }
+            }
+        }
+    }
+    out
+}
+
+fn tris_of(faces: &[(usize, [usize; 3])], meshes: &[&C3dcMesh], pos: &[Vec<V3>]) -> Vec<PreviewTri> {
+    faces.iter().map(|&(k, c)| PreviewTri { pos: c.map(|i| pos[k][i]), uv: c.map(|i| meshes[k].vertices[i].uv), tex: None }).collect()
+}
+
+fn edges_of(edges: &[(usize, usize, usize)], pos: &[Vec<V3>]) -> Vec<[V3; 2]> {
+    edges.iter().map(|&(k, a, b)| [pos[k][a], pos[k][b]]).collect()
+}
+
+/// The first mesh of a `.3DC` at rest (its raw vertex positions) as a plain grey picture with the wire, at [`PICTURE_SCALE`]; `None` when
+/// the file has no mesh or no face that names existing vertices.
+pub fn c3dc_picture(c: &C3dc) -> Option<ModelPicture> {
+    let mesh = c.meshes.first()?;
+    let meshes = [mesh];
+    let faces = mesh_faces(&meshes);
+    if faces.is_empty() {
+        return None;
+    }
+    let pos = vec![mesh.vertices.iter().map(|v| v.pos).collect::<Vec<V3>>()];
+    let tris = tris_of(&faces, &meshes, &pos);
+    let edges = edges_of(&mesh_edges(&faces), &pos);
+    let fit = PreviewFit::of(tris.iter().flat_map(|t| t.pos))?;
+    Some(render_picture(&tris, &[], &edges, fit))
+}
+
+/// The pre-rendered frames of an animation: one picture per `step` key units, the same view in every frame.
+#[derive(Clone, Debug)]
+pub struct AnimFrames {
+    /// Key units between two frames; frame `i` is the pose at `i * step`.
+    pub step: f32,
+    /// Size of a frame in pixels ([`PREVIEW_SIZE`] times [`ANIM_PICTURE_SCALE`]).
+    pub width: usize,
+    pub height: usize,
+    /// RGBA pictures, one per frame; empty when there is no mesh (or no face to draw).
+    pub frames: Vec<Vec<u8>>,
+    /// Per frame, the picture points (origin top left, the size of [`PREVIEW_SIZE`]) of every bone origin; NaN for a bone whose pose is not finite.
+    pub bones: Vec<Vec<[f32; 2]>>,
+    pub parents: Vec<i32>,
+    /// Vertices that name a bone the animation (or the mesh) lacks and so stay at their rest position.
+    pub unposed_vertices: usize,
+    /// Bones whose `Local` matrix holds NaN or infinity (a singular or non-finite reference matrix).
+    pub nonfinite_bones: usize,
+    /// Triangles drawn in each frame.
+    pub triangles: usize,
+}
+
+/// Pre-renders an animation on `meshes`: times `0, step, 2 step, ...` up to the end key with `step = max(1, ceil((end_key + 1) /
+/// MAX_ANIM_FRAMES))`; an end key of 0 or less gives one frame at 0. Pass 1 poses and skins every frame and fits one view over all the
+/// finite points (vertices and bone origins), so the view does not move; pass 2 renders each frame at [`ANIM_PICTURE_SCALE`] and projects
+/// the bone origins. Without meshes there are no pictures, only bones (the view fits the bone origins). `cancelled` is asked once per frame
+/// in both passes; `None` when it said yes.
+pub fn anim_frames(ani: &Ani, meshes: &[&C3dcMesh], cancelled: &mut dyn FnMut() -> bool) -> Option<AnimFrames> {
+    let end = i64::from(ani.end_key.max(0));
+    let max_frames = MAX_ANIM_FRAMES as i64;
+    let step = ((end + max_frames) / max_frames).max(1);
+    let count = (end / step + 1) as usize;
+    let time = |i: usize| (i as i64 * step) as f32;
+    let local = locals(ani);
+    let nonfinite_bones = local.iter().filter(|m| m.iter().any(|c| !c.is_finite())).count();
+    let faces = mesh_faces(meshes);
+    let edges = mesh_edges(&faces);
+    let skin_all = |world: &[Mat4]| -> (Vec<Vec<V3>>, usize) {
+        let mut unposed = 0;
+        let pos = meshes
+            .iter()
+            .map(|m| {
+                let (p, u) = skin(m, world);
+                unposed += u;
+                p
+            })
+            .collect();
+        (pos, unposed)
+    };
+
+    // pass 1: the view over every frame
+    let mut bounds = ViewBounds::new();
+    let mut unposed_vertices = 0;
+    for i in 0..count {
+        if cancelled() {
+            return None;
+        }
+        let world = pose(ani, &local, time(i));
+        for w in &world {
+            bounds.add([w[12], w[13], w[14]]);
+        }
+        let (pos, unposed) = skin_all(&world);
+        if i == 0 {
+            unposed_vertices = unposed;
+        }
+        for v in pos.iter().flatten() {
+            bounds.add(*v);
+        }
+    }
+    let fit = bounds.fit().unwrap_or(PreviewFit { mid: [0.0, 0.0], scale: 1.0 });
+
+    // pass 2: the pictures and the bone points
+    let mut frames = Vec::new();
+    let mut bones = Vec::with_capacity(count);
+    let (mut width, mut height) = ((PREVIEW_SIZE[0] * ANIM_PICTURE_SCALE) as usize, (PREVIEW_SIZE[1] * ANIM_PICTURE_SCALE) as usize);
+    for i in 0..count {
+        if cancelled() {
+            return None;
+        }
+        let world = pose(ani, &local, time(i));
+        bones.push(
+            world
+                .iter()
+                .map(|w| {
+                    let p = fit.to_points([w[12], w[13], w[14]]);
+                    if p[0].is_finite() && p[1].is_finite() {
+                        [p[0], p[1]]
+                    } else {
+                        [f32::NAN; 2]
+                    }
+                })
+                .collect(),
+        );
+        if !faces.is_empty() {
+            let (pos, _) = skin_all(&world);
+            let pic = render_picture_at(&tris_of(&faces, meshes, &pos), &[], &edges_of(&edges, &pos), fit, ANIM_PICTURE_SCALE);
+            (width, height) = (pic.width, pic.height);
+            frames.push(pic.rgba);
+        }
+    }
+    Some(AnimFrames { step: step as f32, width, height, frames, bones, parents: ani.bones.iter().map(|b| b.parent).collect(), unposed_vertices, nonfinite_bones, triangles: faces.len() })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -495,5 +728,204 @@ mod tests {
         let p = model_picture(&sm, &mut |_| None);
         assert!(p.picture.is_none() && p.edges.is_empty());
         assert_eq!((p.modules, p.triangles), (3, 0));
+    }
+
+    // ---- poses, skinning and frames -----------------------------------------------------------------------------------------------
+
+    use crate::anim::IDENTITY;
+    use crate::mesh3dc::C3dcVertex;
+    use shaiya_testkit::anim::{ani_bytes, arm_ani, arm_mesh_3dc, identity_bits, translation_bits, BoneSpec};
+
+    fn near(a: f32, b: f32, tol: f32) -> bool {
+        (a - b).abs() <= tol
+    }
+
+    fn spec(parent: i32, rot: Vec<(i32, [f32; 4])>, trans: Vec<(i32, [f32; 3])>) -> BoneSpec {
+        BoneSpec { parent, matrix: identity_bits(), rot, trans }
+    }
+
+    fn vertex(pos: V3, weight: f32, bone1: u8, bone2: u8) -> C3dcVertex {
+        C3dcVertex { pos, weight, bone1, bone2, pad: 0, normal: [0.0, 1.0, 0.0], uv: [0.0, 0.0] }
+    }
+
+    fn mesh(bones: usize, vertices: Vec<C3dcVertex>) -> C3dcMesh {
+        C3dcMesh { texture: Vec::new(), bones: vec![IDENTITY; bones], vertices, faces: Vec::new() }
+    }
+
+    fn arm() -> (Ani, C3dc) {
+        (Ani::parse(&arm_ani(60), "arm.ani").unwrap(), C3dc::parse(&arm_mesh_3dc(), "arm.3dc").unwrap())
+    }
+
+    fn drawn(rgba: &[u8]) -> usize {
+        rgba.chunks(4).filter(|p| p[3] == 255).count()
+    }
+
+    #[test]
+    fn a_root_rotation_moves_a_skinned_vertex() {
+        let (s, c) = 45f32.to_radians().sin_cos();
+        let ani = Ani::parse(&ani_bytes(0, 10, &[spec(-1, vec![(0, [0.0, 0.0, 0.0, 1.0]), (10, [0.0, s, 0.0, c])], Vec::new())]), "t.ani").unwrap();
+        let m = mesh(1, vec![vertex([1.0, 0.0, 0.0], 1.0, 0, 0)]);
+        let (p, unposed) = skin(&m, &pose(&ani, &locals(&ani), 10.0));
+        assert_eq!(unposed, 0);
+        assert!(near(p[0][0], 0.0, 1e-5) && near(p[0][1], 0.0, 1e-5) && near(p[0][2], -1.0, 1e-5), "{:?}", p[0]);
+    }
+
+    #[test]
+    fn a_half_weight_vertex_blends_two_bones() {
+        let bones = [spec(-1, Vec::new(), vec![(0, [2.0, 0.0, 0.0])]), spec(-1, Vec::new(), vec![(0, [0.0, 4.0, 0.0])])];
+        let ani = Ani::parse(&ani_bytes(0, 10, &bones), "t.ani").unwrap();
+        let m = mesh(2, vec![vertex([0.0; 3], 0.5, 0, 1), vertex([0.0; 3], 0.25, 0, 1)]);
+        let (p, _) = skin(&m, &pose(&ani, &locals(&ani), 0.0));
+        assert!(near(p[0][0], 1.0, 1e-6) && near(p[0][1], 2.0, 1e-6), "{:?}", p[0]);
+        assert!(near(p[1][0], 0.5, 1e-6) && near(p[1][1], 3.0, 1e-6), "{:?}", p[1]);
+    }
+
+    #[test]
+    fn a_vertex_with_a_bone_the_animation_lacks_stays_unposed() {
+        let ani = Ani::parse(&ani_bytes(0, 10, &[spec(-1, Vec::new(), vec![(0, [5.0, 0.0, 0.0])])]), "t.ani").unwrap();
+        let m = mesh(4, vec![vertex([1.0, 2.0, 3.0], 1.0, 0, 0), vertex([1.0, 2.0, 3.0], 0.5, 0, 3), vertex([7.0, 8.0, 9.0], 1.0, 2, 2)]);
+        let (p, unposed) = skin(&m, &pose(&ani, &locals(&ani), 0.0));
+        assert_eq!(unposed, 2);
+        assert_eq!(p[0], [6.0, 2.0, 3.0]);
+        assert_eq!((p[1], p[2]), ([1.0, 2.0, 3.0], [7.0, 8.0, 9.0]));
+    }
+
+    #[test]
+    fn a_nan_reference_matrix_does_not_panic_and_other_bones_draw() {
+        // the arm's three bones sit at y = 0, 1, 2; bone 2 gets a NaN
+        let mut bad = translation_bits(0.0, 2.0, 0.0);
+        bad[13] = 0xFFC0_0000;
+        let mut bones = vec![spec(-1, Vec::new(), Vec::new()), spec(0, Vec::new(), Vec::new()), spec(1, Vec::new(), Vec::new())];
+        bones[1].matrix = translation_bits(0.0, 1.0, 0.0);
+        bones[2].matrix = bad;
+        let ani = Ani::parse(&ani_bytes(0, 20, &bones), "t.ani").unwrap();
+        let c = C3dc::parse(&arm_mesh_3dc(), "arm.3dc").unwrap();
+        let f = anim_frames(&ani, &[&c.meshes[0]], &mut || false).unwrap();
+        assert_eq!(f.nonfinite_bones, 1);
+        assert!(f.frames.iter().all(|px| drawn(px) > 0), "the first box does not use bone 2");
+        assert!(f.bones.iter().all(|b| b[2][0].is_nan() && b[0][0].is_finite()));
+    }
+
+    #[test]
+    fn frame_step_and_count_follow_the_end_key() {
+        for (end, step, count) in [(240, 1.0, 241), (1000, 5.0, 201), (0, 1.0, 1), (-1, 1.0, 1), (60, 1.0, 61), (241, 2.0, 121)] {
+            let ani = Ani::parse(&arm_ani(end), "t.ani").unwrap();
+            let f = anim_frames(&ani, &[], &mut || false).unwrap();
+            assert_eq!((f.step, f.bones.len()), (step, count), "end key {end}");
+            assert!(f.frames.is_empty(), "no mesh, no pictures");
+        }
+    }
+
+    #[test]
+    fn the_view_is_the_same_for_every_frame() {
+        let (ani, c) = arm();
+        let f = anim_frames(&ani, &[&c.meshes[0]], &mut || false).unwrap();
+        assert_eq!(f.frames.len(), 61);
+        // the root never moves, so it projects to the same point in every frame (one fit for all of them)
+        assert!(f.bones.iter().all(|b| b[0] == f.bones[0][0]));
+        // the tip of the arm does move
+        assert!(f.bones[0][2] != f.bones[60][2]);
+        assert_eq!((f.width, f.height), (240, 220));
+    }
+
+    #[test]
+    fn cancel_stops_frame_rendering() {
+        let (ani, c) = arm();
+        let mut asked = 0;
+        assert!(anim_frames(&ani, &[&c.meshes[0]], &mut || {
+            asked += 1;
+            asked >= 3
+        })
+        .is_none());
+        assert_eq!(asked, 3, "stops at the first yes (pass 1)");
+        let mut asked = 0;
+        assert!(anim_frames(&ani, &[&c.meshes[0]], &mut || {
+            asked += 1;
+            asked > 61 + 5
+        })
+        .is_none());
+        assert_eq!(asked, 61 + 6, "stops in pass 2 after five frames");
+        assert!(anim_frames(&ani, &[&c.meshes[0]], &mut || false).is_some());
+    }
+
+    #[test]
+    fn render_picture_at_2_is_render_picture() {
+        let (_, c) = arm();
+        let m = &c.meshes[0];
+        let faces = mesh_faces(&[m]);
+        let pos = vec![m.vertices.iter().map(|v| v.pos).collect::<Vec<V3>>()];
+        let tris = tris_of(&faces, &[m], &pos);
+        let edges = edges_of(&mesh_edges(&faces), &pos);
+        let fit = PreviewFit::of(tris.iter().flat_map(|t| t.pos)).unwrap();
+        let (a, b) = (render_picture(&tris, &[], &edges, fit), render_picture_at(&tris, &[], &edges, fit, 2.0));
+        assert_eq!((a.width, a.height), (480, 440));
+        assert!(a.rgba == b.rgba && (a.plain_px, a.textured_px) == (b.plain_px, b.textured_px));
+        let one = render_picture_at(&tris, &[], &edges, fit, ANIM_PICTURE_SCALE);
+        assert_eq!((one.width, one.height), (240, 220));
+    }
+
+    #[test]
+    fn c3dc_picture_draws_the_rest_pose_grey() {
+        let (_, c) = arm();
+        let p = c3dc_picture(&c).unwrap();
+        assert_eq!((p.width, p.height), (480, 440));
+        assert!(p.plain_px > 100 && p.textured_px == 0, "{} {}", p.plain_px, p.textured_px);
+        let empty = C3dc { layout: c.layout, meshes: Vec::new() };
+        assert!(c3dc_picture(&empty).is_none());
+    }
+
+    /// The vertices the recorded table names: three of the first box and five of the second.
+    const NAMED: [usize; 8] = [1, 3, 7, 9, 10, 11, 14, 15];
+
+    #[test]
+    fn the_arm_poses_match_the_recorded_numbers() {
+        // Recorded from the code at first build (rounded to 1e-3), not derived by hand; compared within 2e-3 so that a one-ulp
+        // difference of a platform's sin or acos cannot fail it. Rows: t = 0, 10, 20, 30, 40, 50, 60; columns: the NAMED vertices.
+        const RECORDED: [[[f32; 3]; 8]; 7] = [
+            [[0.100, 0.000, -0.100], [0.100, 1.000, -0.100], [0.100, 1.000, 0.100], [0.100, 1.000, -0.100], [-0.100, 2.000, -0.100], [0.100, 2.000, -0.100], [-0.100, 2.000, 0.100], [0.100, 2.000, 0.100]],
+            [[0.100, 0.000, -0.100], [0.098, 1.013, -0.100], [0.098, 1.013, 0.100], [0.097, 1.026, -0.100], [-0.355, 1.940, -0.100], [-0.162, 1.992, -0.100], [-0.355, 1.940, 0.100], [-0.162, 1.992, 0.100]],
+            [[0.100, 0.000, -0.100], [0.093, 1.025, -0.100], [0.093, 1.025, 0.100], [0.087, 1.050, -0.100], [-0.587, 1.816, -0.100], [-0.413, 1.916, -0.100], [-0.587, 1.816, 0.100], [-0.413, 1.916, 0.100]],
+            [[0.100, 0.000, -0.100], [0.085, 1.035, -0.100], [0.085, 1.035, 0.100], [0.071, 1.071, -0.100], [-0.778, 1.636, -0.100], [-0.636, 1.778, -0.100], [-0.778, 1.636, 0.100], [-0.636, 1.778, 0.100]],
+            [[0.100, 0.000, -0.100], [0.075, 1.043, -0.100], [0.075, 1.043, 0.100], [0.050, 1.087, -0.100], [-0.916, 1.413, -0.100], [-0.816, 1.587, -0.100], [-0.916, 1.413, 0.100], [-0.816, 1.587, 0.100]],
+            [[0.100, 0.000, -0.100], [0.063, 1.048, -0.100], [0.063, 1.048, 0.100], [0.026, 1.097, -0.100], [-0.992, 1.162, -0.100], [-0.940, 1.355, -0.100], [-0.992, 1.162, 0.100], [-0.940, 1.355, 0.100]],
+            [[0.100, 0.000, -0.100], [0.050, 1.050, -0.100], [0.050, 1.050, 0.100], [0.000, 1.100, -0.100], [-1.000, 0.900, -0.100], [-1.000, 1.100, -0.100], [-1.000, 0.900, 0.100], [-1.000, 1.100, 0.100]],
+        ];
+        let (ani, c) = arm();
+        let local = locals(&ani);
+        for (row, t) in RECORDED.iter().zip([0.0, 10.0, 20.0, 30.0, 40.0, 50.0, 60.0]) {
+            let (p, unposed) = skin(&c.meshes[0], &pose(&ani, &local, t));
+            assert_eq!(unposed, 0);
+            for (want, &i) in row.iter().zip(&NAMED) {
+                for k in 0..3 {
+                    assert!(near(p[i][k], want[k], 2e-3), "t {t}, vertex {i}, axis {k}: {} vs {}", p[i][k], want[k]);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn the_arm_frames_draw_about_the_recorded_pixel_counts() {
+        // Recorded from the code at first build, not derived: the number of opaque pixels of each of the 61 frames, compared within 1 %.
+        // No pixel hash: a hash would depend on the platform's libm.
+        const DRAWN: [usize; 61] = [
+            5898, 5848, 5866, 5886, 5903, 5923, 5930, 5924, 5921, 5925,
+            5938, 5936, 5939, 5933, 5928, 5922, 5924, 5919, 5919, 5919,
+            5914, 5912, 5891, 5902, 5896, 5890, 5884, 5886, 5880, 5876,
+            5866, 5852, 5841, 5825, 5814, 5798, 5789, 5774, 5760, 5743,
+            5724, 5705, 5678, 5650, 5628, 5604, 5579, 5554, 5526, 5500,
+            5470, 5438, 5404, 5358, 5339, 5306, 5268, 5231, 5197, 5158,
+            5119,
+        ];
+        let (ani, c) = arm();
+        let f = anim_frames(&ani, &[&c.meshes[0]], &mut || false).unwrap();
+        assert_eq!(f.frames.len(), 61);
+        for (i, px) in f.frames.iter().enumerate() {
+            let n = drawn(px);
+            assert!(n >= 1, "frame {i} draws something");
+            let tol = (DRAWN[i] as f32 * 0.01).ceil() as usize;
+            assert!(n.abs_diff(DRAWN[i]) <= tol, "frame {i}: {n} drawn, recorded {}", DRAWN[i]);
+        }
+        assert!(f.frames[0] != f.frames[60], "the arm moves");
+        assert_eq!((f.unposed_vertices, f.nonfinite_bones, f.triangles), (0, 0, 24));
     }
 }
