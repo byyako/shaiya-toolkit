@@ -25,6 +25,8 @@ Every file format the toolkit reads or writes has a page here. A page says what 
 | Models (`.smod`) | [smod.md](smod.md) | `shaiya-clientdata`: the editor | not written | US EP4.5: 1,355 of 1,355 to the last byte |
 | Animations (`.ANI`) | [ani.md](ani.md) | `shaiya-clientdata`: `Ani::parse`, `validate`, `rig_check`; Shaiya Toolkit's Archive tab previews and plays it | not written by any tool; `Ani::to_bytes` builds bytes in memory for the tests | US EP4.5: 3,509 of 3,509 read to the last byte and write back byte for byte; the eight other matrix clients are index only (files counted, none read) |
 | Skinned meshes (`.3DC`) | [3dc.md](3dc.md) | `shaiya-clientdata`: `C3dc::parse`; Shaiya Toolkit's Archive tab previews it at rest and uses it as an animation's mesh | not written by any tool; `C3dc::to_bytes` builds bytes in memory for the tests | US EP4.5: 2,431 of 2,431 read to the last byte and write back byte for byte; the eight other matrix clients are index only (files counted, none read) |
+| Vertex-animated models (`.VANI`) | [vani.md](vani.md) | `shaiya-clientdata`: `Vani::parse` (no program shows it yet) | not written by any tool; `Vani::to_bytes` builds bytes in memory for the tests | US EP4.5: 66 of 66 read to the last byte and write back byte for byte; the eight other matrix clients are index only (files counted, none read) |
+| Building motion (`.MANI`) | [mani.md](mani.md) | `shaiya-clientdata`: `Mani::parse` (no program shows it yet); every field meaning is inferred | not written by any tool; `Mani::to_bytes` builds bytes in memory for the tests | US EP4.5: 23 of 23 (108 bytes each) read and write back byte for byte; the nine indexes list only 108-byte files; the eight other matrix clients are index only (files counted, none read) |
 | Textures (DDS, TGA) | [textures.md](textures.md) | `shaiya-clientdata`, the Archive tab's preview, the checks before files go in | the editor writes light maps, masks and a minimap for new maps | US EP4.5; the orientation of the minimap and the chunk layout of a blank field were not checked in the game |
 | `sysmsg-uni.txt` and map names | [sysmsg.md](sysmsg.md) | `shaiya-clientdata`: the editor, `shaiya svmap` | not written | US EP4.5 patch 108; text for 47 of 47 ids on every matrix client that has the file, 44 on `cn-ep4` |
 | `TacticsZone.zon` | [tacticszone-zon.md](tacticszone-zon.md) | `shaiya-clientdata`: the editor | not written | US EP4.5: 35 areas to the last byte |
@@ -40,8 +42,6 @@ These extensions are in the archives of the nine matrix clients and no page cove
 |---|---|---|---|---|
 | `.3DO` | 271 | 271 to 514 | 9 | 0.4.0 animations |
 | `.3DE` | 469 | 469 to 1,344 | 9 | 0.4.0 animations |
-| `.VANI` | 66 | 66 to 141 | 9 | 0.4.0 animations |
-| `.MANI` | 23 | 23 to 64 | 9 | 0.4.0 animations |
 | `.EFT` | 446 | 423 to 969 | 9 | 0.5.0 effects |
 | `.SEFF` | 4 | 4 to 5 | 9 | 0.5.0 effects |
 | `.FX` | 0 | 0 to 6 | 2 | 0.5.0 effects |

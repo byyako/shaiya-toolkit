@@ -1,11 +1,11 @@
-//! The animation capabilities of the matrix: the `.ANI` and `.3DC` files the index lists (every client, index only) and, where the client folder
+//! The animation capabilities of the matrix: the `.ANI`, `.3DC`, `.VANI` and `.MANI` files the index lists (every client, index only) and, where the client folder
 //! holds its `data.saf`, whether every one reads to the last byte and writes back byte for byte (`.ANI` also: validates without an error).
 
 use crate::{Cap, Cell, Observed};
 use shaiya_archive::{Archive, Index};
 use shaiya_clientdata::anim::{validate, Severity};
 use shaiya_clientdata::meshpick::{mesh_candidates_in, MeshInfo};
-use shaiya_clientdata::{Ani, C3dc};
+use shaiya_clientdata::{Ani, C3dc, Mani, Vani};
 use std::path::Path;
 
 use Cell::{Fails as F, NotAvailable as NA, Ok as O};
@@ -136,4 +136,83 @@ pub(crate) fn ani_preview_caps(o: &mut Observed, dir: &Path, idx: &Index) {
     o.set(Cap::AniPreview, if unread == 0 && with_mesh > 0 { O } else { F });
     o.numbers.push((Cap::AniPreview, with_mesh));
     o.facts.push(format!("animation previews: {with_mesh} of {} .ANI files have at least one compatible .3DC ({unread} do not read)", listed.len()));
+}
+
+fn is_vani(path: &str) -> bool {
+    path.to_ascii_lowercase().ends_with(".vani")
+}
+
+fn is_mani(path: &str) -> bool {
+    path.to_ascii_lowercase().ends_with(".mani")
+}
+
+fn has_data_file(dir: &Path) -> bool {
+    std::fs::read_dir(dir).ok().is_some_and(|rd| rd.flatten().any(|e| e.file_name().to_string_lossy().eq_ignore_ascii_case("data.saf")))
+}
+
+/// Sets `VaniIndexCount` from the index and `VaniRoundTrip` from the contents (`n/a` without a `data.saf`).
+pub(crate) fn vani_caps(o: &mut Observed, dir: &Path, idx: &Index) {
+    let listed: Vec<_> = idx.visible().into_iter().filter(|f| is_vani(&f.path)).collect();
+    o.set(Cap::VaniIndexCount, O);
+    o.numbers.push((Cap::VaniIndexCount, listed.len() as u64));
+    if !has_data_file(dir) || listed.is_empty() {
+        o.set(Cap::VaniRoundTrip, NA);
+        return;
+    }
+    let archive = match Archive::open(dir) {
+        Ok(a) => a,
+        Err(e) => {
+            o.notes.push(format!("vani round trip: {e}"));
+            o.set(Cap::VaniRoundTrip, F);
+            return;
+        }
+    };
+    let mut good = 0u64;
+    for f in &listed {
+        match archive.read_entry(f.entry).map_err(|e| e.to_string()).and_then(|b| Vani::parse(&b, &f.path).map(|m| (m, b)).map_err(|e| e.to_string())) {
+            Ok((m, bytes)) if m.to_bytes() == bytes => good += 1,
+            Ok(_) => o.notes.push(format!("vani {}: written back differently", f.path)),
+            Err(e) => o.notes.push(format!("vani {}: {e}", f.path)),
+        }
+    }
+    o.set(Cap::VaniRoundTrip, if good == listed.len() as u64 { O } else { F });
+    o.numbers.push((Cap::VaniRoundTrip, good));
+    o.facts.push(format!("vertex-animated models: {} .VANI files, {good} read and written back identically", listed.len()));
+}
+
+/// Sets `ManiIndexCount` and `ManiIndexSize` from the index (every client; the size is the index's length of each entry, no contents) and
+/// `ManiRoundTrip` from the contents (`n/a` without a `data.saf`).
+pub(crate) fn mani_caps(o: &mut Observed, dir: &Path, idx: &Index) {
+    let listed: Vec<_> = idx.visible().into_iter().filter(|f| is_mani(&f.path)).collect();
+    o.set(Cap::ManiIndexCount, O);
+    o.numbers.push((Cap::ManiIndexCount, listed.len() as u64));
+    let sized = listed.iter().filter(|f| f.entry.length as usize == shaiya_clientdata::mani::MANI_SIZE).count() as u64;
+    o.set(Cap::ManiIndexSize, if sized == listed.len() as u64 { O } else { F });
+    o.numbers.push((Cap::ManiIndexSize, sized));
+    if sized != listed.len() as u64 {
+        o.notes.push(format!("mani sizes: {} of {} .MANI files are not 108 bytes", listed.len() as u64 - sized, listed.len()));
+    }
+    if !has_data_file(dir) || listed.is_empty() {
+        o.set(Cap::ManiRoundTrip, NA);
+        return;
+    }
+    let archive = match Archive::open(dir) {
+        Ok(a) => a,
+        Err(e) => {
+            o.notes.push(format!("mani round trip: {e}"));
+            o.set(Cap::ManiRoundTrip, F);
+            return;
+        }
+    };
+    let mut good = 0u64;
+    for f in &listed {
+        match archive.read_entry(f.entry).map_err(|e| e.to_string()).and_then(|b| Mani::parse(&b, &f.path).map(|m| (m, b)).map_err(|e| e.to_string())) {
+            Ok((m, bytes)) if m.to_bytes() == bytes => good += 1,
+            Ok(_) => o.notes.push(format!("mani {}: written back differently", f.path)),
+            Err(e) => o.notes.push(format!("mani {}: {e}", f.path)),
+        }
+    }
+    o.set(Cap::ManiRoundTrip, if good == listed.len() as u64 { O } else { F });
+    o.numbers.push((Cap::ManiRoundTrip, good));
+    o.facts.push(format!("building motion: {} .MANI files, {good} read and written back identically", listed.len()));
 }

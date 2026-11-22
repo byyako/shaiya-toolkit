@@ -152,3 +152,148 @@ pub fn arm_mesh_3dc() -> Vec<u8> {
     }
     c3dc_bytes(b"arm.tga\0", &bones, &vertices, &faces)
 }
+
+/// One vertex of a `.VANI` (36 bytes in the file): position, normal, diffuse colour, texture coordinates.
+#[derive(Clone, Copy, Debug)]
+pub struct VaniVertSpec {
+    pub pos: [f32; 3],
+    pub normal: [f32; 3],
+    pub diffuse: u32,
+    pub uv: [f32; 2],
+}
+
+/// One item of a `.VANI`: texture bytes, the faces shared by every step and the vertices of all steps, step by step (the number per step is
+/// `vertices.len() / step_count`).
+#[derive(Clone, Debug)]
+pub struct VaniItemSpec {
+    pub texture: Vec<u8>,
+    pub faces: Vec<[u16; 3]>,
+    pub vertices: Vec<VaniVertSpec>,
+}
+
+/// A collision mesh: points and faces.
+#[derive(Clone, Debug)]
+pub struct CollisionSpec {
+    pub points: Vec<[f32; 3]>,
+    pub faces: Vec<[u16; 3]>,
+}
+
+/// A `.VANI` to build: sphere, box, steps, `frame_ms`, items, the second box and an optional collision mesh (points, faces).
+#[derive(Clone, Debug)]
+pub struct VaniSpec {
+    pub centre: [f32; 3],
+    pub radius: f32,
+    pub min: [f32; 3],
+    pub max: [f32; 3],
+    pub step_count: i32,
+    pub frame_ms: i32,
+    pub items: Vec<VaniItemSpec>,
+    pub box2: ([f32; 3], [f32; 3]),
+    pub collision: Option<CollisionSpec>,
+}
+
+fn put_f32s(d: &mut Vec<u8>, v: &[f32]) {
+    for c in v {
+        d.extend_from_slice(&c.to_bits().to_le_bytes());
+    }
+}
+
+fn put_faces(d: &mut Vec<u8>, faces: &[[u16; 3]]) {
+    d.extend_from_slice(&(faces.len() as i32).to_le_bytes());
+    for f in faces {
+        for i in f {
+            d.extend_from_slice(&i.to_le_bytes());
+        }
+    }
+}
+
+/// The bytes of a `.VANI`: `f32 sphere centre[3], radius, box min[3], max[3]; i32 item count, step count, frame_ms`; per item `i32 length +
+/// texture, faces, i32 vertices per step, vertices`; `f32 second box`; `i32 collision flag` (0, or 1 and a collision mesh). The vertex
+/// count of an item must be a multiple of the step count.
+pub fn vani_bytes(s: &VaniSpec) -> Vec<u8> {
+    let mut d = Vec::new();
+    put_f32s(&mut d, &s.centre);
+    put_f32s(&mut d, &[s.radius]);
+    put_f32s(&mut d, &s.min);
+    put_f32s(&mut d, &s.max);
+    for n in [s.items.len() as i32, s.step_count, s.frame_ms] {
+        d.extend_from_slice(&n.to_le_bytes());
+    }
+    for it in &s.items {
+        d.extend_from_slice(&(it.texture.len() as u32).to_le_bytes());
+        d.extend_from_slice(&it.texture);
+        put_faces(&mut d, &it.faces);
+        let per_step = if s.step_count > 0 { it.vertices.len() / s.step_count as usize } else { 0 };
+        assert_eq!(per_step * s.step_count.max(0) as usize, it.vertices.len(), "vertices must be a whole number of steps");
+        d.extend_from_slice(&(per_step as i32).to_le_bytes());
+        for v in &it.vertices {
+            put_f32s(&mut d, &v.pos);
+            put_f32s(&mut d, &v.normal);
+            d.extend_from_slice(&v.diffuse.to_le_bytes());
+            put_f32s(&mut d, &v.uv);
+        }
+    }
+    put_f32s(&mut d, &s.box2.0);
+    put_f32s(&mut d, &s.box2.1);
+    match &s.collision {
+        None => d.extend_from_slice(&0i32.to_le_bytes()),
+        Some(c) => {
+            d.extend_from_slice(&1i32.to_le_bytes());
+            d.extend_from_slice(&(c.points.len() as i32).to_le_bytes());
+            for p in &c.points {
+                put_f32s(&mut d, p);
+            }
+            put_faces(&mut d, &c.faces);
+        }
+    }
+    d
+}
+
+/// A `.VANI` with one item: a unit box (8 vertices, 12 triangles) whose top four vertices rise by `step / 10` at each of `steps` steps.
+pub fn box_vani(steps: i32, frame_ms: i32) -> Vec<u8> {
+    let mut faces: Vec<[u16; 3]> = Vec::new();
+    for q in [[0u16, 1, 3, 2], [4, 6, 7, 5], [0, 2, 6, 4], [1, 5, 7, 3], [0, 4, 5, 1], [2, 3, 7, 6]] {
+        faces.push([q[0], q[1], q[2]]);
+        faces.push([q[0], q[2], q[3]]);
+    }
+    let mut vertices = Vec::new();
+    for step in 0..steps {
+        for i in 0..8u16 {
+            let (x, y, z) = (if i & 1 == 0 { 0.0 } else { 1.0 }, if i & 2 == 0 { 0.0 } else { 1.0 }, if i & 4 == 0 { 0.0 } else { 1.0 });
+            let lift = if y > 0.5 { step as f32 / 10.0 } else { 0.0 };
+            vertices.push(VaniVertSpec { pos: [x, y + lift, z], normal: [0.0, 1.0, 0.0], diffuse: 0xFFFF_FFFF, uv: [x, z] });
+        }
+    }
+    vani_bytes(&VaniSpec {
+        centre: [0.5, 0.5, 0.5],
+        radius: 0.866,
+        min: [0.0, 0.0, 0.0],
+        max: [1.0, 1.0, 1.0],
+        step_count: steps,
+        frame_ms,
+        items: vec![VaniItemSpec { texture: b"box.tga\0".to_vec(), faces, vertices }],
+        box2: ([0.0; 3], [1.0; 3]),
+        collision: None,
+    })
+}
+
+/// The 108 bytes of a `.MANI` with typical values: `tick_ms`, `move_on` and `move_pause_ms` (two `u16` at offset 80), and the last field as raw
+/// bits (`500` gives the integer form, `10.0f32.to_bits()` the float form). Every other field takes a plain value.
+pub fn mani_bytes(tick_ms: i32, move_on: u16, move_pause_ms: u16, distance_bits: u32) -> Vec<u8> {
+    let mut d = Vec::with_capacity(108);
+    let f = |d: &mut Vec<u8>, v: &[f32]| put_f32s(d, v);
+    d.extend_from_slice(&tick_ms.to_le_bytes());
+    d.extend_from_slice(&0i32.to_le_bytes()); // swing_on
+    f(&mut d, &[1.0, 0.0, 0.0, 0.0, 0.0, 1.0]); // swing_axis, swing_limit, swing_step, swing_unused
+    d.extend_from_slice(&80i32.to_le_bytes()); // swing_pause_ms
+    d.extend_from_slice(&0i32.to_le_bytes()); // orbit_on
+    f(&mut d, &[1.0, 0.0, 0.0, 0.0, 0.0]); // orbit_axis, orbit_step, orbit_radius
+    d.extend_from_slice(&0i32.to_le_bytes()); // spin_on
+    f(&mut d, &[0.0, 0.0, 1.0, -0.01745]); // spin_axis, spin_step
+    d.extend_from_slice(&move_on.to_le_bytes());
+    d.extend_from_slice(&move_pause_ms.to_le_bytes());
+    f(&mut d, &[1.0, 0.0, 0.0, 0.0, 1.01]); // move_dir, move_speed, move_accel
+    d.extend_from_slice(&distance_bits.to_le_bytes());
+    assert_eq!(d.len(), 108);
+    d
+}

@@ -248,3 +248,28 @@ fn c3dc_round_trip() {
 fn ani_preview() {
     check(Cap::AniPreview);
 }
+
+#[test]
+fn vani_index_count() {
+    check(Cap::VaniIndexCount);
+}
+
+#[test]
+fn vani_round_trip() {
+    check(Cap::VaniRoundTrip);
+}
+
+#[test]
+fn mani_index_count() {
+    check(Cap::ManiIndexCount);
+}
+
+#[test]
+fn mani_sizes_in_every_index_are_108() {
+    check(Cap::ManiIndexSize);
+}
+
+#[test]
+fn mani_round_trip() {
+    check(Cap::ManiRoundTrip);
+}
