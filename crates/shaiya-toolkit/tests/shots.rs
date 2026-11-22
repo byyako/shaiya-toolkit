@@ -71,7 +71,7 @@ fn the_archive_scene_opens_the_demo_client_with_a_picture_selected() {
     assert_eq!(s.h.app.app.tab, Tab::Archive);
     assert!(s.h.app.app.archive.is_open() && s.h.app.app.archive.has_texture());
     let t = s.h.text();
-    assert!(t.contains(CLIENT_NAME) && t.contains("data.sah v0, 8 files"), "{t}");
+    assert!(t.contains(CLIENT_NAME) && t.contains("data.sah v0, 10 files"), "{t}");
     assert_no_path(&s, "archive");
 }
 
@@ -141,6 +141,37 @@ fn the_model_preview_scene_shows_the_textured_demo_box() {
     let t = s.h.text();
     assert!(t.contains("1 module, 12 triangles, 1 texture (0 missing)"), "{t}");
     assert_no_path(&s, "model-preview");
+}
+
+#[test]
+fn the_anim_preview_scene_shows_the_paused_player() {
+    let mut s = scene("anim-preview");
+    wait_preview(&mut s);
+    assert_eq!(s.h.app.app.tab, Tab::Archive);
+    assert_eq!(s.h.app.app.archive.preview_kind(), Some("anim"));
+    assert!(s.h.app.app.archive.has_texture());
+    let p = &s.h.app.app.archive.preview.player;
+    assert_eq!(p.t, 30.0, "the player is at key 30");
+    assert!(!p.playing, "the player is paused");
+    assert!(p.show_bones, "Bones is on");
+    let t = s.h.text();
+    assert!(t.contains("key 30 of 60, 1.0 s") && t.contains("Mesh: Default parts (1)") && t.contains("Bones (3)"), "{t}");
+    assert_no_path(&s, "anim-preview");
+}
+
+#[test]
+fn the_demo_animation_reads_and_has_a_matching_mesh() {
+    // the two made-up files parse to the last byte ...
+    let ani = shaiya_clientdata::anim::Ani::parse(&shaiya_testkit::anim::arm_ani(60), "demo_wave.ANI").expect("the demo animation reads");
+    assert_eq!((ani.bones.len(), ani.end_key), (3, 60));
+    let mesh = shaiya_clientdata::mesh3dc::C3dc::parse(&shaiya_testkit::anim::arm_mesh_3dc(), "demo_arm.3DC").expect("the demo mesh reads");
+    assert!(!mesh.meshes.is_empty());
+    // ... and the mesh is offered by name for the animation in the demo archive (the 3DC folder next to the ANI folder)
+    let mut s = scene("anim-preview");
+    wait_preview(&mut s);
+    let Some(shaiya_toolkit::preview::PreviewData::Anim { mesh_choices, .. }) = s.h.app.app.archive.preview_data() else { panic!("not an animation preview") };
+    let labels: Vec<&str> = mesh_choices.iter().map(|(_, l)| l.as_str()).collect();
+    assert_eq!(labels, ["Skeleton only", "Default parts (1)", "demo_arm.3DC"]);
 }
 
 #[test]

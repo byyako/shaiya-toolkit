@@ -1497,6 +1497,13 @@ impl ArchiveView {
         }
     }
 
+    /// Pauses the player of an open `.ANI` preview at key `t` (the `anim-preview` scene). False when no animation preview is open.
+    pub fn pause_anim_at(&mut self, t: f32) -> bool {
+        let Some(PreviewData::Anim { end_key, .. }) = &self.preview.data else { return false };
+        self.preview.player.scrub(t, *end_key);
+        true
+    }
+
     pub fn preview_ready(&self) -> bool {
         self.preview.handle.is_none() && (self.preview.data.is_some() || self.preview.error.is_some() || self.preview.row.is_none())
     }

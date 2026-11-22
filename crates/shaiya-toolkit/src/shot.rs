@@ -14,7 +14,7 @@ use shaiya_core::Job;
 use std::path::{Path, PathBuf};
 
 /// The scenes, in the order the documentation lists them.
-pub const SCENES: &[&str] = &["start", "archive", "patch-builder", "apply-history", "sdata-table", "health", "map-preview", "model-preview", "inspect"];
+pub const SCENES: &[&str] = &["start", "archive", "patch-builder", "apply-history", "sdata-table", "health", "map-preview", "model-preview", "anim-preview", "inspect"];
 
 /// The name the demo client is saved under (the only name a screenshot shows for its folder).
 pub const CLIENT_NAME: &str = "Demo client";
@@ -24,6 +24,9 @@ pub const MARKER: &str = "shaiya-demo-client.txt";
 
 /// The pack time the queued demo files get (the same as the demo archive's own files; see `shaiya_testkit::demo::DEMO_PACKED_AT`).
 const PACKED_AT: i32 = 1_262_304_000;
+
+/// The key the `anim-preview` scene pauses the player at.
+const ANIM_SHOT_KEY: f32 = 30.0;
 
 /// Where a scene is.
 pub struct SceneRun {
@@ -121,6 +124,14 @@ impl ToolkitApp {
             ("health", 1) => self.open_health(Some(CLIENT_NAME), cx),
             ("map-preview", 1) => self.archive.select_path("world/7.wld", cx),
             ("model-preview", 1) => self.archive.select_path("Entity/Building/demo-box.smod", cx),
+            ("anim-preview", 1) => self.archive.select_path("Demo/ANI/demo_wave.ANI", cx),
+            // the preview is ready now: pause the player at key 30 (Bones is on by default)
+            ("anim-preview", 2) => {
+                if !self.archive.pause_anim_at(ANIM_SHOT_KEY) {
+                    eprintln!("warning: the demo animation did not open as an animation; the screenshot shows what is there");
+                    return false;
+                }
+            }
             _ => return false,
         }
         true
@@ -133,6 +144,6 @@ mod tests {
 
     #[test]
     fn the_scene_names_are_the_documented_ones() {
-        assert_eq!(SCENES, &["start", "archive", "patch-builder", "apply-history", "sdata-table", "health", "map-preview", "model-preview", "inspect"]);
+        assert_eq!(SCENES, &["start", "archive", "patch-builder", "apply-history", "sdata-table", "health", "map-preview", "model-preview", "anim-preview", "inspect"]);
     }
 }

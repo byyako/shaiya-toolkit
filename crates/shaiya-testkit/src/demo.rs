@@ -1,5 +1,5 @@
 //! A synthetic client folder for screenshots and for the tests of the screenshot scenes. Every byte is made up here: neutral names, a
-//! gradient texture, a box model, a hill-shaped map. It holds no game data and no game art.
+//! gradient texture, a box model, a hill-shaped map, a three-bone arm animation and its mesh. It holds no game data and no game art.
 
 use crate::{bmp_stub, tga_stub, SahBuilder};
 use std::path::Path;
@@ -18,6 +18,8 @@ pub const DEMO_ARCHIVE_FILES: &[&str] = &[
     "world/7.wld",
     "Demo/readme.txt",
     "Demo/notes.txt",
+    "Demo/ANI/demo_wave.ANI",
+    "Demo/3DC/demo_arm.3DC",
 ];
 
 /// The pack time (Unix seconds, 2010-01-01 00:00 UTC) of every file of the demo archive.
@@ -165,6 +167,8 @@ pub fn demo_client(dir: &Path) -> Vec<String> {
         ("world/7.wld", demo_wld()),
         ("Demo/readme.txt", readme.to_vec()),
         ("Demo/notes.txt", notes.to_vec()),
+        ("Demo/ANI/demo_wave.ANI", crate::anim::arm_ani(60)),
+        ("Demo/3DC/demo_arm.3DC", crate::anim::arm_mesh_3dc()),
     ];
     debug_assert_eq!(files.iter().map(|(p, _)| *p).collect::<Vec<_>>(), DEMO_ARCHIVE_FILES);
     let mut b = SahBuilder::new(0);

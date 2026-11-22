@@ -56,6 +56,8 @@ A patch build (`shaiya patch build`, the Patch builder) has no copy of the clien
 
 Select the file in the Archive tab, in a client that holds your replacement. The player shows the animation posed on a mesh, with **Play/Pause**, a slider over the keys, **Loop**, **Bones** (the skeleton drawn as lines) and a **Mesh** choice: the default parts, a single mesh, or the skeleton alone. Time runs at 30 key units per second. The meshes (`.3DC` files) are found by name in the sibling `3DC` folder and are offered only when every bone they use exists in the animation; without one the skeleton is drawn. The picture is an approximation of the game's playback, validated offline.
 
+![The animation player on the synthetic demo arm, paused at key 30](../assets/screenshots/toolkit-anim-preview.png)
+
 ## 7. Undo
 
 Every change you apply is journaled, except with `--no-journal` or Compact, which make none. In Shaiya Toolkit use **Undo last change** or **Apply & history > Roll back...**; on the command line:
