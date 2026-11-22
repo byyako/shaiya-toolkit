@@ -63,7 +63,7 @@ Loose files, the ones that live next to `game.exe` rather than inside the archiv
 
 ## Checks before files go in
 
-Before an edit or a build, the toolkit looks at each file and prints what it finds as a warning; nothing is blocked. Shaiya Toolkit lists the same findings in the Add dialog and the Patch builder (and asks once for a file that is SEED-encrypted twice or whose checksum fails, or for an animation whose skeleton differs from the client's copy (`anim-rig-differs`): **Add anyway** in the Add dialog, **Build anyway** in the Patch builder, **Publish anyway** in Publish). The full table is in [Checks before files go in](../tools/shaiya.md#checks-before-files-go-in).
+Before an edit or a build, the toolkit looks at each file and prints what it finds as a warning; nothing is blocked. Shaiya Toolkit lists the same findings in the Add dialog and the Patch builder (and asks once for a file that is SEED-encrypted twice or whose checksum fails: **Add anyway** in the Add dialog, **Build anyway** in the Patch builder, **Publish anyway** in Publish; the skeleton question for an animation whose skeleton differs from the client's copy (`anim-rig-differs`) appears only when you add or replace a file in the Archive tab, `archive add` and `archive replace` warn about it, and the Patch builder and Publish have no rig check). The full table is in [Checks before files go in](../tools/shaiya.md#checks-before-files-go-in).
 
 - `sdata-double-encrypted`: the SData file was encrypted twice (its decrypted body is SEED-encrypted again). Decrypting it once with `shaiya sdata decrypt` gives the singly encrypted file.
 - `sdata-crc-bad`: the SEED checksum fails or the wrapper is damaged.

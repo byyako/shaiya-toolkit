@@ -94,6 +94,8 @@ On US EP4.5, the default parts of each of the 16 character rigs, posed with that
 
 US EP4.5 (patch 108), read only: all 3,509 `.ANI` files read to the last byte, write back byte for byte and have no validation error; 382 tracks (all rotation tracks) in 254 files start after key 0; 20 files hold NaN in reference matrices; the first field is -1 in 7 files, exactly those whose tracks start at key -1, and 0 in all others (inferred: the start key). The 16 character rigs have 1,192 files and 1,116 distinct skeletons (parents and reference matrices) between them; the lowest rig is 86 % distinct. Two animations that were replaced in that client pass the rig check against the stock files (2 files; compared with the original archive that sits beside the client).
 
+Seen in the game (US EP4.5): basic playback of one replaced victory emote on the `huwm` rig (the human male Fighter); everything else is validated offline only.
+
 ## Other episodes
 
 The eight other matrix clients have their index only: their `.ANI` files are counted (3,429 to 5,951), none was read. Whether they read is not checked.

@@ -58,6 +58,10 @@ US, RU, FR, CN, Phoenix, KR episode 8 and Fawkes v68. What works on which client
 | [formats/smod.md](formats/smod.md) | Models (`.smod`): modules, vertices, faces, collision, orientation |
 | [formats/ani.md](formats/ani.md) | Animations (`.ANI`): bones, keys, the skeleton rule, validation codes, the rig check, how a mesh is posed |
 | [formats/3dc.md](formats/3dc.md) | Skinned meshes (`.3DC`): the three layouts, bone indices, the rest-pose preview |
+| [formats/vani.md](formats/vani.md) | Vertex-animated models (`.VANI`): items, steps, per-step vertices, the inferred step time |
+| [formats/mani.md](formats/mani.md) | Building motion (`.MANI`): the 108-byte record and its 20 fields, every meaning inferred |
+| [formats/3do.md](formats/3do.md) | `.3DO` meshes: vertices, faces and the one file with vertex frames |
+| [formats/3de.md](formats/3de.md) | Effect meshes (`.3DE`): the two layouts, frames, the two refused files |
 | [formats/textures.md](formats/textures.md) | Textures: DDS and TGA as read; field chunk textures and the minimap the editor writes |
 | [formats/sysmsg.md](formats/sysmsg.md) | `sysmsg-uni.txt` and the table of map names |
 | [formats/tacticszone-zon.md](formats/tacticszone-zon.md) | `TacticsZone.zon`: header, areas with map id and type |
