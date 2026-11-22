@@ -3,6 +3,7 @@
 
 use shaiya_archive::{Archive, Entry};
 use shaiya_core::text::Encoding;
+pub use shaiya_clientdata::meshpick::{mesh_candidates_in, MeshInfo};
 use shaiya_core::{Error, Job, Result, Unit};
 use std::path::Path;
 
@@ -236,20 +237,6 @@ pub fn undocumented_model_format(path: &str) -> bool {
     matches!(ext_of(path).as_str(), "3do")
 }
 
-/// Most `.3DC` files of the sibling folder that are parsed to find the meshes of one animation.
-const CANDIDATES_MAX: usize = 64;
-/// Meshes drawn together when there are no named default parts.
-const DEFAULT_MESHES_MAX: usize = 8;
-/// The part words of a character's default parts, in this order.
-const PART_WORDS: [&str; 6] = ["torso", "lower", "hand", "boots", "face", "hair"];
-
-fn split_stem(name: &str) -> (&str, String) {
-    match name.rsplit_once('.') {
-        Some((s, e)) => (s, e.to_ascii_lowercase()),
-        None => (name, String::new()),
-    }
-}
-
 /// The `.3DC` files that suit the animation at `ani_path`, by names only (no list file is read): the folder next to the `ANI` folder
 /// whose name is `3DC` (any letter case); files whose stem equals the prefix or starts with the prefix and `_`. For
 /// `Character/<race>/ANI/<rig>_...` the prefix is the text before the first `_`; otherwise it is the animation's stem without its last
@@ -260,69 +247,8 @@ pub fn mesh_candidates(index: &shaiya_archive::Index, ani_path: &str, bone_count
     let paths: Vec<String> = index.visible().into_iter().map(|f| f.path).filter(|p| ext_of(p) == "3dc").collect();
     mesh_candidates_in(&paths, ani_path, bone_count, &mut |p| {
         let c = shaiya_clientdata::C3dc::parse(&read(p)?, p).ok()?;
-        Some(MeshInfo { skinned: c.layout != shaiya_clientdata::mesh3dc::C3dcLayout::Cloak, highest_bone: c.meshes.iter().flat_map(|m| m.vertices.iter().map(|v| v.bone1.max(v.bone2))).max() })
+        Some(MeshInfo::of(&c))
     })
-}
-
-/// What [`mesh_candidates_in`] needs to know about one `.3DC`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct MeshInfo {
-    /// Not a cloak (a skinned layout).
-    pub skinned: bool,
-    /// The highest bone index any vertex of any mesh names; `None` when there is no vertex.
-    pub highest_bone: Option<u8>,
-}
-
-/// [`mesh_candidates`] over a list of archive paths (the `.3DC` ones are used) and a function that reads what is needed about one
-/// file (`None` when it does not read). A caller that asks for many animations builds the list once and caches the answers.
-pub fn mesh_candidates_in(paths: &[String], ani_path: &str, bone_count: usize, info: &mut dyn FnMut(&str) -> Option<MeshInfo>) -> (Vec<String>, Vec<String>) {
-    let none = (Vec::new(), Vec::new());
-    let segs: Vec<&str> = ani_path.split(['/', '\\']).filter(|s| !s.is_empty()).collect();
-    let Some((file, folders)) = segs.split_last() else { return none };
-    let Some((last, parents)) = folders.split_last() else { return none };
-    if !last.eq_ignore_ascii_case("ani") {
-        return none;
-    }
-    let stem = split_stem(file).0;
-    let character = segs.len() == 4 && segs[0].eq_ignore_ascii_case("character");
-    let prefix = if character || !stem.contains('_') { stem.split('_').next().unwrap_or(stem) } else { stem.rsplit_once('_').map_or(stem, |(a, _)| a) };
-    let prefix = prefix.to_ascii_lowercase();
-    let mut folder_key: String = parents.iter().map(|p| format!("{}/", p.to_ascii_lowercase())).collect();
-    folder_key.push_str("3dc/");
-    let mut names: Vec<(String, String)> = Vec::new(); // (lower-case stem, archive path)
-    for path in paths {
-        let lower = path.replace('\\', "/").to_ascii_lowercase();
-        let Some(rest) = lower.strip_prefix(&folder_key) else { continue };
-        if rest.contains('/') {
-            continue;
-        }
-        let (stem, ext) = split_stem(rest);
-        if ext == "3dc" && (stem == prefix || stem.strip_prefix(&prefix).is_some_and(|t| t.starts_with('_'))) {
-            names.push((stem.to_string(), path.clone()));
-        }
-    }
-    names.sort();
-    names.truncate(CANDIDATES_MAX);
-    let mut compatible: Vec<(String, String)> = Vec::new();
-    for (stem, path) in names {
-        let Some(m) = info(&path) else { continue };
-        if m.skinned && m.highest_bone.is_some_and(|b| (b as usize) < bone_count) {
-            compatible.push((stem, path));
-        }
-    }
-    let mut defaults: Vec<String> = Vec::new();
-    if character {
-        for word in PART_WORDS {
-            let hit = compatible.iter().find(|(stem, _)| stem.strip_prefix(&prefix).and_then(|t| t.strip_prefix('_')).is_some_and(|t| t.starts_with(word)));
-            if let Some((_, p)) = hit {
-                defaults.push(p.clone());
-            }
-        }
-    }
-    if defaults.is_empty() {
-        defaults = compatible.iter().take(DEFAULT_MESHES_MAX).map(|(_, p)| p.clone()).collect();
-    }
-    (compatible.into_iter().map(|(_, p)| p).collect(), defaults)
 }
 
 fn kind_line(path: &str) -> String {
@@ -399,8 +325,8 @@ pub fn anim_preview(archive: &Archive, data: &[u8], path: &str, mesh: &MeshChoic
     };
     let (compatible, defaults) = mesh_candidates(archive.index(), path, ani.bones.len(), &mut read);
     let mesh = match mesh {
+        MeshChoice::One(_) | MeshChoice::Default if compatible.is_empty() => MeshChoice::Skeleton,
         MeshChoice::One(p) if !compatible.contains(p) => MeshChoice::Default,
-        MeshChoice::Default if compatible.is_empty() => MeshChoice::Skeleton,
         other => other.clone(),
     };
     let chosen: Vec<String> = match &mesh {
@@ -1116,6 +1042,15 @@ mod anim_tests {
         let s = anim(pv(&a, "Monster/ANI/Mob_T_01_Att1.ANI", &MeshChoice::Default));
         assert_eq!(s.header[0], "Animation in Monster/ANI");
         assert_eq!(s.frames.triangles, 3 * 24);
+    }
+
+    #[test]
+    fn a_one_request_with_no_compatible_mesh_becomes_skeleton() {
+        let d = TempDir::new("w4afix-none");
+        let a = open(&d, &[("Monster/ANI/Mob_T_01_Att1.ANI", arm_ani(30))]);
+        let s = anim(pv(&a, "Monster/ANI/Mob_T_01_Att1.ANI", &MeshChoice::One("Monster/3DC/Mob_T_01_A.3DC".into())));
+        assert_eq!(s.mesh, MeshChoice::Skeleton);
+        assert_eq!(s.frames.triangles, 0);
     }
 
     #[test]

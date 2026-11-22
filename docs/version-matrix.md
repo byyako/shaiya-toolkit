@@ -40,6 +40,7 @@ Client ids: `us-108` (US patch level 108), and the eight test clients `ru-ep3`, 
 | `Ani::parse` reads every `.ANI` to the last byte and `to_bytes` gives it back byte for byte; `validate` finds no error | OK 3,509 | n/a | n/a | n/a | n/a | n/a | n/a | n/a | n/a |
 | `.3DC` files the index lists (index only: the number is the visible `.3DC` files of the index; no contents were read on the eight test clients) | OK 2,431 | OK 2,635 | OK 3,049 | OK 3,164 | OK 3,126 | OK 4,988 | OK 4,220 | OK 6,534 | OK 2,317 |
 | `C3dc::parse` reads every `.3DC` to the last byte with exactly one layout and `to_bytes` gives it back byte for byte | OK 2,431 | n/a | n/a | n/a | n/a | n/a | n/a | n/a | n/a |
+| Animation preview: `.ANI` files that have at least one compatible `.3DC` mesh (found by name and bone count; validated offline) | OK 3,365 | n/a | n/a | n/a | n/a | n/a | n/a | n/a | n/a |
 
 Reading the table:
 
@@ -64,6 +65,7 @@ Reading the table:
 - The map-name row measures the presence of text for the distinct map-name message ids of the EP4.5 table (47 message ids covering 67 map ids), not its correctness; the cn-ep4 sysmsg lacks text for three of them.
 - The `.ANI` rows: the first counts the `.ANI` files each client's index lists; it reads no file contents. The second reads every `.ANI` on `us-108` (US EP4.5) and is `n/a` on the eight test clients because the test set holds no `data.saf` for them: their animations are counted from the index only and were never read. Whether a later episode's `.ANI` files read is not checked. See [ani.md](formats/ani.md).
 - The `.3DC` rows work the same way: the first counts the `.3DC` files each client's index lists (no contents read); the second reads every `.3DC` on `us-108` (US EP4.5) with exactly one of the three layouts and is `n/a` on the eight test clients (no `data.saf` in the test set; index only). Whether a later episode's `.3DC` files read is not checked. See [3dc.md](formats/3dc.md).
+- The animation preview row counts the `.ANI` files of `us-108` (US EP4.5) of the 3,509 that have at least one `.3DC` mesh in the sibling folder whose name fits and whose vertices name only bones the animation has; the rest show the skeleton only. The check is validated offline (the picture is an approximation of the game's playback and was not compared with the game). It is `n/a` on the eight test clients: their indexes list `.ANI` and `.3DC` files but no contents were read (index only). See [ani.md](formats/ani.md).
 
 ## SVMap Editor and `shaiya svmap`
 

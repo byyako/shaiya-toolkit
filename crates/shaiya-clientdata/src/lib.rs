@@ -8,6 +8,7 @@ pub mod area_txt;
 pub mod dg;
 pub mod error;
 pub mod mesh3dc;
+pub mod meshpick;
 pub mod render;
 pub mod sdata;
 pub mod seed;

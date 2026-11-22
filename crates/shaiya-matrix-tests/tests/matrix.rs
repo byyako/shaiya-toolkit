@@ -243,3 +243,8 @@ fn c3dc_index_count() {
 fn c3dc_round_trip() {
     check(Cap::C3dcRoundTrip);
 }
+
+#[test]
+fn ani_preview() {
+    check(Cap::AniPreview);
+}

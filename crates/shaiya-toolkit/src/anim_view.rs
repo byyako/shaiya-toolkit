@@ -135,15 +135,16 @@ pub(crate) fn draw(ui: &mut egui::Ui, pal: &Pal, player: &mut AnimPlayer, data: 
     let (rect, _) = ui.allocate_exact_size(size, egui::Sense::hover());
     ui.painter().rect_filled(rect, 0.0, Color32::from_gray(40));
     if let Some(rgba) = frames.frames.get(idx) {
-        let img = egui::ColorImage::from_rgba_unmultiplied([frames.width, frames.height], rgba);
+        // built only when uploaded (a frame change), not on every repaint
+        let img = || egui::ColorImage::from_rgba_unmultiplied([frames.width, frames.height], rgba);
         match tex {
             Some((shown, handle)) => {
                 if *shown != idx {
-                    handle.set(img, egui::TextureOptions::LINEAR);
+                    handle.set(img(), egui::TextureOptions::LINEAR);
                     *shown = idx;
                 }
             }
-            None => *tex = Some((idx, ctx.load_texture("anim-frame", img, egui::TextureOptions::LINEAR))),
+            None => *tex = Some((idx, ctx.load_texture("anim-frame", img(), egui::TextureOptions::LINEAR))),
         }
         if let Some((_, handle)) = tex {
             ui.painter().image(handle.id(), rect, egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)), Color32::WHITE);
