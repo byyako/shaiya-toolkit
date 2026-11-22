@@ -258,6 +258,7 @@ fn compare_a_first_field_difference_is_its_own_line_and_does_not_pass() {
     assert_eq!((v["same_skeleton"].as_bool(), v["same_first_field"].as_bool(), v["passes"].as_bool()), (Some(true), Some(false), Some(false)));
     assert_eq!(v["differences"][0]["kind"], "first_field");
     assert_eq!(v["differences"][0]["skeleton"], false);
+    assert_eq!(v["differences"][0]["inferred"], "start key");
 }
 
 #[test]
@@ -334,6 +335,42 @@ fn a_cloak_is_described_without_bones() {
     assert!(out(&o).contains("cloak mesh without bones, 3 vertices, 1 triangle"), "{}", out(&o));
     let j = json(&sh(&w.data, &["anim", "info", p(&d.join("cloak.3dc")), "--json"]));
     assert_eq!((j["files"][0]["layout"].as_str(), j["files"][0]["bones"].as_u64()), (Some("cloak"), Some(0)));
+}
+
+#[test]
+fn a_skinned_mesh_with_a_second_mesh_is_described_as_such() {
+    let w = world();
+    let d = w.tmp.path().join("f");
+    let mut two = arm_mesh_3dc();
+    two.extend_from_slice(&arm_mesh_3dc());
+    write(&d.join("two.3dc"), &two);
+    let o = sh(&w.data, &["anim", "info", p(&d.join("two.3dc"))]);
+    assert_eq!(code(&o), 0, "{}", err(&o));
+    assert!(out(&o).contains("two.3dc: skinned mesh with a second mesh, 32 vertices, 48 triangles, 3 bones, highest vertex bone 2"), "{}", out(&o));
+    let j = json(&sh(&w.data, &["anim", "info", p(&d.join("two.3dc")), "--json"]));
+    assert_eq!((j["files"][0]["layout"].as_str(), j["files"][0]["vertices"].as_u64()), (Some("skinned-with-second-mesh"), Some(32)));
+}
+
+#[test]
+fn a_named_file_with_the_wrong_extension_is_refused_without_being_read() {
+    let w = world();
+    let d = w.tmp.path().join("f");
+    write(&d.join("data.saf"), b"not an animation");
+    write(&d.join("m.3dc"), &arm_mesh_3dc());
+    // on Windows the files are held open with no sharing, so any attempt to read them fails with a read error: the extension refusal
+    // below can only come from a check that runs before the read
+    #[cfg(windows)]
+    let _held = {
+        use std::os::windows::fs::OpenOptionsExt;
+        [d.join("data.saf"), d.join("m.3dc")].map(|f| std::fs::OpenOptions::new().read(true).share_mode(0).open(f).unwrap())
+    };
+    let o = sh(&w.data, &["anim", "info", p(&d.join("data.saf"))]);
+    assert_eq!(code(&o), 3, "{}", err(&o));
+    assert!(out(&o).contains("data.saf: FAILED: ") && out(&o).contains("not an .ANI or .3DC file"), "{}", out(&o));
+    // validate refuses a .3DC by name too
+    let o = sh(&w.data, &["anim", "validate", p(&d.join("m.3dc"))]);
+    assert_eq!(code(&o), 3, "{}", err(&o));
+    assert!(out(&o).contains("not an .ANI file"), "{}", out(&o));
 }
 
 // ---- opt-in: a real client (read only; outputs go to SHAIYA_SCRATCH) ---------------------------------------------------------------

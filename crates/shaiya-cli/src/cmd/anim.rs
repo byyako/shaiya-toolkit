@@ -84,6 +84,8 @@ struct Entry {
 struct Inputs {
     entries: Vec<Entry>,
     archive: Option<Archive>,
+    /// Folders that could not be listed: (path, error). They are reported as FAILED; the other files are still described.
+    failed: Vec<(String, String)>,
 }
 
 impl Inputs {
@@ -102,29 +104,43 @@ fn has_ext(name: &str, exts: &[&str]) -> bool {
 }
 
 /// Files below `dir`, sorted by name at each level, as (name relative to `dir` with `/`, path). Folders that are symbolic links are not followed.
-fn walk(dir: &Path, rel: &str, out: &mut Vec<(String, PathBuf)>) -> Result<()> {
-    let mut entries = std::fs::read_dir(dir).map_err(|e| Error::io(dir, e))?.collect::<std::io::Result<Vec<_>>>().map_err(|e| Error::io(dir, e))?;
+/// A folder or entry that cannot be read is added to `failed` (path, error) and the walk goes on.
+fn walk(dir: &Path, rel: &str, out: &mut Vec<(String, PathBuf)>, failed: &mut Vec<(String, String)>) {
+    let listed = std::fs::read_dir(dir).and_then(|r| r.collect::<std::io::Result<Vec<_>>>());
+    let mut entries = match listed {
+        Ok(v) => v,
+        Err(e) => {
+            failed.push((dir.display().to_string(), Error::io(dir, e).to_string()));
+            return;
+        }
+    };
     entries.sort_by_key(|e| e.file_name());
     for e in entries {
         let name = e.file_name().to_string_lossy().into_owned();
         let path = e.path();
         let rel_name = if rel.is_empty() { name } else { format!("{rel}/{name}") };
-        let link = std::fs::symlink_metadata(&path).map_err(|x| Error::io(&path, x))?;
+        let link = match std::fs::symlink_metadata(&path) {
+            Ok(l) => l,
+            Err(x) => {
+                failed.push((path.display().to_string(), Error::io(&path, x).to_string()));
+                continue;
+            }
+        };
         if link.file_type().is_symlink() {
             if std::fs::metadata(&path).is_ok_and(|m| m.is_file()) {
                 out.push((rel_name, path));
             }
         } else if link.is_dir() {
-            walk(&path, &rel_name, out)?;
+            walk(&path, &rel_name, out, failed);
         } else {
             out.push((rel_name, path));
         }
     }
-    Ok(())
 }
 
 fn collect(ctx: &Ctx, a: &InfoArgs, exts: &[&str]) -> Result<Inputs> {
     let mut entries = Vec::new();
+    let mut failed = Vec::new();
     match &a.from {
         Some(arch) => {
             let archive = open_full(ctx, arch)?;
@@ -135,7 +151,7 @@ fn collect(ctx: &Ctx, a: &InfoArgs, exts: &[&str]) -> Result<Inputs> {
                     entries.push(Entry { name: f.path, origin: Origin::Archive });
                 }
             }
-            Ok(Inputs { entries, archive: Some(archive) })
+            Ok(Inputs { entries, archive: Some(archive), failed: Vec::new() })
         }
         None => {
             // the pattern is only a way to say "any letter case" to the folder search
@@ -144,7 +160,7 @@ fn collect(ctx: &Ctx, a: &InfoArgs, exts: &[&str]) -> Result<Inputs> {
                 let p = resolve(ctx, i)?;
                 if p.is_dir() {
                     let mut found = Vec::new();
-                    walk(&p, "", &mut found)?;
+                    walk(&p, "", &mut found, &mut failed);
                     for (name, path) in found {
                         if filter.matches(&name, 0) {
                             entries.push(Entry { name, origin: Origin::Disk(path) });
@@ -154,7 +170,7 @@ fn collect(ctx: &Ctx, a: &InfoArgs, exts: &[&str]) -> Result<Inputs> {
                     entries.push(Entry { name: i.clone(), origin: Origin::Disk(p) });
                 }
             }
-            Ok(Inputs { entries, archive: None })
+            Ok(Inputs { entries, archive: None, failed })
         }
     }
 }
@@ -173,17 +189,27 @@ enum Parsed {
     C3dc(C3dc),
 }
 
+/// Refuses a name that is not a file this command describes. It runs before a named file is read, so a wrong file is never read whole.
+fn check_ext(name: &str, ani_only: bool) -> Result<()> {
+    if has_ext(name, &["ani"]) || (!ani_only && has_ext(name, &["3dc"])) {
+        Ok(())
+    } else if ani_only {
+        Err(Error::Refused(format!("{name}: not an .ANI file (this command checks .ANI files only)")))
+    } else {
+        Err(Error::Refused(format!("{name}: not an .ANI or .3DC file")))
+    }
+}
+
 fn parse(name: &str, bytes: &[u8], ani_only: bool) -> Result<Parsed> {
+    check_ext(name, ani_only)?;
     if has_ext(name, &["ani"]) {
         let ani = Ani::parse(bytes, name).map_err(clientdata_error)?;
         let issues = validate(&ani);
         Ok(Parsed::Ani(ani, issues))
     } else if !ani_only && has_ext(name, &["3dc"]) {
         Ok(Parsed::C3dc(C3dc::parse(bytes, name).map_err(clientdata_error)?))
-    } else if ani_only {
-        Err(Error::Refused(format!("{name}: not an .ANI file (this command checks .ANI files only)")))
     } else {
-        Err(Error::Refused(format!("{name}: not an .ANI or .3DC file")))
+        unreachable!("check_ext accepted a name that is neither .ani nor .3dc")
     }
 }
 
@@ -293,8 +319,15 @@ fn describe(ctx: &Ctx, a: &InfoArgs, validating: bool) -> Result<i32> {
     let mut w = out();
     let mut files = Vec::new();
     let (mut unreadable, mut errors, mut warnings, mut files_with_errors) = (0usize, 0usize, 0usize, 0usize);
+    for (path, why) in &inputs.failed {
+        unreadable += 1;
+        if !ctx.json {
+            outln!(w, "{path}: FAILED: {why}");
+        }
+        files.push(json!({"path": path, "error": why}));
+    }
     for e in &inputs.entries {
-        let parsed = inputs.read(e).and_then(|b| parse(&e.name, &b, validating));
+        let parsed = check_ext(&e.name, validating).and_then(|()| inputs.read(e)).and_then(|b| parse(&e.name, &b, validating));
         match parsed {
             Err(err) => {
                 unreadable += 1;
@@ -332,8 +365,8 @@ fn describe(ctx: &Ctx, a: &InfoArgs, validating: bool) -> Result<i32> {
     }
     let _ = w.flush();
     drop(w);
-    if inputs.entries.is_empty() {
-        note(ctx, "note: no .ANI or .3DC files found");
+    if inputs.entries.is_empty() && inputs.failed.is_empty() {
+        note(ctx, if validating { "note: no .ANI files found" } else { "note: no .ANI or .3DC files found" });
     }
     if validating {
         note(
@@ -369,7 +402,7 @@ fn diff_json(d: &RigDiff) -> Value {
         RigDiff::BoneCount { candidate, target } => json!({"kind": "bone_count", "skeleton": true, "bone": null, "candidate": candidate, "target": target}),
         RigDiff::Parent { bone, candidate, target } => json!({"kind": "parent", "skeleton": true, "bone": bone, "candidate": candidate, "target": target}),
         RigDiff::Matrix { bone } => json!({"kind": "matrix", "skeleton": true, "bone": bone, "candidate": null, "target": null}),
-        RigDiff::FirstField { candidate, target } => json!({"kind": "first_field", "skeleton": false, "bone": null, "candidate": candidate, "target": target}),
+        RigDiff::FirstField { candidate, target } => json!({"kind": "first_field", "skeleton": false, "bone": null, "candidate": candidate, "target": target, "inferred": "start key"}),
     }
 }
 
@@ -446,4 +479,27 @@ fn compare(ctx: &Ctx, a: &CompareArgs) -> Result<i32> {
     outln!(w, "{}", if ok { "passes" } else { "does not pass" });
     let _ = w.flush();
     Ok(i32::from(!ok))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A folder that cannot be listed is reported and the walk goes on. (A path that cannot be listed is simulated by a file where a folder is
+    /// expected: the same `read_dir` error path as a permission failure, which cannot be made portably.)
+    #[test]
+    fn a_folder_that_cannot_be_listed_is_reported_and_the_walk_goes_on() {
+        let dir = std::env::temp_dir().join(format!("shaiya-anim-walk-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("a.ani"), b"x").unwrap();
+        let (mut found, mut failed) = (Vec::new(), Vec::new());
+        walk(&dir.join("a.ani"), "", &mut found, &mut failed);
+        assert!(found.is_empty());
+        assert_eq!(failed.len(), 1, "{failed:?}");
+        assert!(failed[0].0.ends_with("a.ani"), "{failed:?}");
+        walk(&dir, "", &mut found, &mut failed);
+        assert_eq!(found.len(), 1);
+        assert_eq!(failed.len(), 1);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }
