@@ -1639,7 +1639,7 @@ fn a_smod_in_the_archive_previews_as_a_model_and_other_model_formats_stay_hex() 
     assert!(preview_ready(&mut w.h));
     w.h.frames(2);
     assert_eq!(w.h.app.app.archive.preview_kind(), Some("hex"));
-    assert!(w.h.text().contains("no preview (format not documented yet)"));
+    assert!(w.h.text().contains("no preview yet (the format is documented)"));
 }
 
 #[test]

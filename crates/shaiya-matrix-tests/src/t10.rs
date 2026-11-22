@@ -1,11 +1,11 @@
-//! The animation capabilities of the matrix: the `.ANI`, `.3DC`, `.VANI` and `.MANI` files the index lists (every client, index only) and, where the client folder
+//! The animation capabilities of the matrix: the `.ANI`, `.3DC`, `.VANI`, `.MANI`, `.3DO` and `.3DE` files the index lists (every client, index only) and, where the client folder
 //! holds its `data.saf`, whether every one reads to the last byte and writes back byte for byte (`.ANI` also: validates without an error).
 
 use crate::{Cap, Cell, Observed};
 use shaiya_archive::{Archive, Index};
 use shaiya_clientdata::anim::{validate, Severity};
 use shaiya_clientdata::meshpick::{mesh_candidates_in, MeshInfo};
-use shaiya_clientdata::{Ani, C3dc, Mani, Vani};
+use shaiya_clientdata::{Ani, C3dc, Mani, Mesh3de, Mesh3do, Vani};
 use std::path::Path;
 
 use Cell::{Fails as F, NotAvailable as NA, Ok as O};
@@ -215,4 +215,97 @@ pub(crate) fn mani_caps(o: &mut Observed, dir: &Path, idx: &Index) {
     o.set(Cap::ManiRoundTrip, if good == listed.len() as u64 { O } else { F });
     o.numbers.push((Cap::ManiRoundTrip, good));
     o.facts.push(format!("building motion: {} .MANI files, {good} read and written back identically", listed.len()));
+}
+
+fn is_3do(path: &str) -> bool {
+    path.to_ascii_lowercase().ends_with(".3do")
+}
+
+fn is_3de(path: &str) -> bool {
+    path.to_ascii_lowercase().ends_with(".3de")
+}
+
+/// Sets `C3doIndexCount` from the index and `C3doRoundTrip` from the contents (`n/a` without a `data.saf`).
+pub(crate) fn c3do_caps(o: &mut Observed, dir: &Path, idx: &Index) {
+    let listed: Vec<_> = idx.visible().into_iter().filter(|f| is_3do(&f.path)).collect();
+    o.set(Cap::C3doIndexCount, O);
+    o.numbers.push((Cap::C3doIndexCount, listed.len() as u64));
+    if !has_data_file(dir) || listed.is_empty() {
+        o.set(Cap::C3doRoundTrip, NA);
+        return;
+    }
+    let archive = match Archive::open(dir) {
+        Ok(a) => a,
+        Err(e) => {
+            o.notes.push(format!("3do round trip: {e}"));
+            o.set(Cap::C3doRoundTrip, F);
+            return;
+        }
+    };
+    let (mut good, mut with_frames) = (0u64, 0u64);
+    for f in &listed {
+        match archive.read_entry(f.entry).map_err(|e| e.to_string()).and_then(|b| Mesh3do::parse(&b, &f.path).map(|m| (m, b)).map_err(|e| e.to_string())) {
+            Ok((m, bytes)) if m.to_bytes() == bytes => {
+                good += 1;
+                with_frames += !m.frames.is_empty() as u64;
+            }
+            Ok(_) => o.notes.push(format!("3do {}: written back differently", f.path)),
+            Err(e) => o.notes.push(format!("3do {}: {e}", f.path)),
+        }
+    }
+    o.set(Cap::C3doRoundTrip, if good == listed.len() as u64 { O } else { F });
+    o.numbers.push((Cap::C3doRoundTrip, good));
+    o.facts.push(format!("item meshes: {} .3DO files, {good} read and written back identically, {with_frames} with frames", listed.len()));
+}
+
+/// Sets `C3deIndexCount` from the index and `C3deRead` from the contents (`n/a` without a `data.saf`). A `.3DE` that follows neither
+/// layout is refused with the reason and named in the facts; the cell is `OK` when every file either reads and writes back identically or
+/// is refused that way (an empty file is counted apart), and the number is the files that read.
+pub(crate) fn c3de_caps(o: &mut Observed, dir: &Path, idx: &Index) {
+    let listed: Vec<_> = idx.visible().into_iter().filter(|f| is_3de(&f.path)).collect();
+    o.set(Cap::C3deIndexCount, O);
+    o.numbers.push((Cap::C3deIndexCount, listed.len() as u64));
+    if !has_data_file(dir) || listed.is_empty() {
+        o.set(Cap::C3deRead, NA);
+        return;
+    }
+    let archive = match Archive::open(dir) {
+        Ok(a) => a,
+        Err(e) => {
+            o.notes.push(format!("3de read: {e}"));
+            o.set(Cap::C3deRead, F);
+            return;
+        }
+    };
+    let (mut good, mut broken) = (0u64, 0u64);
+    let (mut refused, mut empty): (Vec<String>, Vec<String>) = (Vec::new(), Vec::new());
+    for f in &listed {
+        let bytes = match archive.read_entry(f.entry) {
+            Ok(b) => b,
+            Err(e) => {
+                broken += 1;
+                o.notes.push(format!("3de {}: {e}", f.path));
+                continue;
+            }
+        };
+        if bytes.is_empty() {
+            empty.push(f.path.clone());
+            continue;
+        }
+        match Mesh3de::parse(&bytes, &f.path) {
+            Ok(m) if m.to_bytes() == bytes => good += 1,
+            Ok(_) => {
+                broken += 1;
+                o.notes.push(format!("3de {}: written back differently", f.path));
+            }
+            Err(e) if e.to_string().contains(shaiya_clientdata::mesh3de::NOT_THE_LAYOUT) => refused.push(f.path.clone()),
+            Err(e) => {
+                broken += 1;
+                o.notes.push(format!("3de {}: {e}", f.path));
+            }
+        }
+    }
+    o.set(Cap::C3deRead, if broken == 0 { O } else { F });
+    o.numbers.push((Cap::C3deRead, good));
+    o.facts.push(format!("effect meshes: {} .3DE files, {good} read and written back identically, {} refused as another layout {refused:?}, {} empty {empty:?}", listed.len(), refused.len(), empty.len()));
 }

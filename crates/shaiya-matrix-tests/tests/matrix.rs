@@ -273,3 +273,23 @@ fn mani_sizes_in_every_index_are_108() {
 fn mani_round_trip() {
     check(Cap::ManiRoundTrip);
 }
+
+#[test]
+fn c3do_index_count() {
+    check(Cap::C3doIndexCount);
+}
+
+#[test]
+fn c3do_round_trip() {
+    check(Cap::C3doRoundTrip);
+}
+
+#[test]
+fn c3de_index_count() {
+    check(Cap::C3deIndexCount);
+}
+
+#[test]
+fn c3de_read_or_refused_with_the_reason() {
+    check(Cap::C3deRead);
+}

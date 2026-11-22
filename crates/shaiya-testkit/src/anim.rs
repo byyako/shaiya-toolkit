@@ -297,3 +297,155 @@ pub fn mani_bytes(tick_ms: i32, move_on: u16, move_pause_ms: u16, distance_bits:
     assert_eq!(d.len(), 108);
     d
 }
+
+/// One vertex of a `.3DO` (32 bytes in the file): position, normal, texture coordinates.
+#[derive(Clone, Copy, Debug)]
+pub struct Vert3doSpec {
+    pub pos: [f32; 3],
+    pub normal: [f32; 3],
+    pub uv: [f32; 2],
+}
+
+/// One frame of a `.3DO`: the key and the position and normal of every vertex.
+pub type Frame3doSpec = (i32, Vec<([f32; 3], [f32; 3])>);
+
+/// One frame of a `.3DE`: the key and the 20 bytes of every vertex (f32[3], u, v).
+pub type Frame3deSpec = (i32, Vec<([f32; 3], [f32; 2])>);
+
+/// A `.3DO` to build: texture bytes, vertices, faces, the frame rate and the frames `(key, position and normal of every vertex)`.
+#[derive(Clone, Debug)]
+pub struct Mesh3doSpec {
+    pub texture: Vec<u8>,
+    pub vertices: Vec<Vert3doSpec>,
+    pub faces: Vec<[u16; 3]>,
+    pub frame_rate: i32,
+    pub frames: Vec<Frame3doSpec>,
+}
+
+/// The bytes of a `.3DO`: `i32 length + texture, i32 vertex count, vertices, faces, i32 frame_rate, i32 frame_count`, then per frame `i32 key`
+/// and 24 bytes per vertex.
+pub fn mesh3do_bytes(s: &Mesh3doSpec) -> Vec<u8> {
+    let mut d = Vec::new();
+    d.extend_from_slice(&(s.texture.len() as u32).to_le_bytes());
+    d.extend_from_slice(&s.texture);
+    d.extend_from_slice(&(s.vertices.len() as i32).to_le_bytes());
+    for v in &s.vertices {
+        put_f32s(&mut d, &v.pos);
+        put_f32s(&mut d, &v.normal);
+        put_f32s(&mut d, &v.uv);
+    }
+    put_faces(&mut d, &s.faces);
+    d.extend_from_slice(&s.frame_rate.to_le_bytes());
+    d.extend_from_slice(&(s.frames.len() as i32).to_le_bytes());
+    for (key, verts) in &s.frames {
+        assert_eq!(verts.len(), s.vertices.len(), "a frame holds one entry per vertex");
+        d.extend_from_slice(&key.to_le_bytes());
+        for (p, n) in verts {
+            put_f32s(&mut d, p);
+            put_f32s(&mut d, n);
+        }
+    }
+    d
+}
+
+/// A `.3DO` with no frames: a unit box (8 vertices, 12 triangles) and an empty texture name.
+pub fn box_3do() -> Vec<u8> {
+    let (vertices, faces) = unit_box();
+    mesh3do_bytes(&Mesh3doSpec {
+        texture: Vec::new(),
+        vertices: vertices.iter().map(|p| Vert3doSpec { pos: *p, normal: [0.0, 1.0, 0.0], uv: [p[0], p[2]] }).collect(),
+        faces,
+        frame_rate: 0,
+        frames: Vec::new(),
+    })
+}
+
+/// An animated `.3DO`: the unit box with `frames` frames at `rate` per second (keys 0, 1, 2, ...), whose top four vertices rise by
+/// `frame / 10` in frame `frame`.
+pub fn animated_3do(frames: i32, rate: i32) -> Vec<u8> {
+    let (vertices, faces) = unit_box();
+    let frames = (0..frames)
+        .map(|f| (f, vertices.iter().map(|p| ([p[0], p[1] + if p[1] > 0.5 { f as f32 / 10.0 } else { 0.0 }, p[2]], [0.0, 1.0, 0.0])).collect()))
+        .collect();
+    mesh3do_bytes(&Mesh3doSpec {
+        texture: b"box.tga\0".to_vec(),
+        vertices: vertices.iter().map(|p| Vert3doSpec { pos: *p, normal: [0.0, 1.0, 0.0], uv: [p[0], p[2]] }).collect(),
+        faces,
+        frame_rate: rate,
+        frames,
+    })
+}
+
+/// The eight corners and twelve triangles of a unit box.
+fn unit_box() -> (Vec<[f32; 3]>, Vec<[u16; 3]>) {
+    let mut faces: Vec<[u16; 3]> = Vec::new();
+    for q in [[0u16, 1, 3, 2], [4, 6, 7, 5], [0, 2, 6, 4], [1, 5, 7, 3], [0, 4, 5, 1], [2, 3, 7, 6]] {
+        faces.push([q[0], q[1], q[2]]);
+        faces.push([q[0], q[2], q[3]]);
+    }
+    let corners = (0..8u16).map(|i| [if i & 1 == 0 { 0.0 } else { 1.0 }, if i & 2 == 0 { 0.0 } else { 1.0 }, if i & 4 == 0 { 0.0 } else { 1.0 }]).collect();
+    (corners, faces)
+}
+
+/// One vertex of a `.3DE` (24 bytes in the file): position, a signed integer, texture coordinates.
+#[derive(Clone, Copy, Debug)]
+pub struct Vert3deSpec {
+    pub pos: [f32; 3],
+    pub flag: i32,
+    pub uv: [f32; 2],
+}
+
+/// The frame block of a `.3DE`: `max_key` and the frames `(key, 20 bytes per vertex: f32[3], u, v)`.
+#[derive(Clone, Debug)]
+pub struct Block3deSpec {
+    pub max_key: i32,
+    pub frames: Vec<Frame3deSpec>,
+}
+
+/// A `.3DE` to build; `block: None` ends the file after the faces (the static layout).
+#[derive(Clone, Debug)]
+pub struct Mesh3deSpec {
+    pub texture: Vec<u8>,
+    pub vertices: Vec<Vert3deSpec>,
+    pub faces: Vec<[u16; 3]>,
+    pub block: Option<Block3deSpec>,
+}
+
+/// The bytes of a `.3DE`: `i32 length + texture, i32 vertex count, vertices, faces`, then (unless static) `i32 max_key, i32 frame_count` and per
+/// frame `i32 key` and 20 bytes per vertex.
+pub fn mesh3de_bytes(s: &Mesh3deSpec) -> Vec<u8> {
+    let mut d = Vec::new();
+    d.extend_from_slice(&(s.texture.len() as u32).to_le_bytes());
+    d.extend_from_slice(&s.texture);
+    d.extend_from_slice(&(s.vertices.len() as i32).to_le_bytes());
+    for v in &s.vertices {
+        put_f32s(&mut d, &v.pos);
+        d.extend_from_slice(&v.flag.to_le_bytes());
+        put_f32s(&mut d, &v.uv);
+    }
+    put_faces(&mut d, &s.faces);
+    if let Some(b) = &s.block {
+        d.extend_from_slice(&b.max_key.to_le_bytes());
+        d.extend_from_slice(&(b.frames.len() as i32).to_le_bytes());
+        for (key, verts) in &b.frames {
+            assert_eq!(verts.len(), s.vertices.len(), "a frame holds one entry per vertex");
+            d.extend_from_slice(&key.to_le_bytes());
+            for (p, uv) in verts {
+                put_f32s(&mut d, p);
+                put_f32s(&mut d, uv);
+            }
+        }
+    }
+    d
+}
+
+/// A `.3DE` of a unit box with `frames` frames (keys 0, 1, ...; every entry a small offset), or, with `frames == None`, the static layout.
+pub fn box_3de(frames: Option<i32>) -> Vec<u8> {
+    let (corners, faces) = unit_box();
+    let vertices: Vec<Vert3deSpec> = corners.iter().map(|p| Vert3deSpec { pos: *p, flag: -1, uv: [p[0], p[2]] }).collect();
+    let block = frames.map(|n| Block3deSpec {
+        max_key: n.max(1) - 1,
+        frames: (0..n).map(|f| (f, corners.iter().map(|_| ([0.0, f as f32 / 10.0, 0.0], [0.0, 0.0])).collect())).collect(),
+    });
+    mesh3de_bytes(&Mesh3deSpec { texture: b"fx.tga\0".to_vec(), vertices, faces, block })
+}

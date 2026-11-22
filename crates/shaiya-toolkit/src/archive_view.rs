@@ -2400,7 +2400,7 @@ impl ArchiveView {
             Some(PreviewData::Hex { bytes, base, total }) => {
                 let path = self.preview.row.and_then(|i| self.loaded.as_ref().map(|l| l.rows[i].path.clone())).unwrap_or_default();
                 if preview::undocumented_model_format(&path) {
-                    ui.label(RichText::new("no preview (format not documented yet)").color(pal.weak));
+                    ui.label(RichText::new("no preview yet (the format is documented)").color(pal.weak));
                 }
                 if *total > bytes.len() as u64 {
                     ui.label(RichText::new(format!("showing {} from offset {}", human_size(bytes.len() as u64), base)).color(pal.weak));

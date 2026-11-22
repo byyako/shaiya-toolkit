@@ -232,7 +232,7 @@ pub fn model_preview(archive: &Archive, data: &[u8], path: &str, job: &Job) -> s
     Ok(PreviewData::Model { header, missing: p.missing, see_through: p.see_through, invisible: p.invisible, notes: Vec::new(), width, height, rgba })
 }
 
-/// Model formats the client reads that this toolkit has no picture for yet (the format is not documented): they stay as hex.
+/// Model formats the client reads that this toolkit has no picture for yet (the format may be documented, no program shows it): they stay as hex.
 pub fn undocumented_model_format(path: &str) -> bool {
     matches!(ext_of(path).as_str(), "3do")
 }
