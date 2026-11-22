@@ -233,3 +233,13 @@ fn ani_index_count() {
 fn ani_round_trip() {
     check(Cap::AniRoundTrip);
 }
+
+#[test]
+fn c3dc_index_count() {
+    check(Cap::C3dcIndexCount);
+}
+
+#[test]
+fn c3dc_round_trip() {
+    check(Cap::C3dcRoundTrip);
+}

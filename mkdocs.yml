@@ -92,6 +92,7 @@ nav:
       - Dungeon floors (.dg): formats/dg.md
       - Models (.smod): formats/smod.md
       - Animations (.ANI): formats/ani.md
+      - Skinned meshes (.3DC): formats/3dc.md
       - Textures: formats/textures.md
       - sysmsg and map names: formats/sysmsg.md
       - TacticsZone.zon: formats/tacticszone-zon.md

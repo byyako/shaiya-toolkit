@@ -124,7 +124,6 @@ impl<'a> Cur<'a> {
     }
 
     /// Like `str_i32`, but gives the raw bytes exactly as stored (the NUL and anything after it included), so a writer can give them back.
-    #[allow(dead_code)] // first used by the .3DC reader
     pub fn raw_str_i32(&mut self, what: &str) -> Result<&'a [u8]> {
         let at = self.p;
         let n = self.u32(what)? as usize;

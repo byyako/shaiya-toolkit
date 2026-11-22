@@ -4,7 +4,8 @@
 
 use shaiya_archive::Archive;
 use shaiya_clientdata::anim::{issue, passes, rig_of, validate, Severity, RIGS};
-use shaiya_clientdata::Ani;
+use shaiya_clientdata::mesh3dc::C3dcLayout;
+use shaiya_clientdata::{Ani, C3dc};
 use shaiya_testkit::{env_client, env_client_original};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -133,4 +134,95 @@ fn the_changed_animations_pass_the_rig_check_against_the_stock_files() {
     });
     println!("{} changed .ani files pass the rig check against the stock files", changed.len());
     assert_eq!(changed.len(), 2, "{changed:?}");
+}
+
+fn is_3dc(path: &str) -> bool {
+    path.to_ascii_lowercase().ends_with(".3dc")
+}
+
+#[test]
+fn every_3dc_of_the_us_client_reads_and_writes_back() {
+    let Some(dir) = env_client() else { return };
+    let a = Archive::open(&dir).unwrap();
+    let (mut n, mut skinned, mut second, mut cloak, mut ambiguous) = (0usize, 0usize, 0usize, 0usize, 0usize);
+    let (mut nonzero_pad, mut named_textures, mut vertices, mut out_of_range) = (0usize, 0usize, 0usize, 0usize);
+    for file in a.index().visible() {
+        if !is_3dc(&file.path) {
+            continue;
+        }
+        let bytes = a.read_entry(file.entry).unwrap();
+        let m = match C3dc::parse(&bytes, &file.path) {
+            Ok(m) => m,
+            Err(e) if e.to_string().contains("ambiguous") => {
+                ambiguous += 1;
+                continue;
+            }
+            Err(e) => panic!("{}: {e}", file.path),
+        };
+        n += 1;
+        assert!(m.to_bytes() == bytes, "{}: written back differently", file.path);
+        match m.layout {
+            C3dcLayout::Skinned => skinned += 1,
+            C3dcLayout::SkinnedWithSecondMesh => second += 1,
+            C3dcLayout::Cloak => cloak += 1,
+        }
+        for mesh in &m.meshes {
+            vertices += mesh.vertices.len();
+            nonzero_pad += mesh.vertices.iter().filter(|v| v.pad != 0).count();
+            if mesh.texture.first().is_some_and(|b| *b != 0) {
+                named_textures += 1;
+            }
+            if m.layout != C3dcLayout::Cloak && mesh.vertices.iter().any(|v| v.bone1 as usize >= mesh.bones.len() || v.bone2 as usize >= mesh.bones.len()) {
+                out_of_range += 1;
+            }
+        }
+    }
+    println!("3DC files {n}: skinned {skinned}, second mesh {second}, cloak {cloak}, ambiguous {ambiguous}; {vertices} vertices, {nonzero_pad} with a non-zero pad; meshes naming a texture {named_textures}; meshes with a bone index out of range {out_of_range}");
+    assert_eq!(n + ambiguous, 2_431);
+    assert_eq!(ambiguous, 0);
+    assert_eq!((skinned, second, cloak), (2_382, 1, 48));
+    assert_eq!(out_of_range, 0, "every skinned vertex bone index is below its own mesh's bone count");
+    assert!(nonzero_pad > 0, "the pad field is not always 0");
+    assert_eq!(named_textures, 2);
+}
+
+/// `a * b` for row-major 4 x 4 matrices (row vectors: "a, then b").
+fn mul(a: &[f32; 16], b: &[f32; 16]) -> [f64; 16] {
+    let mut c = [0f64; 16];
+    for r in 0..4 {
+        for col in 0..4 {
+            c[r * 4 + col] = (0..4).map(|k| a[r * 4 + k] as f64 * b[k * 4 + col] as f64).sum();
+        }
+    }
+    c
+}
+
+#[test]
+fn mesh_matrices_are_not_the_inverse_of_the_animation_reference() {
+    let Some(dir) = env_client() else { return };
+    let a = Archive::open(&dir).unwrap();
+    let visible = a.index().visible();
+    let files: Vec<(String, &shaiya_archive::Entry)> = visible.iter().map(|f| (f.path.clone(), f.entry)).collect();
+    let (mut bones_total, mut identity_total) = (0usize, 0usize);
+    for (rig, race) in RIGS {
+        let (torso_path, ani_dir) = (format!("character/{race}/3dc/{rig}_torso001.3dc").to_ascii_lowercase(), format!("character/{race}/ani/{rig}_").to_ascii_lowercase());
+        let torso = files.iter().find(|(p, _)| p.to_ascii_lowercase() == torso_path).unwrap_or_else(|| panic!("{torso_path} is not in the archive"));
+        let mut anis: Vec<&(String, &shaiya_archive::Entry)> = files.iter().filter(|(p, _)| p.to_ascii_lowercase().starts_with(&ani_dir) && is_ani(p)).collect();
+        anis.sort_by_key(|(p, _)| p.to_ascii_lowercase());
+        let first = anis.first().unwrap_or_else(|| panic!("rig {rig} has no .ANI"));
+        let mesh = C3dc::parse(&a.read_entry(torso.1).unwrap(), &torso.0).unwrap();
+        let ani = Ani::parse(&a.read_entry(first.1).unwrap(), &first.0).unwrap();
+        let (mut n, mut identity) = (0usize, 0usize);
+        for (b, bind) in mesh.meshes[0].bones.iter().zip(&ani.bones) {
+            let m = mul(b, &bind.matrix);
+            n += 1;
+            let is_id = (0..16).all(|i| (m[i] - if i % 5 == 0 { 1.0 } else { 0.0 }).abs() < 1e-3);
+            identity += is_id as usize;
+        }
+        println!("rig {rig}: {} against {}: {identity} of {n} bones give the identity", torso.0, first.0);
+        assert!(n > 0 && identity * 100 < n * 5, "rig {rig}: {identity} of {n}");
+        bones_total += n;
+        identity_total += identity;
+    }
+    println!("all rigs: {identity_total} of {bones_total} bones give the identity (expected 0 of 805)");
 }

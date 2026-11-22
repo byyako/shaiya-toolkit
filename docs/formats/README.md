@@ -24,6 +24,7 @@ Every file format the toolkit reads or writes has a page here. A page says what 
 | Dungeon floors (`.dg`) | [dg.md](dg.md) | `shaiya-clientdata`: the editor | not written | US EP4.5: 44 files to the last byte |
 | Models (`.smod`) | [smod.md](smod.md) | `shaiya-clientdata`: the editor | not written | US EP4.5: 1,355 of 1,355 to the last byte |
 | Animations (`.ANI`) | [ani.md](ani.md) | `shaiya-clientdata`: `Ani::parse`, `validate`, `rig_check` (no tool uses them yet) | not written by any tool; `Ani::to_bytes` builds bytes in memory for the tests | US EP4.5: 3,509 of 3,509 read to the last byte and write back byte for byte; the eight other matrix clients are index only (files counted, none read) |
+| Skinned meshes (`.3DC`) | [3dc.md](3dc.md) | `shaiya-clientdata`: `C3dc::parse` (no tool uses it yet) | not written by any tool; `C3dc::to_bytes` builds bytes in memory for the tests | US EP4.5: 2,431 of 2,431 read to the last byte and write back byte for byte; the eight other matrix clients are index only (files counted, none read) |
 | Textures (DDS, TGA) | [textures.md](textures.md) | `shaiya-clientdata`, the Archive tab's preview, the checks before files go in | the editor writes light maps, masks and a minimap for new maps | US EP4.5; the orientation of the minimap and the chunk layout of a blank field were not checked in the game |
 | `sysmsg-uni.txt` and map names | [sysmsg.md](sysmsg.md) | `shaiya-clientdata`: the editor, `shaiya svmap` | not written | US EP4.5 patch 108; text for 47 of 47 ids on every matrix client that has the file, 44 on `cn-ep4` |
 | `TacticsZone.zon` | [tacticszone-zon.md](tacticszone-zon.md) | `shaiya-clientdata`: the editor | not written | US EP4.5: 35 areas to the last byte |
@@ -37,7 +38,6 @@ These extensions are in the archives of the nine matrix clients and no page cove
 
 | Extension | `us-108` | Range over nine clients | Clients with any | Planned for |
 |---|---|---|---|---|
-| `.3DC` | 2,431 | 2,317 to 6,534 | 9 | 0.4.0 animations |
 | `.3DO` | 271 | 271 to 514 | 9 | 0.4.0 animations |
 | `.3DE` | 469 | 469 to 1,344 | 9 | 0.4.0 animations |
 | `.VANI` | 66 | 66 to 141 | 9 | 0.4.0 animations |

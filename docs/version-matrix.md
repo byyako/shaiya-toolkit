@@ -38,6 +38,8 @@ Client ids: `us-108` (US patch level 108), and the eight test clients `ru-ep3`, 
 | `auto` picks exactly one layout or none, every SData (the number is the files that exactly one layout reads; the rest are shown raw) | OK 5 | OK 5 | OK 5 | n/a | OK 5 | OK 5 | OK 6 | OK 5 | OK 6 |
 | `.ANI` files the index lists (index only: the number is the visible `.ANI` files of the index; no contents were read on the eight test clients) | OK 3,509 | OK 3,537 | OK 3,624 | OK 3,724 | OK 3,723 | OK 4,099 | OK 4,255 | OK 5,951 | OK 3,429 |
 | `Ani::parse` reads every `.ANI` to the last byte and `to_bytes` gives it back byte for byte; `validate` finds no error | OK 3,509 | n/a | n/a | n/a | n/a | n/a | n/a | n/a | n/a |
+| `.3DC` files the index lists (index only: the number is the visible `.3DC` files of the index; no contents were read on the eight test clients) | OK 2,431 | OK 2,635 | OK 3,049 | OK 3,164 | OK 3,126 | OK 4,988 | OK 4,220 | OK 6,534 | OK 2,317 |
+| `C3dc::parse` reads every `.3DC` to the last byte with exactly one layout and `to_bytes` gives it back byte for byte | OK 2,431 | n/a | n/a | n/a | n/a | n/a | n/a | n/a | n/a |
 
 Reading the table:
 
@@ -61,6 +63,7 @@ Reading the table:
 - The gatekeeper row is `fails` where `NpcQuest::parse` fails (kr-ep8, fawkes-v68), and `n/a` where there is no file (ru-ep54). The gates were not measured on those two clients: `NpcQuest::parse` fails first there (the layout differs from the original generation's), so the gate row says `fails`.
 - The map-name row measures the presence of text for the distinct map-name message ids of the EP4.5 table (47 message ids covering 67 map ids), not its correctness; the cn-ep4 sysmsg lacks text for three of them.
 - The `.ANI` rows: the first counts the `.ANI` files each client's index lists; it reads no file contents. The second reads every `.ANI` on `us-108` (US EP4.5) and is `n/a` on the eight test clients because the test set holds no `data.saf` for them: their animations are counted from the index only and were never read. Whether a later episode's `.ANI` files read is not checked. See [ani.md](formats/ani.md).
+- The `.3DC` rows work the same way: the first counts the `.3DC` files each client's index lists (no contents read); the second reads every `.3DC` on `us-108` (US EP4.5) with exactly one of the three layouts and is `n/a` on the eight test clients (no `data.saf` in the test set; index only). Whether a later episode's `.3DC` files read is not checked. See [3dc.md](formats/3dc.md).
 
 ## SVMap Editor and `shaiya svmap`
 
