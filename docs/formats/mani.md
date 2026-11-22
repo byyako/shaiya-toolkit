@@ -41,7 +41,7 @@ Two kinds of file exist in the archive; the toolkit shows both and interprets ne
 |---|---|
 | `shaiya-clientdata` `mani` | parses the 108 bytes, writes them back in memory and gives every field with its offset, name, type and inferred meaning |
 
-The Archive tab and `shaiya anim` do not read `.MANI` yet: the Archive tab shows the bytes as hex, like any format that has no preview.
+In Shaiya Toolkit's Archive tab a `.MANI` is shown as a table of its 20 fields (offset, name, value, meaning), under the header "Motion parameters for a placed building model (108 bytes). Field meanings are inferred and were not checked in the game." Every meaning is labelled inferred, and the stored bits of a value are on hover. The field at offset 104 is also shown as an integer when its bits read as a float are a denormal (the first of the two writer generations), and a note says which generation the file looks like (shown, not interpreted). A file that is not 108 bytes shows the error and the bytes as hex. `shaiya anim info` prints one line per file and, with `--json`, every field with its offset, name, type, value, raw bytes and `"inferred": true`; `shaiya anim validate` and `compare` read `.ANI` files only.
 
 ## Verified on
 

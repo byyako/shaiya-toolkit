@@ -626,6 +626,121 @@ pub fn anim_frames(ani: &Ani, meshes: &[&C3dcMesh], cancelled: &mut dyn FnMut() 
     Some(AnimFrames { step: step as f32, width, height, frames, bones, parents: ani.bones.iter().map(|b| b.parent).collect(), unposed_vertices, nonfinite_bones, triangles: faces.len() })
 }
 
+// ------------------------------------------------------------------------------------------------------------------ vertex-frame models
+
+/// The rest picture of one mesh given as vertices and faces (plain grey with the wire), at [`PICTURE_SCALE`]; `None` when no face names
+/// existing vertices. Used for the `.3DO` and `.3DE` previews.
+pub fn plain_mesh_picture(pos: &[V3], uv: &[[f32; 2]], faces: &[[u16; 3]]) -> Option<ModelPicture> {
+    let n = pos.len().min(uv.len());
+    let valid: Vec<[usize; 3]> = faces.iter().map(|f| f.map(|i| i as usize)).filter(|c| c.iter().all(|&i| i < n)).take(PREVIEW_TRIS).collect();
+    if valid.is_empty() {
+        return None;
+    }
+    let tris: Vec<PreviewTri> = valid.iter().map(|c| PreviewTri { pos: c.map(|i| pos[i]), uv: c.map(|i| uv[i]), tex: None }).collect();
+    let tagged: Vec<(usize, [usize; 3])> = valid.into_iter().map(|c| (0, c)).collect();
+    let edges: Vec<[V3; 2]> = mesh_edges(&tagged).into_iter().map(|(_, a, b)| [pos[a], pos[b]]).collect();
+    let fit = PreviewFit::of(tris.iter().flat_map(|t| t.pos))?;
+    Some(render_picture(&tris, &[], &edges, fit))
+}
+
+/// One item of a model that is drawn from vertex positions that change from frame to frame: the texture name (may be empty), the faces
+/// (shared by every frame) and the texture coordinates of the item's vertices.
+pub struct MorphItem<'a> {
+    pub texture: String,
+    pub faces: &'a [[u16; 3]],
+    pub uv: Vec<[f32; 2]>,
+}
+
+/// What [`morph_frames`] made.
+pub struct MorphFrames {
+    /// `bones` holds one empty list per frame (there is no skeleton); `step` is the number of source frames between two pictures.
+    pub frames: AnimFrames,
+    /// Textures the items name that could not be read (each once); their triangles are drawn plain grey.
+    pub missing: Vec<String>,
+}
+
+/// Pre-renders a model whose vertex positions are given per frame (`.VANI` steps, `.3DO` frames): `count` source frames, one picture per
+/// `step` of them with `step = max(1, ceil(count / MAX_ANIM_FRAMES))`, so at most [`MAX_ANIM_FRAMES`] pictures. `pos(item, frame)` gives the
+/// positions of an item's vertices in a source frame. Every distinct texture name is asked of `tex` once (`None`: it cannot be read, the
+/// triangles are drawn grey). Pass 1 fits one view over every picture's points, pass 2 renders; `cancelled` is asked once per picture in both
+/// passes and the result is `None` when it said yes. No pictures when no face names a vertex.
+pub fn morph_frames(items: &[MorphItem], count: usize, pos: &mut dyn FnMut(usize, usize) -> Vec<V3>, tex: &mut dyn FnMut(&str) -> Option<Image>, cancelled: &mut dyn FnMut() -> bool) -> Option<MorphFrames> {
+    let step = count.div_ceil(MAX_ANIM_FRAMES).max(1);
+    let shown = if count == 0 { 0 } else { (count - 1) / step + 1 };
+    // textures, once per distinct name
+    let mut textures = Vec::new();
+    let mut missing = Vec::new();
+    let mut tex_of: std::collections::HashMap<String, Option<usize>> = std::collections::HashMap::new();
+    let item_tex: Vec<Option<usize>> = items
+        .iter()
+        .map(|it| {
+            let name = it.texture.trim();
+            if name.is_empty() {
+                return None;
+            }
+            *tex_of.entry(name.to_ascii_lowercase()).or_insert_with(|| match tex(name) {
+                Some(i) => {
+                    textures.push(mip_image_capped(&i));
+                    Some(textures.len() - 1)
+                }
+                None => {
+                    missing.push(name.to_string());
+                    None
+                }
+            })
+        })
+        .collect();
+    // faces that name existing vertices, at most PREVIEW_TRIS over all items; edges once each
+    let mut faces: Vec<(usize, [usize; 3])> = Vec::new();
+    'all: for (k, it) in items.iter().enumerate() {
+        for f in it.faces {
+            let c = f.map(|i| i as usize);
+            if c.iter().all(|&i| i < it.uv.len()) {
+                if faces.len() >= PREVIEW_TRIS {
+                    break 'all;
+                }
+                faces.push((k, c));
+            }
+        }
+    }
+    let edges = mesh_edges(&faces);
+    let source = |i: usize| i * step;
+    let positions = |pos: &mut dyn FnMut(usize, usize) -> Vec<V3>, i: usize| -> Vec<Vec<V3>> { (0..items.len()).map(|k| pos(k, source(i))).collect() };
+
+    let mut bounds = ViewBounds::new();
+    for i in 0..shown {
+        if cancelled() {
+            return None;
+        }
+        for p in positions(pos, i).iter().flatten() {
+            bounds.add(*p);
+        }
+    }
+    let fit = bounds.fit().unwrap_or(PreviewFit { mid: [0.0, 0.0], scale: 1.0 });
+
+    let mut frames = Vec::new();
+    let (mut width, mut height) = ((PREVIEW_SIZE[0] * ANIM_PICTURE_SCALE) as usize, (PREVIEW_SIZE[1] * ANIM_PICTURE_SCALE) as usize);
+    for i in 0..shown {
+        if cancelled() {
+            return None;
+        }
+        if faces.is_empty() {
+            continue;
+        }
+        let p = positions(pos, i);
+        let tris: Vec<PreviewTri> = faces
+            .iter()
+            .map(|&(k, c)| PreviewTri { pos: c.map(|v| p[k].get(v).copied().unwrap_or([0.0; 3])), uv: c.map(|v| items[k].uv[v]), tex: item_tex[k] })
+            .collect();
+        let wire: Vec<[V3; 2]> = edges.iter().filter_map(|&(k, a, b)| Some([*p[k].get(a)?, *p[k].get(b)?])).collect();
+        let pic = render_picture_at(&tris, &textures, &wire, fit, ANIM_PICTURE_SCALE);
+        (width, height) = (pic.width, pic.height);
+        frames.push(pic.rgba);
+    }
+    let anim = AnimFrames { step: step as f32, width, height, frames, bones: vec![Vec::new(); shown], parents: Vec::new(), unposed_vertices: 0, nonfinite_bones: 0, triangles: faces.len() };
+    Some(MorphFrames { frames: anim, missing })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -927,5 +1042,75 @@ mod tests {
         }
         assert!(f.frames[0] != f.frames[60], "the arm moves");
         assert_eq!((f.unposed_vertices, f.nonfinite_bones, f.triangles), (0, 0, 24));
+    }
+
+    fn box_vani_items(v: &crate::vani::Vani) -> Vec<MorphItem<'_>> {
+        v.items.iter().map(|it| MorphItem { texture: String::new(), faces: &it.faces, uv: v.step_vertices(0, 0).iter().map(|x| x.uv).collect() }).collect()
+    }
+
+    #[test]
+    fn morph_frames_step_and_count_follow_the_source_frames() {
+        let v = crate::vani::Vani::parse(&shaiya_testkit::anim::box_vani(5, 33), "b.vani").unwrap();
+        let items = box_vani_items(&v);
+        for (count, step, shown) in [(0usize, 1.0f32, 0usize), (1, 1.0, 1), (5, 1.0, 5), (241, 1.0, 241), (242, 2.0, 121), (500, 3.0, 167)] {
+            let m = morph_frames(&items, count, &mut |_, f| v.step_vertices(0, f.min(4)).iter().map(|x| x.pos).collect(), &mut |_| None, &mut || false).unwrap();
+            assert_eq!((m.frames.step, m.frames.bones.len(), m.frames.frames.len()), (step, shown, shown), "count {count}");
+            assert!(m.frames.frames.len() <= MAX_ANIM_FRAMES);
+        }
+    }
+
+    #[test]
+    fn morph_frames_draw_one_view_and_cancel_in_both_passes() {
+        let v = crate::vani::Vani::parse(&shaiya_testkit::anim::box_vani(5, 33), "b.vani").unwrap();
+        let items = box_vani_items(&v);
+        let mut pos = |_: usize, f: usize| -> Vec<V3> { v.step_vertices(0, f).iter().map(|x| x.pos).collect() };
+        let m = morph_frames(&items, 5, &mut pos, &mut |_| None, &mut || false).unwrap();
+        assert_eq!((m.frames.width, m.frames.height), (240, 220));
+        assert!(m.frames.frames.iter().all(|f| drawn(f) > 0));
+        assert!(m.frames.frames[0] != m.frames.frames[4], "the box rises");
+        assert_eq!(m.frames.triangles, 12);
+        let mut asked = 0;
+        assert!(morph_frames(&items, 5, &mut pos, &mut |_| None, &mut || {
+            asked += 1;
+            asked >= 2
+        })
+        .is_none());
+        assert_eq!(asked, 2);
+        let mut asked = 0;
+        assert!(morph_frames(&items, 5, &mut pos, &mut |_| None, &mut || {
+            asked += 1;
+            asked > 5 + 2
+        })
+        .is_none());
+        assert_eq!(asked, 5 + 3, "stops in pass 2 after two pictures");
+    }
+
+    #[test]
+    fn morph_frames_ask_for_each_texture_once_and_name_the_missing_one() {
+        let v = crate::vani::Vani::parse(&shaiya_testkit::anim::box_vani(2, 33), "b.vani").unwrap();
+        let mut items = box_vani_items(&v);
+        items.push(MorphItem { texture: "BOX.TGA".to_string(), faces: &v.items[0].faces, uv: items[0].uv.clone() });
+        items[0].texture = "box.tga".to_string();
+        let mut asked = Vec::new();
+        let m = morph_frames(&items, 2, &mut |_, f| v.step_vertices(0, f).iter().map(|x| x.pos).collect(), &mut |n| {
+            asked.push(n.to_string());
+            None
+        }, &mut || false)
+        .unwrap();
+        assert_eq!(asked, ["box.tga"], "the same name in another letter case is asked once");
+        assert_eq!(m.missing, ["box.tga"]);
+        assert!(m.frames.frames.iter().all(|f| drawn(f) > 0), "missing textures are drawn grey");
+    }
+
+    #[test]
+    fn plain_mesh_picture_draws_grey_and_refuses_faces_without_vertices() {
+        let pos = [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]];
+        let uv = [[0.0, 0.0]; 3];
+        let p = plain_mesh_picture(&pos, &uv, &[[0, 1, 2]]).unwrap();
+        assert_eq!((p.width, p.height), (480, 440));
+        assert!(p.plain_px > 100 && p.textured_px == 0, "{} {}", p.plain_px, p.textured_px);
+        assert!(plain_mesh_picture(&pos, &uv, &[[0, 1, 3]]).is_none(), "an index past the vertices is not drawn");
+        assert!(plain_mesh_picture(&pos, &uv, &[]).is_none());
+        assert!(plain_mesh_picture(&[], &[], &[[0, 0, 0]]).is_none());
     }
 }

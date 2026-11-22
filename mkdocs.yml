@@ -96,7 +96,7 @@ nav:
       - Skinned meshes (.3DC): formats/3dc.md
       - Vertex-animated models (.VANI): formats/vani.md
       - Building motion (.MANI): formats/mani.md
-      - Item meshes (.3DO): formats/3do.md
+      - .3DO meshes: formats/3do.md
       - Effect meshes (.3DE): formats/3de.md
       - Textures: formats/textures.md
       - sysmsg and map names: formats/sysmsg.md

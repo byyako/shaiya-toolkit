@@ -1616,7 +1616,7 @@ fn tiny_model() -> Vec<u8> {
 }
 
 #[test]
-fn a_smod_in_the_archive_previews_as_a_model_and_other_model_formats_stay_hex() {
+fn a_smod_in_the_archive_previews_as_a_model_and_a_3do_that_does_not_read_is_failed_with_its_bytes() {
     let mut w = world("t9-model");
     SahBuilder::new(0)
         .file(b"Entity/Building/tiny.smod", &tiny_model())
@@ -1638,8 +1638,10 @@ fn a_smod_in_the_archive_previews_as_a_model_and_other_model_formats_stay_hex() 
     with_cx(&mut w.h, |app, cx| app.archive.select_path("Entity/Building/x.3DO", cx));
     assert!(preview_ready(&mut w.h));
     w.h.frames(2);
-    assert_eq!(w.h.app.app.archive.preview_kind(), Some("hex"));
-    assert!(w.h.text().contains("no preview yet (the format is documented)"));
+    assert_eq!(w.h.app.app.archive.preview_kind(), Some("failed"), "a .3DO that does not read is Failed, with its bytes as hex");
+    let t = w.h.text();
+    assert!(t.contains("Entity/Building/x.3DO") && t.contains("as hex"), "{t}");
+    assert!(!t.contains("no preview yet"), "the old note is gone: {t}");
 }
 
 #[test]
@@ -2669,4 +2671,81 @@ fn replacing_an_ani_with_the_same_skeleton_queues_at_once() {
     with_cx(&mut w.h, |app, cx| app.archive.replace_with_file(row, file.clone(), cx));
     assert!(w.h.wait_until(WAIT, |h| h.app.app.archive.pending.len() == 1), "queued without a question");
     assert!(w.h.app.app.archive.replace_ask.is_none());
+}
+
+// ------------------------------------------------------------------------------------------------ T10 W2bx: .VANI, .MANI, .3DO and .3DE in the Archive tab
+
+/// A synthetic client with one file of each of the four formats, opened in the Archive tab.
+fn models_world(tag: &str) -> World {
+    use shaiya_testkit::anim::{animated_3do, box_3de, box_vani, mani_bytes};
+    let mut w = world(tag);
+    SahBuilder::new(0)
+        .file(b"Entity/Building/b.VANI", &box_vani(12, 66))
+        .file(b"Entity/Building/b.MANI", &mani_bytes(33, 1, 500, 10f32.to_bits()))
+        .file(b"Item/3DO/arrow.3DO", &animated_3do(11, 20))
+        .file(b"Effect/3DE/fx.3de", &box_3de(Some(4)))
+        .write_to(w.client.path());
+    w.h.frames(2);
+    let dir = w.client_dir();
+    with_cx(&mut w.h, |app, cx| app.add_client("US test", &dir, true, cx)).unwrap();
+    assert!(w.h.wait_until(WAIT, |h| h.app.app.archive.is_open()), "the archive opens");
+    w.h.frames(2);
+    w
+}
+
+fn select_and_wait(w: &mut World, path: &str) {
+    with_cx(&mut w.h, |app, cx| app.archive.select_path(path, cx));
+    assert!(preview_ready(&mut w.h), "{path}");
+    w.h.frames(3);
+}
+
+#[test]
+fn selecting_a_vani_shows_the_player_at_its_rate() {
+    use shaiya_toolkit::preview::PreviewData;
+    let mut w = models_world("t10-w2bx-vani");
+    select_and_wait(&mut w, "Entity/Building/b.VANI");
+    assert_eq!(w.h.app.app.archive.preview_kind(), Some("anim"));
+    assert!(w.h.app.app.archive.has_texture(), "the frame on screen is a texture");
+    match w.h.app.app.archive.preview_data() {
+        Some(PreviewData::Anim { frames, rate, unit, .. }) => assert_eq!((frames.frames.len(), *unit, (*rate - 1000.0 / 66.0).abs() < 1e-4), (12, "step", true)),
+        other => panic!("{other:?}"),
+    }
+    let t = w.h.text();
+    for want in ["Vertex-animated model: 1 item, 8 vertices per step, 12 triangles", "about 66 ms per step (inferred from the file; not checked in the game)", "Loop", "step ", "of 11,"] {
+        assert!(t.contains(want), "{want}: {t}");
+    }
+    assert!(t.contains("Pause") || t.contains("Play"), "{t}");
+    assert!(!t.contains("Mesh:") && !t.contains("Bones"), "a .VANI has no mesh choice and no bones: {t}");
+}
+
+#[test]
+fn selecting_a_framed_3do_plays_it_and_a_3de_shows_a_picture() {
+    use shaiya_toolkit::preview::PreviewData;
+    let mut w = models_world("t10-w2bx-3do");
+    select_and_wait(&mut w, "Item/3DO/arrow.3DO");
+    assert_eq!(w.h.app.app.archive.preview_kind(), Some("anim"));
+    assert!(w.h.app.app.archive.has_texture());
+    match w.h.app.app.archive.preview_data() {
+        Some(PreviewData::Anim { frames, rate, unit, .. }) => assert_eq!((frames.frames.len(), *rate, *unit), (11, 20.0, "frame")),
+        other => panic!("{other:?}"),
+    }
+    let t = w.h.text();
+    assert!(t.contains("3DO mesh: 8 vertices, 12 triangles") && t.contains("11 frames at 20 per second (inferred from the file; not checked in the game)"), "{t}");
+    assert!(!t.contains("no preview yet"), "{t}");
+    select_and_wait(&mut w, "Effect/3DE/fx.3de");
+    assert_eq!(w.h.app.app.archive.preview_kind(), Some("model"));
+    assert!(w.h.app.app.archive.has_texture());
+    let t = w.h.text();
+    assert!(t.contains("Effect mesh: 8 vertices, 12 triangles") && t.contains("4 frames (not played: their meaning is inferred)"), "{t}");
+}
+
+#[test]
+fn selecting_a_mani_shows_the_labelled_fields() {
+    let mut w = models_world("t10-w2bx-mani");
+    select_and_wait(&mut w, "Entity/Building/b.MANI");
+    assert_eq!(w.h.app.app.archive.preview_kind(), Some("fields"));
+    let t = w.h.text();
+    for want in ["Motion parameters for a placed building model (108 bytes)", "Field meanings are inferred and were not checked in the game", "Offset", "Field", "tick_ms", "move_pause_ms"] {
+        assert!(t.contains(want), "{want}: {t}");
+    }
 }

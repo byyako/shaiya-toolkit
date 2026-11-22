@@ -90,8 +90,10 @@ fn every_3de_of_the_us_client_reads_or_is_named() {
     assert_eq!(standard + statics, 467, "files that read");
     assert_eq!(statics, 1);
     assert_eq!(refused.len(), 2, "{refused:?}");
-    let mut names: Vec<String> = refused.iter().map(|p| p.rsplit('/').next().unwrap_or(p).to_ascii_lowercase()).collect();
+    let mut names: Vec<String> = refused.iter().map(|p| p.to_ascii_lowercase()).collect();
     names.sort();
-    assert_eq!(names, ["004.3de", "deathknight007.3de"]);
+    assert_eq!(names, ["effect/3de/004.3de", "effect/3de/deathknight007.3de"], "the two refused files, full paths");
+    let statics_lower: Vec<String> = statics_named.iter().map(|p| p.to_ascii_lowercase()).collect();
+    assert_eq!(statics_lower, ["effect/3de/d_dragonstone03.3de"], "the one static file");
     assert_eq!(flags_not_minus_one, 0, "the vertex field is -1 in every file read");
 }

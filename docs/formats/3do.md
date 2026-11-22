@@ -1,4 +1,4 @@
-# Item meshes (`.3DO`)
+# `.3DO` meshes
 
 `.3DO` files are meshes that carry no bones: a list of vertices, the triangles between them and, in one file only, a set of vertex frames. One of them is `Item/3DO/arrow.3DO`.
 
@@ -29,7 +29,7 @@ The toolkit keeps floats exactly as stored (NaN bits included) and the texture n
 |---|---|
 | `shaiya-clientdata` `mesh3do` | parses, writes back in memory, names the texture, gives the vertices of a frame (the positions and normals of that frame with the texture coordinates of the mesh) |
 
-No program shows a `.3DO` yet: the Archive tab has no preview for it (it shows the bytes as hex and says that there is no preview yet), and `shaiya anim` does not read it.
+In Shaiya Toolkit's Archive tab a `.3DO` shows its mesh in plain grey with the wire, under "3DO mesh: N vertices, N triangles" (a texture the file names is not looked up, and the note says so). A file with frames (US EP4.5: only `Item/3DO/arrow.3DO`) plays them at its frame rate, shown as "N frames at N per second (inferred from the file; not checked in the game)", with Play/Pause, a slider and Loop; a rate that is not positive plays at 30 frames per second and says so. A file that does not read to the last byte shows its error and the bytes as hex, also when the bytes look like text. `shaiya anim info` prints one line per file (vertices, triangles, frames, rate as inferred); `--json` has the same as keys. `shaiya anim validate` and `compare` read `.ANI` files only. Validated offline on US EP4.5 files.
 
 ## Verified on
 

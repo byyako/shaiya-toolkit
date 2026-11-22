@@ -7,7 +7,9 @@ use serde_json::{json, Value};
 use shaiya_archive::Archive;
 use shaiya_clientdata::anim::{passes, rig_check, rig_of, same_skeleton, validate, AniIssue, RigDiff, Severity};
 use shaiya_clientdata::mesh3dc::C3dcLayout;
-use shaiya_clientdata::{Ani, C3dc};
+use shaiya_clientdata::mani::{ManiValue, MANI_FIELDS, MANI_SIZE};
+use shaiya_clientdata::mesh3de::De3Layout;
+use shaiya_clientdata::{Ani, C3dc, Mani, Mesh3de, Mesh3do, Vani};
 use shaiya_core::glob::{Filter, Pattern};
 use shaiya_core::{Error, Result};
 use std::io::Write;
@@ -15,9 +17,9 @@ use std::path::{Path, PathBuf};
 
 #[derive(clap::Subcommand)]
 pub enum Cmd {
-    /// Describe animation files: .ANI (bones, keys, validation) and .3DC meshes (vertices, bones)
+    /// Describe animation and model files: .ANI (bones, keys, validation), .3DC, .VANI, .3DO and .3DE (counts, frame rates), .MANI (fields, every meaning inferred)
     ///
-    /// Files or folders (folders are searched for .ANI and .3DC in any letter case), or --from ARCHIVE with patterns (default *.ani and *.3dc).
+    /// Files or folders (folders are searched for .ani, .3dc, .vani, .mani, .3do and .3de in any letter case), or --from ARCHIVE with patterns (default: all six). `validate` and `compare` read .ANI files only.
     ///
     /// Example: shaiya anim info --from "@us" "character/human/ani/huwm_*"
     Info(InfoArgs),
@@ -36,7 +38,7 @@ pub enum Cmd {
 
 #[derive(clap::Args)]
 pub struct InfoArgs {
-    /// Files or folders; with --from, patterns over the archive's files (default *.ani and *.3dc; *.ani for validate)
+    /// Files or folders; with --from, patterns over the archive's files (default: every format `info` reads; *.ani for validate)
     #[arg(value_name = "INPUT", required_unless_present = "from")]
     pub inputs: Vec<String>,
     /// Read from this archive (a client folder, a .sah file or @name)
@@ -187,29 +189,49 @@ fn clientdata_error(e: shaiya_clientdata::Error) -> Error {
 enum Parsed {
     Ani(Ani, Vec<AniIssue>),
     C3dc(C3dc),
+    Vani(Vani),
+    Mani(Mani),
+    Mesh3do(Mesh3do),
+    Mesh3de(Mesh3de),
 }
+
+/// The formats `anim info` reads. `validate` and `compare` read `.ANI` files only.
+const INFO_EXTS: [&str; 6] = ["ani", "3dc", "vani", "mani", "3do", "3de"];
 
 /// Refuses a name that is not a file this command describes. It runs before a named file is read, so a wrong file is never read whole.
 fn check_ext(name: &str, ani_only: bool) -> Result<()> {
-    if has_ext(name, &["ani"]) || (!ani_only && has_ext(name, &["3dc"])) {
+    if ani_only {
+        if has_ext(name, &["ani"]) {
+            Ok(())
+        } else {
+            Err(Error::Refused(format!("{name}: not an .ANI file (this command checks .ANI files only; `shaiya anim info` also reads .3DC, .VANI, .MANI, .3DO and .3DE)")))
+        }
+    } else if has_ext(name, &INFO_EXTS) {
         Ok(())
-    } else if ani_only {
-        Err(Error::Refused(format!("{name}: not an .ANI file (this command checks .ANI files only)")))
     } else {
-        Err(Error::Refused(format!("{name}: not an .ANI or .3DC file")))
+        Err(Error::Refused(format!("{name}: not an .ANI, .3DC, .VANI, .MANI, .3DO or .3DE file")))
     }
 }
 
 fn parse(name: &str, bytes: &[u8], ani_only: bool) -> Result<Parsed> {
     check_ext(name, ani_only)?;
+    let e = clientdata_error;
     if has_ext(name, &["ani"]) {
-        let ani = Ani::parse(bytes, name).map_err(clientdata_error)?;
+        let ani = Ani::parse(bytes, name).map_err(e)?;
         let issues = validate(&ani);
         Ok(Parsed::Ani(ani, issues))
-    } else if !ani_only && has_ext(name, &["3dc"]) {
-        Ok(Parsed::C3dc(C3dc::parse(bytes, name).map_err(clientdata_error)?))
+    } else if has_ext(name, &["3dc"]) {
+        Ok(Parsed::C3dc(C3dc::parse(bytes, name).map_err(e)?))
+    } else if has_ext(name, &["vani"]) {
+        Ok(Parsed::Vani(Vani::parse(bytes, name).map_err(e)?))
+    } else if has_ext(name, &["mani"]) {
+        Ok(Parsed::Mani(Mani::parse(bytes, name).map_err(e)?))
+    } else if has_ext(name, &["3do"]) {
+        Ok(Parsed::Mesh3do(Mesh3do::parse(bytes, name).map_err(e)?))
+    } else if has_ext(name, &["3de"]) {
+        Ok(Parsed::Mesh3de(Mesh3de::parse(bytes, name).map_err(e)?))
     } else {
-        unreachable!("check_ext accepted a name that is neither .ani nor .3dc")
+        unreachable!("check_ext accepted a name with an extension this command does not read")
     }
 }
 
@@ -313,8 +335,111 @@ fn c3dc_text(name: &str, m: &C3dc) -> String {
     }
 }
 
+fn vani_json(name: &str, v: &Vani) -> Value {
+    let (verts, tris) = v.counts();
+    json!({
+        "path": name,
+        "format": "vani",
+        "items": v.items.len(),
+        "vertices_per_step": verts,
+        "triangles": tris,
+        "steps": v.step_count,
+        "frame_ms": v.frame_ms,
+        "frame_ms_inferred": "milliseconds per step",
+        "textures": (0..v.items.len()).map(|k| v.texture_name(k)).collect::<Vec<_>>(),
+        "collision_mesh": v.collision.is_some(),
+    })
+}
+
+fn vani_text(name: &str, v: &Vani) -> String {
+    let (verts, tris) = v.counts();
+    format!(
+        "{name}: vertex-animated model, {}, {} per step, {}, {}, about {} ms per step (inferred)",
+        plural(v.items.len(), "item", "items"),
+        plural(verts, "vertex", "vertices"),
+        plural(tris, "triangle", "triangles"),
+        plural(v.step_count, "step", "steps"),
+        v.frame_ms
+    )
+}
+
+fn mani_value_json(v: ManiValue) -> Value {
+    // a float that is not finite has no JSON number: it is written as text (the raw bits are given as well)
+    let f = |x: f32| if x.is_finite() { json!(x) } else { json!(x.to_string()) };
+    match v {
+        ManiValue::I32(x) => json!(x),
+        ManiValue::U16(x) => json!(x),
+        ManiValue::F32(x) => f(x),
+        ManiValue::F32x3(x) => json!([f(x[0]), f(x[1]), f(x[2])]),
+    }
+}
+
+fn mani_json(name: &str, m: &Mani) -> Value {
+    let fields: Vec<Value> = m
+        .fields()
+        .into_iter()
+        .map(|(f, v)| {
+            let raw: String = m.raw[f.offset..f.offset + f.kind.size()].iter().map(|b| format!("{b:02x}")).collect();
+            json!({"offset": f.offset, "name": f.name, "value": mani_value_json(v), "raw": raw, "meaning": f.meaning, "inferred": true})
+        })
+        .collect();
+    json!({"path": name, "format": "mani", "size": MANI_SIZE, "fields": fields})
+}
+
+fn mani_text(name: &str, m: &Mani) -> String {
+    let tick = match m.value(&MANI_FIELDS[0]) {
+        ManiValue::I32(x) => x,
+        _ => 0,
+    };
+    format!("{name}: building motion, {MANI_SIZE} bytes, {} (every meaning inferred), tick {tick} ms", plural(MANI_FIELDS.len(), "field", "fields"))
+}
+
+fn mesh3do_json(name: &str, m: &Mesh3do) -> Value {
+    let (v, t) = m.counts();
+    json!({
+        "path": name,
+        "format": "3do",
+        "vertices": v,
+        "triangles": t,
+        "frames": m.frames.len(),
+        "frame_rate": m.frame_rate,
+        "frame_rate_inferred": "frames per second",
+        "texture": m.texture_name(),
+    })
+}
+
+fn mesh3do_text(name: &str, m: &Mesh3do) -> String {
+    let (v, t) = m.counts();
+    let frames = if m.frames.is_empty() { String::new() } else { format!(", {} at {} per second (inferred)", plural(m.frames.len(), "frame", "frames"), m.frame_rate) };
+    format!("{name}: 3DO mesh, {}, {}{frames}", plural(v, "vertex", "vertices"), plural(t, "triangle", "triangles"))
+}
+
+fn mesh3de_json(name: &str, m: &Mesh3de) -> Value {
+    let (v, t) = m.counts();
+    json!({
+        "path": name,
+        "format": "3de",
+        "layout": if m.layout() == De3Layout::Static { "static" } else { "standard" },
+        "vertices": v,
+        "triangles": t,
+        "frames": m.frame_count(),
+        "max_key": m.block.as_ref().map(|b| b.max_key),
+        "max_key_inferred": true,
+        "texture": m.texture_name(),
+    })
+}
+
+fn mesh3de_text(name: &str, m: &Mesh3de) -> String {
+    let (v, t) = m.counts();
+    let layout = match m.layout() {
+        De3Layout::Static => "static, no frame block".to_string(),
+        De3Layout::Standard => plural(m.frame_count(), "frame", "frames"),
+    };
+    format!("{name}: effect mesh, {}, {}, {layout}", plural(v, "vertex", "vertices"), plural(t, "triangle", "triangles"))
+}
+
 fn describe(ctx: &Ctx, a: &InfoArgs, validating: bool) -> Result<i32> {
-    let exts: &[&str] = if validating { &["ani"] } else { &["ani", "3dc"] };
+    let exts: &[&str] = if validating { &["ani"] } else { &INFO_EXTS };
     let inputs = collect(ctx, a, exts)?;
     let mut w = out();
     let mut files = Vec::new();
@@ -361,12 +486,36 @@ fn describe(ctx: &Ctx, a: &InfoArgs, validating: bool) -> Result<i32> {
                 }
                 files.push(c3dc_json(&e.name, &m));
             }
+            Ok(Parsed::Vani(m)) => {
+                if !ctx.json {
+                    outln!(w, "{}", vani_text(&e.name, &m));
+                }
+                files.push(vani_json(&e.name, &m));
+            }
+            Ok(Parsed::Mani(m)) => {
+                if !ctx.json {
+                    outln!(w, "{}", mani_text(&e.name, &m));
+                }
+                files.push(mani_json(&e.name, &m));
+            }
+            Ok(Parsed::Mesh3do(m)) => {
+                if !ctx.json {
+                    outln!(w, "{}", mesh3do_text(&e.name, &m));
+                }
+                files.push(mesh3do_json(&e.name, &m));
+            }
+            Ok(Parsed::Mesh3de(m)) => {
+                if !ctx.json {
+                    outln!(w, "{}", mesh3de_text(&e.name, &m));
+                }
+                files.push(mesh3de_json(&e.name, &m));
+            }
         }
     }
     let _ = w.flush();
     drop(w);
     if inputs.entries.is_empty() && inputs.failed.is_empty() {
-        note(ctx, if validating { "note: no .ANI files found" } else { "note: no .ANI or .3DC files found" });
+        note(ctx, if validating { "note: no .ANI files found" } else { "note: no .ANI, .3DC, .VANI, .MANI, .3DO or .3DE files found" });
     }
     if validating {
         note(
@@ -394,6 +543,9 @@ fn describe(ctx: &Ctx, a: &InfoArgs, validating: bool) -> Result<i32> {
 // ---- compare ----------------------------------------------------------------------------------------------------------------------
 
 fn read_ani(name: &str, bytes: &[u8]) -> Result<Ani> {
+    if has_ext(name, &["3dc", "vani", "mani", "3do", "3de"]) {
+        return Err(Error::Refused(format!("{name}: not an .ANI file (this command compares .ANI files only; `shaiya anim info` reads the other formats)")));
+    }
     Ani::parse(bytes, name).map_err(clientdata_error)
 }
 

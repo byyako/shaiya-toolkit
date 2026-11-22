@@ -99,7 +99,7 @@ fn info_exits_3_for_an_unreadable_file_and_reports_the_others() {
     write(&d.join("notes.txt"), b"text");
     let o = sh(&w.data, &["anim", "info", p(&d.join("a_good.ani")), p(&d.join("notes.txt"))]);
     assert_eq!(code(&o), 3);
-    assert!(out(&o).contains("a_good.ani: animation") && out(&o).contains("notes.txt: FAILED: ") && out(&o).contains("not an .ANI or .3DC file"), "{}", out(&o));
+    assert!(out(&o).contains("a_good.ani: animation") && out(&o).contains("notes.txt: FAILED: ") && out(&o).contains("not an .ANI, .3DC, .VANI, .MANI, .3DO or .3DE file"), "{}", out(&o));
 }
 
 #[test]
@@ -366,11 +366,150 @@ fn a_named_file_with_the_wrong_extension_is_refused_without_being_read() {
     };
     let o = sh(&w.data, &["anim", "info", p(&d.join("data.saf"))]);
     assert_eq!(code(&o), 3, "{}", err(&o));
-    assert!(out(&o).contains("data.saf: FAILED: ") && out(&o).contains("not an .ANI or .3DC file"), "{}", out(&o));
+    assert!(out(&o).contains("data.saf: FAILED: ") && out(&o).contains("not an .ANI, .3DC, .VANI, .MANI, .3DO or .3DE file"), "{}", out(&o));
     // validate refuses a .3DC by name too
     let o = sh(&w.data, &["anim", "validate", p(&d.join("m.3dc"))]);
     assert_eq!(code(&o), 3, "{}", err(&o));
     assert!(out(&o).contains("not an .ANI file"), "{}", out(&o));
+}
+
+// ---- .VANI, .MANI, .3DO, .3DE -----------------------------------------------------------------------------------------------------
+
+#[test]
+fn info_describes_a_vani_a_mani_a_3do_and_a_3de() {
+    use shaiya_testkit::anim::{animated_3do, box_3de, box_vani, mani_bytes};
+    let w = world();
+    let d = w.tmp.path().join("f");
+    write(&d.join("b.VANI"), &box_vani(12, 66));
+    write(&d.join("m.MANI"), &mani_bytes(33, 1, 500, 10f32.to_bits()));
+    write(&d.join("i.3DO"), &animated_3do(11, 20));
+    write(&d.join("e.3DE"), &box_3de(Some(4)));
+    write(&d.join("s.3de"), &box_3de(None));
+    let names = ["b.VANI", "m.MANI", "i.3DO", "e.3DE", "s.3de"];
+    let mut args = vec!["anim", "info"];
+    let paths: Vec<String> = names.iter().map(|n| p(&d.join(n)).to_string()).collect();
+    args.extend(paths.iter().map(|s| s.as_str()));
+    let o = sh(&w.data, &args);
+    assert_eq!(code(&o), 0, "{}", err(&o));
+    let t = out(&o);
+    assert!(t.contains("b.VANI: vertex-animated model, 1 item, 8 vertices per step, 12 triangles, 12 steps, about 66 ms per step (inferred)"), "{t}");
+    assert!(t.contains("m.MANI: building motion, 108 bytes, 20 fields (every meaning inferred), tick 33 ms"), "{t}");
+    assert!(t.contains("i.3DO: 3DO mesh, 8 vertices, 12 triangles, 11 frames at 20 per second (inferred)"), "{t}");
+    assert!(t.contains("e.3DE: effect mesh, 8 vertices, 12 triangles, 4 frames"), "{t}");
+    assert!(t.contains("s.3de: effect mesh, 8 vertices, 12 triangles, static, no frame block"), "{t}");
+    args.push("--json");
+    let v = json(&sh(&w.data, &args));
+    let f = |i: usize| &v["files"][i];
+    for key in ["path", "format", "items", "vertices_per_step", "triangles", "steps", "frame_ms", "frame_ms_inferred", "textures", "collision_mesh"] {
+        assert!(f(0).get(key).is_some(), "vani key {key}: {}", f(0));
+    }
+    assert_eq!((f(0)["format"].as_str(), f(0)["steps"].as_u64(), f(0)["frame_ms"].as_i64(), f(0)["collision_mesh"].as_bool()), (Some("vani"), Some(12), Some(66), Some(false)));
+    assert_eq!(f(0)["textures"][0], "box.tga");
+    for key in ["path", "format", "size", "fields"] {
+        assert!(f(1).get(key).is_some(), "mani key {key}: {}", f(1));
+    }
+    assert_eq!((f(1)["format"].as_str(), f(1)["size"].as_u64(), f(1)["fields"].as_array().map(|a| a.len())), (Some("mani"), Some(108), Some(20)));
+    let dist = &f(1)["fields"][19];
+    assert_eq!((dist["name"].as_str(), dist["offset"].as_u64(), dist["value"].as_f64(), dist["raw"].as_str(), dist["inferred"].as_bool()), (Some("move_distance"), Some(104), Some(10.0), Some("00002041"), Some(true)));
+    assert!(f(1)["fields"].as_array().unwrap().iter().all(|x| x["inferred"] == true && x["meaning"].as_str().is_some_and(|m| !m.is_empty())));
+    for key in ["path", "format", "vertices", "triangles", "frames", "frame_rate", "frame_rate_inferred", "texture"] {
+        assert!(f(2).get(key).is_some(), "3do key {key}: {}", f(2));
+    }
+    assert_eq!((f(2)["format"].as_str(), f(2)["frames"].as_u64(), f(2)["frame_rate"].as_i64(), f(2)["frame_rate_inferred"].as_str()), (Some("3do"), Some(11), Some(20), Some("frames per second")));
+    for key in ["path", "format", "layout", "vertices", "triangles", "frames", "max_key", "max_key_inferred", "texture"] {
+        assert!(f(3).get(key).is_some(), "3de key {key}: {}", f(3));
+    }
+    assert_eq!((f(3)["layout"].as_str(), f(3)["frames"].as_u64(), f(3)["max_key"].as_i64(), f(3)["max_key_inferred"].as_bool()), (Some("standard"), Some(4), Some(3), Some(true)));
+    assert_eq!((f(4)["layout"].as_str(), f(4)["frames"].as_u64()), (Some("static"), Some(0)));
+    assert!(f(4)["max_key"].is_null());
+}
+
+#[test]
+fn info_finds_the_new_formats_in_a_folder_and_in_an_archive_in_any_letter_case() {
+    use shaiya_testkit::anim::{animated_3do, box_3de, box_vani, mani_bytes};
+    let w = world();
+    let d = w.tmp.path().join("f");
+    let files: [(&str, Vec<u8>); 8] = [
+        ("sub/one.VANI", box_vani(3, 33)),
+        ("two.Vani", box_vani(3, 33)),
+        ("three.MANI", mani_bytes(33, 0, 0, 0)),
+        ("four.mani", mani_bytes(33, 0, 0, 0)),
+        ("five.3DO", animated_3do(2, 10)),
+        ("six.3do", animated_3do(2, 10)),
+        ("seven.3DE", box_3de(Some(1))),
+        ("eight.3de", box_3de(None)),
+    ];
+    for (n, b) in &files {
+        write(&d.join(n), b);
+    }
+    write(&d.join("skip.txt"), b"x");
+    let o = sh(&w.data, &["anim", "info", p(&d)]);
+    assert_eq!(code(&o), 0, "{}", err(&o));
+    let t = out(&o);
+    assert_eq!(t.lines().count(), 8, "{t}");
+    for (n, _) in &files {
+        assert!(t.contains(n), "{n} in {t}");
+    }
+    assert!(!t.contains("skip.txt"));
+    let c = client_with(&w, "c", &[("Entity/B.VANI", box_vani(3, 33)), ("Entity/B.MANI", mani_bytes(33, 0, 0, 0)), ("Item/3DO/A.3DO", animated_3do(2, 10)), ("Effect/3DE/E.3DE", box_3de(Some(1))), ("Item/readme.txt", b"x".to_vec())]);
+    // the default takes all six formats; patterns are case-insensitive
+    let o = sh(&w.data, &["anim", "info", "--from", p(&c)]);
+    assert_eq!(code(&o), 0, "{}", err(&o));
+    assert_eq!(out(&o).lines().count(), 4, "{}", out(&o));
+    let o = sh(&w.data, &["anim", "info", "--from", p(&c), "*.vani", "effect/3de/*"]);
+    assert_eq!(out(&o).lines().count(), 2, "{}", out(&o));
+    assert!(out(&o).contains("Entity/B.VANI: vertex-animated model") && out(&o).contains("Effect/3DE/E.3DE: effect mesh"), "{}", out(&o));
+}
+
+#[test]
+fn info_exits_3_for_a_file_that_does_not_read_in_the_new_formats_and_reports_the_others() {
+    use shaiya_testkit::anim::{box_3de, box_vani, mani_bytes};
+    let w = world();
+    let d = w.tmp.path().join("f");
+    let mut odd = box_3de(Some(4));
+    odd.extend_from_slice(&[1, 2, 3]);
+    write(&d.join("a_good.VANI"), &box_vani(3, 33));
+    write(&d.join("b_short.MANI"), &mani_bytes(33, 0, 0, 0)[..107]);
+    write(&d.join("c_odd.3DE"), &odd);
+    write(&d.join("d_cut.VANI"), &box_vani(3, 33)[..40]);
+    let o = sh(&w.data, &["anim", "info", p(&d)]);
+    assert_eq!(code(&o), 3, "{}", err(&o));
+    let t = out(&o);
+    assert!(t.contains("a_good.VANI: vertex-animated model"), "{t}");
+    assert!(t.contains("b_short.MANI: FAILED: ") && t.contains("a .MANI is 108 bytes"), "{t}");
+    assert!(t.contains("c_odd.3DE: FAILED: ") && t.contains("does not follow the .3DE layout the toolkit reads"), "{t}");
+    assert!(t.contains("d_cut.VANI: FAILED: "), "{t}");
+    let v = json(&sh(&w.data, &["anim", "info", p(&d), "--json"]));
+    assert_eq!(v["files"].as_array().unwrap().len(), 4);
+    assert!(v["files"][2]["error"].as_str().is_some_and(|e| e.contains("c_odd.3DE")), "{v}");
+}
+
+#[test]
+fn validate_and_compare_stay_ani_only_and_say_so() {
+    use shaiya_testkit::anim::{box_3de, box_vani, mani_bytes};
+    let w = world();
+    let d = w.tmp.path().join("f");
+    write(&d.join("a.vani"), &box_vani(3, 33));
+    write(&d.join("m.mani"), &mani_bytes(33, 0, 0, 0));
+    write(&d.join("e.3de"), &box_3de(None));
+    write(&d.join("good.ani"), &chain(0));
+    for name in ["a.vani", "m.mani", "e.3de"] {
+        let o = sh(&w.data, &["anim", "validate", p(&d.join(name))]);
+        assert_eq!(code(&o), 3, "{name}: {}", err(&o));
+        assert!(out(&o).contains("not an .ANI file (this command checks .ANI files only"), "{name}: {}", out(&o));
+        let o = sh(&w.data, &["anim", "compare", p(&d.join(name)), p(&d.join("good.ani"))]);
+        assert_ne!(code(&o), 0, "{name}");
+        assert!(err(&o).contains("this command compares .ANI files only"), "{name}: {}", err(&o));
+        let o = sh(&w.data, &["anim", "compare", p(&d.join("good.ani")), p(&d.join(name))]);
+        assert_ne!(code(&o), 0, "{name}");
+        assert!(err(&o).contains("this command compares .ANI files only"), "{name}: {}", err(&o));
+    }
+    // a folder is searched for .ani only by validate, so the other formats are not even listed
+    let o = sh(&w.data, &["anim", "validate", p(&d)]);
+    assert_eq!(code(&o), 0, "{}", err(&o));
+    assert!(err(&o).contains("1 file: 0 errors"), "{}", err(&o));
+    let h = sh(&w.data, &["anim", "info", "--help"]);
+    assert!(out(&h).contains("`validate` and `compare` read .ANI files only"), "{}", out(&h));
 }
 
 // ---- opt-in: a real client (read only; outputs go to SHAIYA_SCRATCH) ---------------------------------------------------------------

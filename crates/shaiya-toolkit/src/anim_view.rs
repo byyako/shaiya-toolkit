@@ -1,11 +1,11 @@
 //! The `.ANI` player of the Archive tab: the frames are already rendered (on the worker thread, see `preview::anim_preview`), so this
 //! only moves the time, swaps one texture and draws the bone lines over it. Time runs at 30 key units per second.
 
-use crate::preview::{AnimBoneRow, MeshChoice, PreviewData};
+use crate::preview::{AnimBoneRow, FieldRow, MeshChoice, PreviewData};
 use egui::{Color32, RichText, Stroke, TextureHandle};
 use shaiya_ui::theme::Pal;
 
-/// Key units per second (fixed).
+/// Key units per second of an `.ANI` (fixed). A `.VANI` plays one step per `frame_ms`, a framed `.3DO` at its own rate: see `AnimPlayer::rate`.
 pub const KEYS_PER_SECOND: f32 = 30.0;
 
 /// The longest step the clock takes in one frame, in seconds (a stalled window does not jump).
@@ -18,11 +18,13 @@ pub struct AnimPlayer {
     pub playing: bool,
     pub looping: bool,
     pub show_bones: bool,
+    /// Source frames per second: [`KEYS_PER_SECOND`] for an `.ANI`, `1000 / frame_ms` for a `.VANI`, the file's frame rate for a framed `.3DO`.
+    pub rate: f32,
 }
 
 impl Default for AnimPlayer {
     fn default() -> Self {
-        AnimPlayer { t: 0.0, playing: true, looping: true, show_bones: true }
+        AnimPlayer { t: 0.0, playing: true, looping: true, show_bones: true, rate: KEYS_PER_SECOND }
     }
 }
 
@@ -33,7 +35,8 @@ impl AnimPlayer {
             return;
         }
         let end = end_key.max(0) as f32;
-        self.t += dt * KEYS_PER_SECOND;
+        let rate = if self.rate.is_finite() && self.rate > 0.0 { self.rate } else { KEYS_PER_SECOND };
+        self.t += dt * rate;
         if self.t > end {
             if self.looping && end > 0.0 {
                 self.t %= end;
@@ -61,13 +64,20 @@ impl AnimPlayer {
 
 /// "key 120 of 240, 4.0 s".
 pub fn time_text(t: f32, end_key: i32) -> String {
-    format!("key {} of {}, {:.1} s", t.floor() as i64, end_key.max(0), t / KEYS_PER_SECOND)
+    time_text_at("key", KEYS_PER_SECOND, t, end_key)
+}
+
+/// "step 12 of 60, 0.8 s": the source frame `t` of `end_key` and the seconds it is at `rate` frames per second.
+pub fn time_text_at(unit: &str, rate: f32, t: f32, end_key: i32) -> String {
+    let rate = if rate.is_finite() && rate > 0.0 { rate } else { KEYS_PER_SECOND };
+    format!("{unit} {} of {}, {:.1} s", t.floor() as i64, end_key.max(0), t / rate)
 }
 
 /// Draws an `Anim` preview. Returns true when the person chose another mesh (`mesh` already holds the choice; the caller restarts the
 /// preview with it). `tex` holds the one texture of the frame on screen and the frame it shows.
 pub(crate) fn draw(ui: &mut egui::Ui, pal: &Pal, player: &mut AnimPlayer, data: &PreviewData, tex: &mut Option<(usize, TextureHandle)>, mesh: &mut MeshChoice) -> bool {
-    let PreviewData::Anim { header, issues, bones, end_key, frames, mesh_choices, notes, .. } = data else { return false };
+    let PreviewData::Anim { header, issues, bones, end_key, frames, mesh_choices, notes, rate, unit, .. } = data else { return false };
+    player.rate = *rate;
     let mut mesh_changed = false;
     for (i, line) in header.iter().enumerate() {
         if i == 0 {
@@ -105,16 +115,21 @@ pub(crate) fn draw(ui: &mut egui::Ui, pal: &Pal, player: &mut AnimPlayer, data: 
             }
         }
         ui.checkbox(&mut player.looping, "Loop");
-        ui.checkbox(&mut player.show_bones, "Bones");
-        let current = mesh_choices.iter().find(|(c, _)| c == mesh).map(|(_, l)| l.as_str()).unwrap_or("Skeleton only");
-        egui::ComboBox::from_id_salt("toolkit-anim-mesh").selected_text(format!("Mesh: {current}")).show_ui(ui, |ui| {
-            for (choice, label) in mesh_choices {
-                if ui.selectable_label(choice == mesh, label).clicked() && choice != mesh {
-                    *mesh = choice.clone();
-                    mesh_changed = true;
+        // only an `.ANI` has bones and a choice of meshes
+        if !frames.parents.is_empty() {
+            ui.checkbox(&mut player.show_bones, "Bones");
+        }
+        if !mesh_choices.is_empty() {
+            let current = mesh_choices.iter().find(|(c, _)| c == mesh).map(|(_, l)| l.as_str()).unwrap_or("Skeleton only");
+            egui::ComboBox::from_id_salt("toolkit-anim-mesh").selected_text(format!("Mesh: {current}")).show_ui(ui, |ui| {
+                for (choice, label) in mesh_choices {
+                    if ui.selectable_label(choice == mesh, label).clicked() && choice != mesh {
+                        *mesh = choice.clone();
+                        mesh_changed = true;
+                    }
                 }
-            }
-        });
+            });
+        }
     });
     if *end_key > 0 {
         ui.horizontal(|ui| {
@@ -123,10 +138,10 @@ pub(crate) fn draw(ui: &mut egui::Ui, pal: &Pal, player: &mut AnimPlayer, data: 
             if slider.changed() {
                 player.scrub(t, *end_key);
             }
-            ui.label(time_text(player.t, *end_key));
+            ui.label(time_text_at(unit, *rate, player.t, *end_key));
         });
     } else {
-        ui.label(RichText::new(time_text(player.t, *end_key)).color(pal.weak));
+        ui.label(RichText::new(time_text_at(unit, *rate, player.t, *end_key)).color(pal.weak));
     }
 
     // the picture: one texture, set when the frame changes
@@ -150,7 +165,7 @@ pub(crate) fn draw(ui: &mut egui::Ui, pal: &Pal, player: &mut AnimPlayer, data: 
             ui.painter().image(handle.id(), rect, egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)), Color32::WHITE);
         }
     }
-    if player.show_bones {
+    if player.show_bones && !frames.parents.is_empty() {
         if let Some(points) = frames.bones.get(idx) {
             let to_screen = |p: [f32; 2]| egui::pos2(rect.min.x + p[0] / shaiya_clientdata::render::PREVIEW_SIZE[0] * size.x, rect.min.y + p[1] / shaiya_clientdata::render::PREVIEW_SIZE[1] * size.y);
             let line = Stroke::new(1.5, Color32::from_rgb(255, 200, 60));
@@ -166,8 +181,38 @@ pub(crate) fn draw(ui: &mut egui::Ui, pal: &Pal, player: &mut AnimPlayer, data: 
         }
     }
 
-    bones_table(ui, bones);
+    if !bones.is_empty() {
+        bones_table(ui, bones);
+    }
     mesh_changed
+}
+
+/// Draws a `Fields` preview (a `.MANI`): the header, the notes and the table of fields with their inferred meanings.
+pub(crate) fn draw_fields(ui: &mut egui::Ui, pal: &Pal, data: &PreviewData) {
+    let PreviewData::Fields { header, notes, rows } = data else { return };
+    ui.label(header);
+    for note in notes {
+        ui.label(RichText::new(note).color(pal.weak));
+    }
+    fields_table(ui, rows);
+}
+
+fn fields_table(ui: &mut egui::Ui, rows: &[FieldRow]) {
+    egui::ScrollArea::both().auto_shrink([false, false]).show(ui, |ui| {
+        egui::Grid::new("toolkit-fields-grid").striped(true).show(ui, |ui| {
+            for h in ["Offset", "Field", "Value", "Meaning"] {
+                ui.label(RichText::new(h).strong());
+            }
+            ui.end_row();
+            for r in rows {
+                ui.label(r.offset.to_string());
+                ui.label(&r.name);
+                ui.label(RichText::new(&r.value).monospace()).on_hover_text(&r.raw);
+                ui.label(if r.inferred { format!("{} (inferred)", r.meaning) } else { r.meaning.clone() });
+                ui.end_row();
+            }
+        });
+    });
 }
 
 fn bones_table(ui: &mut egui::Ui, bones: &[AnimBoneRow]) {
@@ -248,5 +293,43 @@ mod tests {
     fn the_time_text_names_key_and_seconds() {
         assert_eq!(time_text(120.0, 240), "key 120 of 240, 4.0 s");
         assert_eq!(time_text(0.0, 0), "key 0 of 0, 0.0 s");
+    }
+
+    #[test]
+    fn vani_plays_one_step_per_frame_ms() {
+        // 66 ms per step: 15.15 steps per second, so 66 ms of time is one step and a second is 15.15
+        let mut p = AnimPlayer { rate: 1000.0 / 66.0, ..AnimPlayer::default() };
+        p.advance(0.066, 59);
+        assert!((p.t - 1.0).abs() < 1e-4, "{}", p.t);
+        p.advance(1.0, 59);
+        assert!((p.t - (1.0 + 1000.0 / 66.0)).abs() < 1e-3, "{}", p.t);
+        // 33 ms: two steps per 66 ms
+        let mut q = AnimPlayer { rate: 1000.0 / 33.0, ..AnimPlayer::default() };
+        q.advance(0.066, 59);
+        assert!((q.t - 2.0).abs() < 1e-4, "{}", q.t);
+        // and it wraps at the last step like any player
+        let mut w = AnimPlayer { t: 10.9, rate: 1000.0 / 100.0, ..AnimPlayer::default() };
+        w.advance(0.2, 11);
+        assert!(w.playing && (w.t - 1.9).abs() < 1e-3, "{}", w.t);
+    }
+
+    #[test]
+    fn a_framed_3do_plays_at_its_inferred_rate_and_a_bad_rate_falls_back() {
+        let mut p = AnimPlayer { rate: 20.0, ..AnimPlayer::default() };
+        p.advance(0.25, 10);
+        assert!((p.t - 5.0).abs() < 1e-4, "{}", p.t);
+        for bad in [0.0, -3.0, f32::NAN, f32::INFINITY] {
+            let mut q = AnimPlayer { rate: bad, ..AnimPlayer::default() };
+            q.advance(0.5, 240);
+            assert!((q.t - 15.0).abs() < 1e-4, "rate {bad}: {}", q.t);
+        }
+        assert_eq!(AnimPlayer::default().rate, KEYS_PER_SECOND, "an .ANI keeps its 30 key units per second");
+    }
+
+    #[test]
+    fn the_time_text_names_the_unit_and_the_rate() {
+        assert_eq!(time_text_at("step", 1000.0 / 66.0, 15.0, 59), "step 15 of 59, 1.0 s");
+        assert_eq!(time_text_at("frame", 20.0, 10.0, 10), "frame 10 of 10, 0.5 s");
+        assert_eq!(time_text_at("frame", 0.0, 30.0, 60), "frame 30 of 60, 1.0 s");
     }
 }

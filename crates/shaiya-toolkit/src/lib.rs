@@ -13,6 +13,7 @@ pub mod keys;
 pub mod multi_apply;
 pub mod patch_builder;
 pub mod preview;
+pub mod preview_models;
 pub mod publish_form;
 pub mod sdata_tab;
 pub mod sdata_table;

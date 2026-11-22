@@ -41,7 +41,7 @@ A file that neither layout reads to the last byte is never half-read: the reader
 |---|---|
 | `shaiya-clientdata` `mesh3de` | parses the two layouts, writes back in memory, names the texture, counts the frames |
 
-No program shows a `.3DE` yet: the Archive tab has no preview for it (it shows the bytes as hex, like any format without one), and `shaiya anim` does not read it.
+In Shaiya Toolkit's Archive tab a `.3DE` shows its mesh in plain grey with the wire, under "Effect mesh: N vertices, N triangles", and says how many frames the file holds: "N frames (not played: their meaning is inferred)", "0 frames", or "no frame block: the file ends after the faces" for the static layout. The frames are not played. A `.3DE` that follows neither layout is shown as a failed preview with the reason ("does not follow the .3DE layout the toolkit reads" and why the standard layout failed) and its bytes as hex, also when the bytes look like text; an empty file shows as empty. `shaiya anim info` prints one line per file (vertices, triangles, layout, frames); `--json` adds `max_key` (inferred) and the texture name. `shaiya anim validate` and `compare` read `.ANI` files only. Validated offline on US EP4.5 files.
 
 ## Verified on
 

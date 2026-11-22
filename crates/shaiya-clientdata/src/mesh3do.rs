@@ -1,4 +1,4 @@
-//! `.3DO` item meshes (`Item/3DO`, ...): a mesh with optional vertex frames. Layout as observed in client files (little-endian, no header;
+//! `.3DO` meshes (`Item/3DO`, ...): a mesh with optional vertex frames. Layout as observed in client files (little-endian, no header;
 //! a file is read only when it ends exactly after the last frame):
 //!
 //! ```text

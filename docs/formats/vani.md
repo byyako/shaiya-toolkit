@@ -38,8 +38,10 @@ On US EP4.5 the collision flag is 0 in all 66 files, so no real file exercises t
 | Program | Use |
 |---|---|
 | `shaiya-clientdata` `vani` | parses, writes back in memory, gives the vertices of an item at a step and the texture name |
+| Shaiya Toolkit, Archive tab | previews it: the model picture of every step (textures looked up under `Entity/Texture` as for a `.smod`, a missing one named and drawn grey), played one step per `frame_ms` milliseconds with Play/Pause, a slider and Loop; the header says "about N ms per step (inferred from the file; not checked in the game)". At most 241 pictures are prepared on a worker thread, one every few steps for a longer file. A file that does not read to the last byte shows its error and the bytes as hex, also when the bytes look like text |
+| `shaiya anim info` | one line per file (items, vertices per step, triangles, steps, `frame_ms` as inferred); `--json` has the same as keys. `shaiya anim validate` and `compare` read `.ANI` files only |
 
-The Archive tab and `shaiya anim` do not read `.VANI` yet: the Archive tab shows the bytes as hex, like any format that has no preview.
+The preview and the player are validated offline on US EP4.5 files; the eight other matrix clients have their index only.
 
 ## Verified on
 

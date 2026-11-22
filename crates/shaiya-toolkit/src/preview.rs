@@ -1,6 +1,7 @@
 //! What the Archive tab shows for one entry: a decoded texture, text, an SData summary, or hex. Built on a worker thread from the
 //! entry's bytes (never on the UI thread).
 
+use crate::preview_models;
 use shaiya_archive::{Archive, Entry};
 use shaiya_core::text::Encoding;
 pub use shaiya_clientdata::meshpick::{mesh_candidates_in, MeshInfo};
@@ -44,7 +45,13 @@ pub enum PreviewData {
         mesh: MeshChoice,
         mesh_choices: Vec<(MeshChoice, String)>,
         notes: Vec<String>,
+        /// Source frames per second: 30 key units for an `.ANI`, 1000 / frame_ms steps for a `.VANI`, the file's rate for a framed `.3DO`.
+        rate: f32,
+        /// What one source frame is called in the time text: "key", "step" or "frame".
+        unit: &'static str,
     },
+    /// A file shown as a labelled table of fields (a `.MANI`; every meaning is inferred).
+    Fields { header: String, notes: Vec<String>, rows: Vec<FieldRow> },
     /// The raw bytes (decoded for display with an encoding chosen by the person).
     Text { bytes: Vec<u8>, total: u64, truncated: bool, guess: Encoding },
     /// `plain` is the decrypted bytes (or the file itself when it is not encrypted).
@@ -64,6 +71,7 @@ impl PreviewData {
             PreviewData::Map { .. } => "map",
             PreviewData::Model { .. } => "model",
             PreviewData::Anim { .. } => "anim",
+            PreviewData::Fields { .. } => "fields",
             PreviewData::Text { .. } => "text",
             PreviewData::Sdata { .. } => "sdata",
             PreviewData::Hex { .. } => "hex",
@@ -80,6 +88,18 @@ pub enum MeshChoice {
     Skeleton,
     /// One `.3DC` by archive path.
     One(String),
+}
+
+/// One row of a `.MANI` preview: the field's place in the file, the toolkit's name, the value and the meaning (inferred).
+#[derive(Clone, Debug)]
+pub struct FieldRow {
+    pub offset: usize,
+    pub name: String,
+    pub value: String,
+    /// The stored bits (hover text), so a float is never shown only as a rounded number.
+    pub raw: String,
+    pub meaning: String,
+    pub inferred: bool,
 }
 
 /// One row of the Bones table of an `.ANI` preview.
@@ -232,11 +252,6 @@ pub fn model_preview(archive: &Archive, data: &[u8], path: &str, job: &Job) -> s
     Ok(PreviewData::Model { header, missing: p.missing, see_through: p.see_through, invisible: p.invisible, notes: Vec::new(), width, height, rgba })
 }
 
-/// Model formats the client reads that this toolkit has no picture for yet (the format may be documented, no program shows it): they stay as hex.
-pub fn undocumented_model_format(path: &str) -> bool {
-    matches!(ext_of(path).as_str(), "3do")
-}
-
 /// The `.3DC` files that suit the animation at `ani_path`, by names only (no list file is read): the folder next to the `ANI` folder
 /// whose name is `3DC` (any letter case); files whose stem equals the prefix or starts with the prefix and `_`. For
 /// `Character/<race>/ANI/<rig>_...` the prefix is the text before the first `_`; otherwise it is the animation's stem without its last
@@ -363,7 +378,7 @@ pub fn anim_preview(archive: &Archive, data: &[u8], path: &str, mesh: &MeshChoic
     for p in &compatible {
         mesh_choices.push((MeshChoice::One(p.clone()), file_name(p).to_string()));
     }
-    Ok(PreviewData::Anim { header, issues, bones, end_key: ani.end_key, frames, mesh, mesh_choices, notes })
+    Ok(PreviewData::Anim { header, issues, bones, end_key: ani.end_key, frames, mesh, mesh_choices, notes, rate: 30.0, unit: "key" })
 }
 
 /// The preview of a `.3DC` from its bytes: the first mesh at rest in plain grey with the wire. A file that does not read (or is
@@ -477,9 +492,17 @@ pub fn make_preview_with(archive: &Archive, entry: &Entry, path: &str, text_all:
             Err(e) => PreviewData::Failed { message: e.to_string(), bytes: data.into_iter().take(64 << 10).collect(), total },
         });
     }
-    if ext == "ani" || ext == "3dc" {
+    // the animation and model formats: a file that does not read is Failed with its bytes, never Text (even when its bytes look like text)
+    if matches!(ext.as_str(), "ani" | "3dc" | "vani" | "mani" | "3do" | "3de") {
         let data = read_all(archive, entry, 128 << 20, job)?;
-        let made = if ext == "ani" { anim_preview(archive, &data, path, mesh, job) } else { c3dc_preview(&data, path) };
+        let made = match ext.as_str() {
+            "ani" => anim_preview(archive, &data, path, mesh, job),
+            "3dc" => c3dc_preview(&data, path),
+            "vani" => preview_models::vani_preview(archive, &data, path, job),
+            "mani" => preview_models::mani_preview(&data, path),
+            "3do" => preview_models::m3do_preview(&data, path, job),
+            _ => preview_models::m3de_preview(&data, path),
+        };
         job.check()?;
         return Ok(match made {
             Ok(p) => p,
@@ -487,7 +510,7 @@ pub fn make_preview_with(archive: &Archive, entry: &Entry, path: &str, text_all:
         });
     }
     let by_ext = matches!(ext.as_str(), "txt" | "ini" | "xml" | "csv" | "cfg" | "lst" | "log");
-    if !undocumented_model_format(path) && (by_ext || looks_like_text(&head)) {
+    if by_ext || looks_like_text(&head) {
         let cap = if text_all { TEXT_ALL } else { TEXT_FIRST };
         let bytes = read_all(archive, entry, cap, job)?;
         let guess = guess_encoding(&bytes);
@@ -876,15 +899,16 @@ mod model_tests {
     }
 
     #[test]
-    fn a_model_that_does_not_parse_is_failed_with_hex_and_other_model_formats_stay_hex() {
+    fn a_model_that_does_not_parse_is_failed_with_hex_in_every_model_format() {
         let d = TempDir::new("preview-model-bad");
         SahBuilder::new(0).file(b"m/bad.smod", b"short").file(b"m/a.3DC", &[1u8, 2, 3, 0, 0, 0, 9, 9]).file(b"m/b.3do", &[7u8; 20]).write_to(d.path());
         let a = Archive::open(d.path()).unwrap();
         assert!(matches!(make_preview(&a, a.index().get("m/bad.smod").unwrap(), "m/bad.smod", false, 0, &Job::silent()).unwrap(), PreviewData::Failed { .. }));
         assert!(matches!(make_preview(&a, a.index().get("m/a.3DC").unwrap(), "m/a.3DC", false, 0, &Job::silent()).unwrap(), PreviewData::Failed { .. }), "a .3DC that does not read is Failed, with hex");
-        assert!(matches!(make_preview(&a, a.index().get("m/b.3do").unwrap(), "m/b.3do", false, 0, &Job::silent()).unwrap(), PreviewData::Hex { .. }));
-        assert!(undocumented_model_format("m/b.3do") && !undocumented_model_format("m/a.3DC"));
-        assert!(!undocumented_model_format("Entity/Building/box.smod") && !undocumented_model_format("a/b.bin"));
+        match make_preview(&a, a.index().get("m/b.3do").unwrap(), "m/b.3do", false, 0, &Job::silent()).unwrap() {
+            PreviewData::Failed { message, bytes, total } => assert!(message.contains("m/b.3do") && bytes == [7u8; 20] && total == 20, "a .3DO that does not read is Failed with its reason and its bytes: {message}"),
+            other => panic!("{other:?}"),
+        }
     }
 
     #[test]
@@ -1150,14 +1174,6 @@ mod anim_tests {
     }
 
     #[test]
-    fn a_text_like_3do_stays_hex_with_the_note() {
-        let d = TempDir::new("w4a-3do");
-        let a = open(&d, &[("Item/3DO/word.3DO", b"just words, plain text, nothing binary".to_vec())]);
-        assert!(matches!(pv(&a, "Item/3DO/word.3DO", &MeshChoice::Default), PreviewData::Hex { .. }), "a .3DO is never shown as Text");
-        assert!(undocumented_model_format("Item/3DO/word.3DO"));
-    }
-
-    #[test]
     fn a_text_like_3dc_or_ani_is_failed_with_hex_not_text() {
         let d = TempDir::new("w4a-text");
         let words = b"just words, plain text, nothing binary".to_vec();
@@ -1187,5 +1203,239 @@ mod anim_tests {
         let s = anim(pv(&a, "Monster/ANI/Long_Att1.ANI", &MeshChoice::Default));
         assert_eq!((s.frames.step, s.frames.bones.len()), (5.0, 201));
         assert!(s.notes.iter().any(|n| n == "the frames are prepared before playing: one every 5 key units (at most 241 frames)"), "{:?}", s.notes);
+    }
+}
+
+#[cfg(test)]
+mod model_format_tests {
+    use super::*;
+    use shaiya_core::{Cancel, Silent};
+    use shaiya_testkit::anim::{animated_3do, box_3de, box_3do, box_vani, mani_bytes};
+    use shaiya_testkit::{tga_stub, SahBuilder, TempDir};
+
+    fn open(d: &TempDir, files: &[(&str, Vec<u8>)]) -> Archive {
+        let mut b = SahBuilder::new(0);
+        for (p, data) in files {
+            b = b.file(p.as_bytes(), data);
+        }
+        b.write_to(d.path());
+        Archive::open(d.path()).unwrap()
+    }
+
+    fn pv(a: &Archive, path: &str) -> PreviewData {
+        make_preview(a, a.index().get(path).unwrap(), path, false, 0, &Job::silent()).unwrap()
+    }
+
+    struct Played {
+        header: Vec<String>,
+        end_key: i32,
+        frames: shaiya_clientdata::render::AnimFrames,
+        notes: Vec<String>,
+        rate: f32,
+        unit: &'static str,
+        choices: usize,
+        bones: usize,
+    }
+
+    fn played(p: PreviewData) -> Played {
+        match p {
+            PreviewData::Anim { header, end_key, frames, notes, rate, unit, mesh_choices, bones, .. } => Played { header, end_key, frames, notes, rate, unit, choices: mesh_choices.len(), bones: bones.len() },
+            other => panic!("{other:?}"),
+        }
+    }
+
+    fn drawn(rgba: &[u8]) -> usize {
+        rgba.chunks(4).filter(|p| p[3] == 255).count()
+    }
+
+    #[test]
+    fn a_vani_previews_with_its_steps_and_rate() {
+        let d = TempDir::new("w2bx-vani");
+        let a = open(&d, &[("Entity/Building/b.VANI", box_vani(12, 66)), ("Entity/Texture/box.tga", tga_stub(8, 8))]);
+        let p = played(pv(&a, "Entity/Building/b.VANI"));
+        assert_eq!((p.frames.frames.len(), p.frames.step, p.end_key, p.unit, p.choices, p.bones), (12, 1.0, 11, "step", 0, 0));
+        assert!((p.rate - 1000.0 / 66.0).abs() < 1e-4, "one step per 66 ms: {}", p.rate);
+        assert_eq!((p.frames.width, p.frames.height), (240, 220));
+        assert_eq!(p.header[0], "Vertex-animated model: 1 item, 8 vertices per step, 12 triangles");
+        assert_eq!(p.header[1], "12 steps, about 66 ms per step (inferred from the file; not checked in the game)");
+        assert!(p.notes.is_empty(), "the texture is found: {:?}", p.notes);
+        assert!(p.frames.frames.iter().all(|f| drawn(f) > 0), "every step draws something");
+        assert!(p.frames.frames[0] != p.frames.frames[11], "the box rises");
+        // the same model without its texture: named and drawn grey
+        let d2 = TempDir::new("w2bx-vani2");
+        let b = open(&d2, &[("Entity/Building/b.VANI", box_vani(3, 33))]);
+        let q = played(pv(&b, "Entity/Building/b.VANI"));
+        assert_eq!(q.notes, ["texture missing or unreadable, drawn grey: box.tga"]);
+        assert!((q.rate - 1000.0 / 33.0).abs() < 1e-4);
+    }
+
+    #[test]
+    fn a_long_vani_is_prepared_with_at_most_241_frames() {
+        let d = TempDir::new("w2bx-vani-long");
+        let a = open(&d, &[("Entity/Building/long.VANI", box_vani(300, 33))]);
+        let p = played(pv(&a, "Entity/Building/long.VANI"));
+        assert_eq!((p.frames.step, p.frames.frames.len(), p.end_key), (2.0, 150, 299));
+        assert!(p.frames.frames.len() <= 241);
+        assert!(p.notes.iter().any(|n| n == "the frames are prepared before playing: one every 2 steps (at most 241 frames)"), "{:?}", p.notes);
+    }
+
+    #[test]
+    fn a_vani_with_no_steps_or_a_non_positive_time_still_previews() {
+        let d = TempDir::new("w2bx-vani-odd");
+        let a = open(&d, &[("Entity/Building/none.VANI", box_vani(0, 33)), ("Entity/Building/zero.VANI", box_vani(4, 0)), ("Entity/Building/neg.VANI", box_vani(4, -5))]);
+        let none = played(pv(&a, "Entity/Building/none.VANI"));
+        assert_eq!((none.frames.frames.len(), none.frames.bones.len(), none.end_key), (0, 0, 0));
+        for p in ["Entity/Building/zero.VANI", "Entity/Building/neg.VANI"] {
+            let q = played(pv(&a, p));
+            assert_eq!((q.rate, q.frames.frames.len()), (30.0, 4), "{p}");
+            assert!(q.header[1].contains("is not a positive number; played at 30 steps per second"), "{}", q.header[1]);
+        }
+    }
+
+    #[test]
+    fn an_animated_3do_plays_its_frames() {
+        let d = TempDir::new("w2bx-3do");
+        let a = open(&d, &[("Item/3DO/arrow.3DO", animated_3do(11, 20))]);
+        let p = played(pv(&a, "Item/3DO/arrow.3DO"));
+        assert_eq!((p.frames.frames.len(), p.end_key, p.unit, p.rate, p.choices), (11, 10, "frame", 20.0, 0));
+        assert_eq!(p.header[0], "3DO mesh: 8 vertices, 12 triangles");
+        assert_eq!(p.header[1], "11 frames at 20 per second (inferred from the file; not checked in the game)");
+        assert!(p.frames.frames.iter().all(|f| drawn(f) > 0));
+        assert!(p.frames.frames[0] != p.frames.frames[10], "the frames differ");
+        // a framed mesh with a rate that is not positive plays at the fallback
+        let d2 = TempDir::new("w2bx-3do-z");
+        let b = open(&d2, &[("Item/3DO/z.3DO", animated_3do(3, 0))]);
+        let z = played(pv(&b, "Item/3DO/z.3DO"));
+        assert_eq!((z.rate, z.frames.frames.len()), (30.0, 3));
+    }
+
+    #[test]
+    fn a_still_3do_previews_as_a_model() {
+        let d = TempDir::new("w2bx-3do-still");
+        let a = open(&d, &[("Item/3DO/still.3DO", box_3do())]);
+        match pv(&a, "Item/3DO/still.3DO") {
+            PreviewData::Model { header, notes, width, height, rgba, missing, .. } => {
+                assert_eq!(header, "3DO mesh: 8 vertices, 12 triangles");
+                assert_eq!((width, height, rgba.len()), (480, 440, 480 * 440 * 4));
+                assert!(rgba.chunks(4).any(|p| p[3] == 255) && missing.is_empty());
+                assert!(notes.iter().all(|n| !n.contains("frames")), "{notes:?}");
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_3de_preview_lists_its_frames_without_playing_them() {
+        let d = TempDir::new("w2bx-3de");
+        let a = open(&d, &[("Effect/3DE/a.3de", box_3de(Some(4))), ("Effect/3DE/b.3de", box_3de(Some(0))), ("Effect/3DE/c.3de", box_3de(None))]);
+        let model = |p: &str| match pv(&a, p) {
+            PreviewData::Model { header, notes, rgba, .. } => (header, notes, rgba.len()),
+            other => panic!("{p}: {other:?} (a .3DE is shown as a model picture, never played)"),
+        };
+        let (h, notes, px) = model("Effect/3DE/a.3de");
+        assert_eq!(h, "Effect mesh: 8 vertices, 12 triangles");
+        assert_eq!(notes[0], "4 frames (not played: their meaning is inferred)");
+        assert!(notes.iter().any(|n| n.contains("fx.tga") && n.contains("not looked up")), "{notes:?}");
+        assert_eq!(px, 480 * 440 * 4);
+        assert_eq!(model("Effect/3DE/b.3de").1[0], "0 frames");
+        assert_eq!(model("Effect/3DE/c.3de").1[0], "no frame block: the file ends after the faces");
+    }
+
+    #[test]
+    fn a_3de_in_another_layout_is_refused_with_the_reason() {
+        let d = TempDir::new("w2bx-3de-odd");
+        let mut odd = box_3de(Some(4));
+        odd.extend_from_slice(&[1, 2, 3]);
+        let a = open(&d, &[("Effect/3DE/odd.3de", odd.clone())]);
+        match pv(&a, "Effect/3DE/odd.3de") {
+            PreviewData::Failed { message, bytes, total } => {
+                assert!(message.contains(shaiya_clientdata::mesh3de::NOT_THE_LAYOUT) && message.contains("Effect/3DE/odd.3de"), "{message}");
+                assert_eq!((bytes, total), (odd.clone(), odd.len() as u64), "the bytes are shown as hex");
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn an_empty_3de_is_empty() {
+        let d = TempDir::new("w2bx-empty");
+        let names = ["Effect/3DE/test1.3de", "Entity/x.VANI", "Item/3DO/e.3DO", "Entity/x.MANI"];
+        let files: Vec<(&str, Vec<u8>)> = names.iter().map(|n| (*n, Vec::new())).collect();
+        let a = open(&d, &files);
+        for p in names {
+            assert!(matches!(pv(&a, p), PreviewData::Empty), "{p}");
+        }
+    }
+
+    #[test]
+    fn a_text_like_vani_mani_3do_or_3de_is_failed_with_hex_not_text() {
+        let d = TempDir::new("w2bx-text");
+        let words = b"just words, plain text, nothing binary".to_vec();
+        let names = ["Entity/w.VANI", "Entity/w.MANI", "Item/3DO/w.3DO", "Effect/3DE/w.3DE"];
+        let files: Vec<(&str, Vec<u8>)> = names.iter().map(|n| (*n, words.clone())).collect();
+        let a = open(&d, &files);
+        for p in names {
+            match pv(&a, p) {
+                PreviewData::Failed { message, bytes, total } => assert!(message.contains(p) && bytes == words && total == words.len() as u64, "{p}: {message}"),
+                other => panic!("{p}: {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn a_mani_previews_as_a_labelled_table_and_every_meaning_is_inferred() {
+        let d = TempDir::new("w2bx-mani");
+        let a = open(&d, &[("Entity/Building/float.MANI", mani_bytes(33, 1, 500, 10f32.to_bits())), ("Entity/Building/int.MANI", mani_bytes(33, 0, 0, 500))]);
+        let (header, notes, rows) = match pv(&a, "Entity/Building/float.MANI") {
+            PreviewData::Fields { header, notes, rows } => (header, notes, rows),
+            other => panic!("{other:?}"),
+        };
+        assert_eq!(header, "Motion parameters for a placed building model (108 bytes). Field meanings are inferred and were not checked in the game.");
+        assert!(notes.is_empty(), "{notes:?}");
+        assert_eq!(rows.len(), 20);
+        assert!(rows.iter().all(|r| r.inferred && !r.meaning.is_empty()));
+        let row = |n: &str| rows.iter().find(|r| r.name == n).unwrap();
+        assert_eq!((row("tick_ms").offset, row("tick_ms").value.as_str()), (0, "33"));
+        assert_eq!((row("move_on").offset, row("move_on").value.as_str(), row("move_pause_ms").value.as_str()), (80, "1", "500"));
+        assert_eq!((row("move_distance").offset, row("move_distance").value.as_str(), row("move_distance").raw.as_str()), (104, "10", "stored as 0x41200000"));
+        assert_eq!((row("move_accel").value.as_str(), row("move_accel").raw.clone()), ("1.01", format!("stored as 0x{:08x}", 1.01f32.to_bits())));
+        assert_eq!((row("move_dir").value.as_str(), row("move_dir").raw.as_str()), ("[1, 0, 0]", "stored as 0x3f800000 0x00000000 0x00000000"));
+        assert_eq!(row("tick_ms").raw, "33 stored as 0x00000021");
+        // the other writer generation: the integer 500 at offset 104
+        match pv(&a, "Entity/Building/int.MANI") {
+            PreviewData::Fields { notes, rows, .. } => {
+                let v = &rows.iter().find(|r| r.offset == 104).unwrap().value;
+                assert!(v.ends_with("or as an integer: 500"), "{v}");
+                assert!(notes.len() == 1 && notes[0].contains("two writer generations") && notes[0].contains("not interpreted"), "{notes:?}");
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_mani_of_the_wrong_size_is_failed_with_hex() {
+        let d = TempDir::new("w2bx-mani-size");
+        let short = mani_bytes(33, 0, 0, 0)[..107].to_vec();
+        let a = open(&d, &[("Entity/Building/s.MANI", short.clone())]);
+        match pv(&a, "Entity/Building/s.MANI") {
+            PreviewData::Failed { message, bytes, .. } => assert!(message.contains("a .MANI is 108 bytes") && bytes == short, "{message}"),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_cancelled_vani_or_3do_preview_ends_cancelled() {
+        let d = TempDir::new("w2bx-cancel");
+        let a = open(&d, &[("Entity/Building/b.VANI", box_vani(12, 33)), ("Item/3DO/arrow.3DO", animated_3do(11, 20))]);
+        let cancel = Cancel::new();
+        let job = Job::new(&Silent, cancel.clone());
+        cancel.cancel();
+        for p in ["Entity/Building/b.VANI", "Item/3DO/arrow.3DO"] {
+            let e = make_preview(&a, a.index().get(p).unwrap(), p, false, 0, &job).unwrap_err();
+            assert!(matches!(e, Error::Cancelled), "{p}: {e:?}");
+            let data = a.read_entry(a.index().get(p).unwrap()).unwrap();
+            let made = if p.ends_with("VANI") { preview_models::vani_preview(&a, &data, p, &job) } else { preview_models::m3do_preview(&data, p, &job) };
+            assert!(made.is_err(), "{p}");
+        }
     }
 }
