@@ -290,6 +290,9 @@ mod tests {
         std::fs::write(files.join("Item/Skill.SData"), seed::encrypt(&payload())).unwrap();
         std::fs::write(files.join("ui/broken.dds"), b"DDS not really").unwrap();
         std::fs::write(files.join("ui/ok.tga"), tga_stub(4, 4)).unwrap();
+        let good_ani = arm_ani(60);
+        std::fs::create_dir_all(files.join("Character/Human/ANI")).unwrap();
+        std::fs::write(files.join("Character/Human/ANI/huwm_1_cut.ANI"), &good_ani[..good_ani.len() - 3]).unwrap();
         let loose = t.path().join("loose");
         std::fs::create_dir_all(&loose).unwrap();
         std::fs::write(loose.join("Other.SData"), seed::encrypt(&seed::encrypt(&payload()))).unwrap();
@@ -301,6 +304,7 @@ mod tests {
         assert_eq!(
             got,
             [
+                ("character/human/ani/huwm_1_cut.ani".to_string(), code::ANIM_UNREADABLE),
                 ("item/item.sdata".to_string(), code::SDATA_DOUBLE_ENCRYPTED),
                 ("other.sdata".to_string(), code::SDATA_DOUBLE_ENCRYPTED),
                 ("ui/broken.dds".to_string(), code::TEXTURE_UNREADABLE)

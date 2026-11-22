@@ -10,13 +10,13 @@ An existing `.ANI` file, at the same archive path: the new file takes the old on
 
 ## 2. Find the target
 
-Pick the file by name. Character animations are named `<rig>_<number>_<name>.ANI` in `Character/<race>/ANI`; the rig is the first part of the name (`huwm` is the human male Fighter), and **each rig is its own target**: the skeletons of different rigs differ, and almost every file of a rig has reference matrices of its own.
+Pick the file by name. Character animations are named `<rig>_<number>_<name>.ANI` in `Character/<race>/ANI`; the rig is the first part of the name (`huwm` is the human male Fighter), and **each rig is its own target**: the skeletons of different rigs differ, and on US EP4.5 almost every file of a rig has reference matrices of its own.
 
 ```
 shaiya anim info --from "@mymod" "Character/Human/ANI/huwm_*"
 ```
 
-`info` prints one line per file: the kind and rig of an archive path ("Character rig huwm (Human)"), the bone count, the end key and seconds, the number of keys and the validation findings. In Shaiya Toolkit's Archive tab, select the `.ANI` to see the same lines and play it on a mesh the toolkit finds by name (section 6). A file that does not read to its last byte is shown with the reader's error and its bytes as hex, never half-read.
+`info` prints one line per file: the kind and rig of an archive path ("Character rig huwm (Human)"), the bone count, the end key and seconds, the number of keys and the validation findings. In Shaiya Toolkit's Archive tab, select the `.ANI` to see the same facts and play it on a mesh the toolkit finds by name (section 6). A file that does not read to its last byte is shown with the reader's error and its bytes as hex, never half-read.
 
 ## 3. The skeleton rule
 
@@ -24,7 +24,7 @@ An `.ANI` file holds, for each bone of a skeleton, a reference matrix and the ke
 
 - the same **bone count**,
 - the same **order and parents** of the bones,
-- the same **reference matrices**, bit for bit (64 bytes per bone). Almost every file of a rig has its own, so copy them from the exact file you replace, not from another file of the same rig.
+- the same **reference matrices**, bit for bit (64 bytes per bone). On US EP4.5 almost every file of a rig has its own, so copy them from the exact file you replace, not from another file of the same rig.
 
 Keys (the motion) may change as you like. Separately, the toolkit also asks for the same first field as the file it replaces (inferred to be the start key; not checked in the game). It is not part of the skeleton rule, and the toolkit reports it on its own line.
 
@@ -40,7 +40,7 @@ Passing is a result of the toolkit's own checks. It does not say that the game a
 
 ## 5. Put it in
 
-**In Shaiya Toolkit.** In the Archive tab, right-click the file, choose **Replace with file...** and pick yours. The toolkit compares it with the copy already in the client first; if the skeleton differs it asks (**Add anyway** or **Cancel**) before queueing anything, and lists the finding (`anim-rig-differs`). A different first field, a file that does not read, and validation errors only warn. Nothing is written until you apply the queue (Apply & history), which keeps a journal.
+**In Shaiya Toolkit.** In the Archive tab, right-click the file, choose **Replace with file...** and pick yours. The toolkit compares it with the copy already in the client first; if the skeleton differs it asks (**Add anyway** or **Cancel**) before queueing anything, and lists the finding (`anim-rig-differs`). A different first field, a file that does not read, and validation errors only warn. Nothing is written until you press **Apply to client...** in the Archive tab's pending panel; it asks first and writes a journal.
 
 **On the command line.**
 
@@ -58,7 +58,7 @@ Select the file in the Archive tab, in a client that holds your replacement. The
 
 ## 7. Undo
 
-Apply & history keeps a journal for every change. In Shaiya Toolkit use **Undo last change** or **Apply & history > Roll back...**; on the command line:
+Every change you apply is journaled, except with `--no-journal` or Compact, which make none. In Shaiya Toolkit use **Undo last change** or **Apply & history > Roll back...**; on the command line:
 
 ```
 shaiya patch rollback "@mymod"

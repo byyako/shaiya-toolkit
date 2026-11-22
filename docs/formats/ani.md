@@ -23,7 +23,7 @@ The toolkit keeps floats exactly as stored, NaN bits included, so a file written
 
 ## Rules a replacement must keep
 
-A replacement must keep the bone count, the order and parents of the bones and all 64 bytes of every reference matrix of the file it replaces. Almost every file of a rig has its own reference matrices, so copy them from the exact file you replace.
+A replacement must keep the bone count, the order and parents of the bones and all 64 bytes of every reference matrix of the file it replaces. On US EP4.5 almost every file of a rig has its own reference matrices, so copy them from the exact file you replace.
 
 The toolkit also asks for the same first field as the file it replaces (inferred to be the start key; not checked in the game).
 
