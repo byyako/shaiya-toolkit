@@ -72,6 +72,7 @@ nav:
       - Mod game files: guides/mod-files.md
       - Make a patch: guides/make-a-patch.md
       - SData files: guides/sdata-files.md
+      - Replacing an animation: guides/replacing-an-animation.md
       - Undo and recovery: guides/undo-and-recovery.md
       - Client health and clean-up: guides/client-health.md
   - Formats:

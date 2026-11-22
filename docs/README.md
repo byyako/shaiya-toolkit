@@ -23,7 +23,7 @@ US, RU, FR, CN, Phoenix, KR episode 8 and Fawkes v68. What works on which client
 
 - [getting-started.md](getting-started.md): five minutes from inspecting a file to building a patch on a copy and undoing it.
 - Formats: [overview of every format page](formats/README.md).
-- Guides: [modding files](guides/mod-files.md), [making patches](guides/make-a-patch.md), [SData files](guides/sdata-files.md), [undo and recovery](guides/undo-and-recovery.md), [client health and clean-up](guides/client-health.md).
+- Guides: [modding files](guides/mod-files.md), [making patches](guides/make-a-patch.md), [SData files](guides/sdata-files.md), [replacing an animation](guides/replacing-an-animation.md), [undo and recovery](guides/undo-and-recovery.md), [client health and clean-up](guides/client-health.md).
 - [faq.md](faq.md): the common errors.
 
 ## All pages
@@ -36,6 +36,7 @@ US, RU, FR, CN, Phoenix, KR episode 8 and Fawkes v68. What works on which client
 | [guides/mod-files.md](guides/mod-files.md) | Modders: browse, extract, edit, add with a backup, make a patch, roll back |
 | [guides/make-a-patch.md](guides/make-a-patch.md) | Operators: build, sign, test on a copy, publish `psNNNN.patch` |
 | [guides/sdata-files.md](guides/sdata-files.md) | Decrypt and encrypt SData around an editor, `--like`, unencrypted clients |
+| [guides/replacing-an-animation.md](guides/replacing-an-animation.md) | Put your own `.ANI` in place of an existing one: find the target, the skeleton rule, `anim compare`, put it in, look at it, undo |
 | [guides/undo-and-recovery.md](guides/undo-and-recovery.md) | Journals, rollback, what blocks it, the pending marker, swap back |
 | [guides/client-health.md](guides/client-health.md) | What Health reports about a client folder, the leftovers, moving them aside and putting them back |
 | [version-matrix.md](version-matrix.md) | What parses on which client |
@@ -55,6 +56,8 @@ US, RU, FR, CN, Phoenix, KR episode 8 and Fawkes v68. What works on which client
 | [formats/skill-sdata.md](formats/skill-sdata.md) | `Skill.SData`: the skill table, three layout variants, where each was verified |
 | [formats/dg.md](formats/dg.md) | Dungeon floors (`.dg`): the octree layout and the map size rule |
 | [formats/smod.md](formats/smod.md) | Models (`.smod`): modules, vertices, faces, collision, orientation |
+| [formats/ani.md](formats/ani.md) | Animations (`.ANI`): bones, keys, the skeleton rule, validation codes, the rig check, how a mesh is posed |
+| [formats/3dc.md](formats/3dc.md) | Skinned meshes (`.3DC`): the three layouts, bone indices, the rest-pose preview |
 | [formats/textures.md](formats/textures.md) | Textures: DDS and TGA as read; field chunk textures and the minimap the editor writes |
 | [formats/sysmsg.md](formats/sysmsg.md) | `sysmsg-uni.txt` and the table of map names |
 | [formats/tacticszone-zon.md](formats/tacticszone-zon.md) | `TacticsZone.zon`: header, areas with map id and type |
