@@ -218,13 +218,13 @@ impl Vani {
         decode_cp949(raw.split(|&b| b == 0).next().unwrap_or(&[]))
     }
 
-    /// The vertices of `item` at `step` (empty when either does not exist).
+    /// The vertices of `item` at `step` (empty when either does not exist, or when `vertices` was shortened by the caller).
     pub fn step_vertices(&self, item: usize, step: usize) -> &[VaniVertex] {
         let Some(it) = self.items.get(item) else { return &[] };
         if step >= self.step_count {
             return &[];
         }
-        &it.vertices[step * it.verts_per_step..(step + 1) * it.verts_per_step]
+        it.vertices.get(step * it.verts_per_step..(step + 1) * it.verts_per_step).unwrap_or(&[])
     }
 
     /// (vertices per step, faces) summed over the items.
@@ -287,6 +287,10 @@ mod tests {
         assert_eq!(m.step_vertices(0, 1).len(), 3);
         assert_eq!(m.step_vertices(0, 1)[0].pos[0], 3.0);
         assert!(m.step_vertices(0, 2).is_empty() && m.step_vertices(5, 0).is_empty());
+        // a caller who shortened the vertices gets an empty slice, not a panic
+        let mut short = m.clone();
+        short.items[0].vertices.truncate(2);
+        assert!(short.step_vertices(0, 1).is_empty());
         assert!(m.collision.is_none() && !m.has_vertex_colours());
         let b = parse(&box_vani(11, 33)).unwrap();
         assert_eq!((b.step_count, b.frame_ms, b.items.len(), b.counts()), (11, 33, 1, (8, 12)));
@@ -370,7 +374,7 @@ mod tests {
             x[at..at + 4].copy_from_slice(&value.to_le_bytes());
             assert!(parse(&x).is_err(), "vertices per step {value}");
         }
-        // vertices per step x step count that overflows a usize product with the bytes left
+        // vertices per step x step count far larger than the bytes left: the bytes-left check refuses it
         let mut x = d.clone();
         x[44..48].copy_from_slice(&65_536i32.to_le_bytes());
         x[at..at + 4].copy_from_slice(&(1i32 << 24).to_le_bytes());

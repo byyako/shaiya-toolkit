@@ -20,8 +20,7 @@ pub(crate) fn ani_caps(o: &mut Observed, dir: &Path, idx: &Index) {
     o.set(Cap::AniIndexCount, O);
     o.numbers.push((Cap::AniIndexCount, listed.len() as u64));
 
-    let has_saf = std::fs::read_dir(dir).ok().is_some_and(|rd| rd.flatten().any(|e| e.file_name().to_string_lossy().eq_ignore_ascii_case("data.saf")));
-    if !has_saf || listed.is_empty() {
+    if !has_data_file(dir) || listed.is_empty() {
         o.set(Cap::AniRoundTrip, NA);
         return;
     }
@@ -64,8 +63,7 @@ pub(crate) fn c3dc_caps(o: &mut Observed, dir: &Path, idx: &Index) {
     o.set(Cap::C3dcIndexCount, O);
     o.numbers.push((Cap::C3dcIndexCount, listed.len() as u64));
 
-    let has_saf = std::fs::read_dir(dir).ok().is_some_and(|rd| rd.flatten().any(|e| e.file_name().to_string_lossy().eq_ignore_ascii_case("data.saf")));
-    if !has_saf || listed.is_empty() {
+    if !has_data_file(dir) || listed.is_empty() {
         o.set(Cap::C3dcRoundTrip, NA);
         return;
     }
@@ -100,8 +98,7 @@ pub(crate) fn c3dc_caps(o: &mut Observed, dir: &Path, idx: &Index) {
 /// which bones a mesh names.
 pub(crate) fn ani_preview_caps(o: &mut Observed, dir: &Path, idx: &Index) {
     let listed: Vec<_> = idx.visible().into_iter().filter(|f| is_ani(&f.path)).collect();
-    let has_saf = std::fs::read_dir(dir).ok().is_some_and(|rd| rd.flatten().any(|e| e.file_name().to_string_lossy().eq_ignore_ascii_case("data.saf")));
-    if !has_saf || listed.is_empty() {
+    if !has_data_file(dir) || listed.is_empty() {
         o.set(Cap::AniPreview, NA);
         return;
     }

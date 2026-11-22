@@ -27,6 +27,7 @@ fn every_vani_of_the_us_client_reads_and_writes_back() {
         if !ends(&file.path, ".vani") {
             continue;
         }
+        assert!(file.path.to_ascii_lowercase().starts_with("entity/vani/"), "{}: not in Entity/VAni", file.path);
         let bytes = a.read_entry(file.entry).unwrap();
         let m = Vani::parse(&bytes, &file.path).unwrap_or_else(|e| panic!("{}: {e}", file.path));
         assert!(m.to_bytes() == bytes, "{}: written back differently", file.path);
@@ -55,7 +56,7 @@ fn every_vani_of_the_us_client_reads_and_writes_back() {
     assert_eq!((frame_ms.get(&33).copied(), frame_ms.get(&66).copied(), frame_ms.get(&100).copied(), frame_ms.len()), (Some(8), Some(47), Some(11), 3));
     assert_eq!(other_colours.len(), 16, "files with a vertex colour other than 0xFFFFFFFF");
     assert_eq!(with_collision, 0, "no file uses the collision branch");
-    assert!(items.iter().all(|i| (1..=8).contains(i)), "{items:?}");
+    assert_eq!(items, BTreeSet::from([1, 2, 3, 4, 5, 7, 8]), "item counts per file");
     assert_eq!((steps.first().copied(), steps.last().copied()), (Some(11), Some(101)), "steps per file");
     assert_eq!((sphere_centre, sphere_radius), (66, 66));
 }
@@ -73,6 +74,7 @@ fn every_mani_of_the_us_client_reads_and_writes_back() {
         if !ends(&file.path, ".mani") {
             continue;
         }
+        assert!(file.path.to_ascii_lowercase().starts_with("entity/mani/"), "{}: not in Entity/MAni", file.path);
         let bytes = a.read_entry(file.entry).unwrap();
         assert_eq!(bytes.len(), MANI_SIZE, "{}", file.path);
         let m = Mani::parse(&bytes, &file.path).unwrap_or_else(|e| panic!("{}: {e}", file.path));
@@ -92,4 +94,5 @@ fn every_mani_of_the_us_client_reads_and_writes_back() {
     println!("MANI files {n}: integer 500 at offset 104 with zero bytes at 80 to 83 in {integer_gen}; two u16 at 80 and a float at 104 in {float_gen}; (u16, u16) pairs of the second kind {pairs:?}");
     assert_eq!(n, 23);
     assert_eq!((integer_gen, float_gen), (12, 11));
+    assert_eq!(pairs, BTreeMap::from([((0, 500), 8), ((1, 0), 3)]), "(u16, u16) pairs of the second kind");
 }

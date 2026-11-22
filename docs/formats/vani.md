@@ -43,7 +43,7 @@ The Archive tab and `shaiya anim` do not read `.VANI` yet: the Archive tab shows
 
 ## Verified on
 
-US EP4.5 (patch 108), read only: all 66 `.VANI` files read to the last byte and write back byte for byte. They have 1 to 8 items (7 different counts: 1, 2, 3, 4, 5, 7 and 8) and 11 to 101 steps. `frame_ms` is 33 in 8 files, 66 in 47 and 100 in 11. In 16 files a vertex has a diffuse colour other than `0xFFFFFFFF`. In all 66 the sphere centre equals the centre of the box and the sphere radius equals half the box diagonal (within 0.1 %). The collision flag is 0 in every file. The opt-in test `every_vani_of_the_us_client_reads_and_writes_back` measures these numbers.
+US EP4.5 (patch 108), read only: all 66 `.VANI` files read to the last byte and write back byte for byte. They have 1 to 8 items (7 different counts: 1, 2, 3, 4, 5, 7 and 8) and 11 to 101 steps. `frame_ms` is 33 in 8 files, 66 in 47 and 100 in 11. In 16 files a vertex has a diffuse colour other than `0xFFFFFFFF`. In all 66 the sphere centre equals the centre of the box and the sphere radius equals half the box diagonal (within 0.1 % or 0.001). The collision flag is 0 in every file. The opt-in test `every_vani_of_the_us_client_reads_and_writes_back` measures these numbers.
 
 ## Other episodes
 

@@ -125,7 +125,7 @@ impl Mani {
     /// The integer stored at offset 104 when its bits read as a float are a denormal (some files hold the integer 500 there); otherwise `None`.
     pub fn distance_as_integer(&self) -> Option<i32> {
         let bits = self.u32_at(104);
-        (bits != 0 && bits & 0x7F80_0000 == 0).then_some(bits as i32)
+        (bits & 0x7FFF_FFFF != 0 && bits & 0x7F80_0000 == 0).then_some(bits as i32)
     }
 
     /// Whether the file holds an integer at offset 104 and zero bytes at offsets 80 to 83 (one of the two writer generations; not interpreted).
@@ -179,7 +179,8 @@ mod tests {
         assert!(matches!(float, ManiValue::F32(x) if x != 0.0 && !x.is_normal()), "{float:?}");
         // a u16 pair at 80 with the integer still reads; it is the other generation
         assert!(!parse(&mani_bytes(33, 1, 0, 500)).unwrap().is_integer_generation());
-        // zero is not a denormal
+        // zero is not a denormal, and neither is negative zero (sign bit only)
+        assert_eq!(parse(&mani_bytes(33, 0, 0, 0x8000_0000)).unwrap().distance_as_integer(), None);
         assert_eq!(parse(&mani_bytes(33, 0, 0, 0)).unwrap().distance_as_integer(), None);
     }
 
