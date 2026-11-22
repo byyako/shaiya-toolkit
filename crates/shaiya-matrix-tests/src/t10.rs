@@ -252,7 +252,7 @@ pub(crate) fn c3do_caps(o: &mut Observed, dir: &Path, idx: &Index) {
     }
     o.set(Cap::C3doRoundTrip, if good == listed.len() as u64 { O } else { F });
     o.numbers.push((Cap::C3doRoundTrip, good));
-    o.facts.push(format!("item meshes: {} .3DO files, {good} read and written back identically, {with_frames} with frames", listed.len()));
+    o.facts.push(format!("3DO meshes: {} .3DO files, {good} read and written back identically, {with_frames} with frames", listed.len()));
 }
 
 /// Sets `C3deIndexCount` from the index and `C3deRead` from the contents (`n/a` without a `data.saf`). A `.3DE` that follows neither

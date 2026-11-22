@@ -204,7 +204,7 @@ fn check_ext(name: &str, ani_only: bool) -> Result<()> {
         if has_ext(name, &["ani"]) {
             Ok(())
         } else {
-            Err(Error::Refused(format!("{name}: not an .ANI file (this command checks .ANI files only; `shaiya anim info` also reads .3DC, .VANI, .MANI, .3DO and .3DE)")))
+            Err(Error::Refused(format!("{name}: not an .ANI file (validate and compare read .ANI files only; `shaiya anim info` also reads .3DC, .VANI, .MANI, .3DO and .3DE)")))
         }
     } else if has_ext(name, &INFO_EXTS) {
         Ok(())
@@ -353,13 +353,13 @@ fn vani_json(name: &str, v: &Vani) -> Value {
 
 fn vani_text(name: &str, v: &Vani) -> String {
     let (verts, tris) = v.counts();
+    let time = if v.frame_ms > 0 { format!("about {} ms per step (inferred)", v.frame_ms) } else { format!("frame_ms {} is not a positive time", v.frame_ms) };
     format!(
-        "{name}: vertex-animated model, {}, {} per step, {}, {}, about {} ms per step (inferred)",
+        "{name}: vertex-animated model, {}, {} per step, {}, {}, {time}",
         plural(v.items.len(), "item", "items"),
         plural(verts, "vertex", "vertices"),
         plural(tris, "triangle", "triangles"),
-        plural(v.step_count, "step", "steps"),
-        v.frame_ms
+        plural(v.step_count, "step", "steps")
     )
 }
 
@@ -543,9 +543,6 @@ fn describe(ctx: &Ctx, a: &InfoArgs, validating: bool) -> Result<i32> {
 // ---- compare ----------------------------------------------------------------------------------------------------------------------
 
 fn read_ani(name: &str, bytes: &[u8]) -> Result<Ani> {
-    if has_ext(name, &["3dc", "vani", "mani", "3do", "3de"]) {
-        return Err(Error::Refused(format!("{name}: not an .ANI file (this command compares .ANI files only; `shaiya anim info` reads the other formats)")));
-    }
     Ani::parse(bytes, name).map_err(clientdata_error)
 }
 
@@ -562,6 +559,18 @@ fn diff_json(d: &RigDiff) -> Value {
 const LISTED: usize = 10;
 
 fn compare(ctx: &Ctx, a: &CompareArgs) -> Result<i32> {
+    // only .ANI files are compared; a name with another extension is refused before anything is read (FAILED, exit 3, like `validate`)
+    for name in [&a.candidate, &a.target] {
+        if let Err(e) = check_ext(name, true) {
+            let why = e.to_string();
+            if ctx.json {
+                print_json(&json!({"candidate": a.candidate, "target": a.target, "error": why}));
+            } else {
+                eprintln!("{name}: FAILED: {why}");
+            }
+            return Ok(3);
+        }
+    }
     let cand_path = resolve(ctx, &a.candidate)?;
     let cand_bytes = std::fs::read(&cand_path).map_err(|e| Error::io(&cand_path, e))?;
     let candidate = read_ani(&a.candidate, &cand_bytes)?;

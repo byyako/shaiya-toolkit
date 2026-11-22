@@ -1300,6 +1300,7 @@ mod model_format_tests {
         assert_eq!((p.frames.frames.len(), p.end_key, p.unit, p.rate, p.choices), (11, 10, "frame", 20.0, 0));
         assert_eq!(p.header[0], "3DO mesh: 8 vertices, 12 triangles");
         assert_eq!(p.header[1], "11 frames at 20 per second (inferred from the file; not checked in the game)");
+        assert_eq!(p.notes, ["the file names the texture box.tga; textures are not looked up (shown in plain grey)"]);
         assert!(p.frames.frames.iter().all(|f| drawn(f) > 0));
         assert!(p.frames.frames[0] != p.frames.frames[10], "the frames differ");
         // a framed mesh with a rate that is not positive plays at the fallback
@@ -1307,6 +1308,9 @@ mod model_format_tests {
         let b = open(&d2, &[("Item/3DO/z.3DO", animated_3do(3, 0))]);
         let z = played(pv(&b, "Item/3DO/z.3DO"));
         assert_eq!((z.rate, z.frames.frames.len()), (30.0, 3));
+        assert_eq!(z.header[1], "3 frames, the file's rate (0) is not a positive number; played at 30 frames per second");
+        // the discrete player wraps after the last frame, so the preview's end key is the last frame's index (count - 1)
+        assert_eq!((p.end_key, z.end_key), (10, 2));
     }
 
     #[test]
@@ -1318,7 +1322,7 @@ mod model_format_tests {
                 assert_eq!(header, "3DO mesh: 8 vertices, 12 triangles");
                 assert_eq!((width, height, rgba.len()), (480, 440, 480 * 440 * 4));
                 assert!(rgba.chunks(4).any(|p| p[3] == 255) && missing.is_empty());
-                assert!(notes.iter().all(|n| !n.contains("frames")), "{notes:?}");
+                assert!(notes.is_empty(), "the box names no texture and has no frames: {notes:?}");
             }
             other => panic!("{other:?}"),
         }

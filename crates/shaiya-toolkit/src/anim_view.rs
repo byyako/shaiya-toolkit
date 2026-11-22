@@ -20,11 +20,13 @@ pub struct AnimPlayer {
     pub show_bones: bool,
     /// Source frames per second: [`KEYS_PER_SECOND`] for an `.ANI`, `1000 / frame_ms` for a `.VANI`, the file's frame rate for a framed `.3DO`.
     pub rate: f32,
+    /// True for a `.VANI` or a framed `.3DO`: the time counts whole steps or frames, so a loop wraps after the last one (at `end_key + 1`), not at it.
+    pub discrete: bool,
 }
 
 impl Default for AnimPlayer {
     fn default() -> Self {
-        AnimPlayer { t: 0.0, playing: true, looping: true, show_bones: true, rate: KEYS_PER_SECOND }
+        AnimPlayer { t: 0.0, playing: true, looping: true, show_bones: true, rate: KEYS_PER_SECOND, discrete: false }
     }
 }
 
@@ -37,7 +39,18 @@ impl AnimPlayer {
         let end = end_key.max(0) as f32;
         let rate = if self.rate.is_finite() && self.rate > 0.0 { self.rate } else { KEYS_PER_SECOND };
         self.t += dt * rate;
-        if self.t > end {
+        if self.discrete {
+            // steps and frames: the last one is shown for a full step before the loop wraps
+            let n = end + 1.0;
+            if self.t >= n {
+                if self.looping {
+                    self.t %= n;
+                } else {
+                    self.t = end;
+                    self.playing = false;
+                }
+            }
+        } else if self.t > end {
             if self.looping && end > 0.0 {
                 self.t %= end;
             } else {
@@ -78,6 +91,7 @@ pub fn time_text_at(unit: &str, rate: f32, t: f32, end_key: i32) -> String {
 pub(crate) fn draw(ui: &mut egui::Ui, pal: &Pal, player: &mut AnimPlayer, data: &PreviewData, tex: &mut Option<(usize, TextureHandle)>, mesh: &mut MeshChoice) -> bool {
     let PreviewData::Anim { header, issues, bones, end_key, frames, mesh_choices, notes, rate, unit, .. } = data else { return false };
     player.rate = *rate;
+    player.discrete = *unit != "key";
     let mut mesh_changed = false;
     for (i, line) in header.iter().enumerate() {
         if i == 0 {
@@ -197,18 +211,23 @@ pub(crate) fn draw_fields(ui: &mut egui::Ui, pal: &Pal, data: &PreviewData) {
     fields_table(ui, rows);
 }
 
+/// The meaning column of a field row: the meaning, with " (inferred)" when the meaning is an inference.
+pub fn meaning_label(r: &FieldRow) -> String {
+    if r.inferred { format!("{} (inferred)", r.meaning) } else { r.meaning.clone() }
+}
+
 fn fields_table(ui: &mut egui::Ui, rows: &[FieldRow]) {
     egui::ScrollArea::both().auto_shrink([false, false]).show(ui, |ui| {
         egui::Grid::new("toolkit-fields-grid").striped(true).show(ui, |ui| {
-            for h in ["Offset", "Field", "Value", "Meaning"] {
+            for h in ["Offset", "Field", "Meaning", "Value"] {
                 ui.label(RichText::new(h).strong());
             }
             ui.end_row();
             for r in rows {
                 ui.label(r.offset.to_string());
                 ui.label(&r.name);
+                ui.label(meaning_label(r));
                 ui.label(RichText::new(&r.value).monospace()).on_hover_text(&r.raw);
-                ui.label(if r.inferred { format!("{} (inferred)", r.meaning) } else { r.meaning.clone() });
                 ui.end_row();
             }
         });
@@ -307,10 +326,35 @@ mod tests {
         let mut q = AnimPlayer { rate: 1000.0 / 33.0, ..AnimPlayer::default() };
         q.advance(0.066, 59);
         assert!((q.t - 2.0).abs() < 1e-4, "{}", q.t);
-        // and it wraps at the last step like any player
-        let mut w = AnimPlayer { t: 10.9, rate: 1000.0 / 100.0, ..AnimPlayer::default() };
+        // and it wraps after the last step (12 steps: 10.9 + 2 = 12.9 -> 0.9)
+        let mut w = AnimPlayer { t: 10.9, rate: 1000.0 / 100.0, discrete: true, ..AnimPlayer::default() };
         w.advance(0.2, 11);
-        assert!(w.playing && (w.t - 1.9).abs() < 1e-3, "{}", w.t);
+        assert!(w.playing && (w.t - 0.9).abs() < 1e-3, "{}", w.t);
+    }
+
+    #[test]
+    fn a_discrete_loop_shows_the_last_step_for_a_full_step_and_wraps_after_it() {
+        // 12 steps (end 11) at 10 per second
+        let mut p = AnimPlayer { rate: 10.0, discrete: true, ..AnimPlayer::default() };
+        p.advance(1.15, 11);
+        assert!((p.t - 11.5).abs() < 1e-3 && p.playing, "step 11 is on screen: {}", p.t);
+        assert_eq!(p.frame_index(1.0, 12), 11);
+        p.advance(0.1, 11);
+        assert!((p.t - 0.5).abs() < 1e-3, "wraps after step 11, not at it: {}", p.t);
+        let mut q = AnimPlayer { rate: 10.0, discrete: true, looping: false, ..AnimPlayer::default() };
+        q.advance(5.0, 11);
+        assert_eq!((q.t, q.playing), (11.0, false), "stops on the last step");
+        // an .ANI is continuous time and keeps its old behaviour
+        let mut a = AnimPlayer { t: 10.9, rate: 10.0, ..AnimPlayer::default() };
+        a.advance(0.2, 11);
+        assert!((a.t - 1.9).abs() < 1e-3, "{}", a.t);
+    }
+
+    #[test]
+    fn the_meaning_column_says_inferred_for_an_inferred_field() {
+        let r = FieldRow { offset: 0, name: "tick_ms".into(), value: "33".into(), raw: String::new(), meaning: "ms per step".into(), inferred: true };
+        assert_eq!(meaning_label(&r), "ms per step (inferred)");
+        assert_eq!(meaning_label(&FieldRow { inferred: false, ..r }), "ms per step");
     }
 
     #[test]

@@ -493,23 +493,40 @@ fn validate_and_compare_stay_ani_only_and_say_so() {
     write(&d.join("m.mani"), &mani_bytes(33, 0, 0, 0));
     write(&d.join("e.3de"), &box_3de(None));
     write(&d.join("good.ani"), &chain(0));
-    for name in ["a.vani", "m.mani", "e.3de"] {
+    write(&d.join("x.bin"), &chain(0)); // valid .ANI bytes under another extension: refused by name, never parsed as an .ANI
+    for name in ["a.vani", "m.mani", "e.3de", "x.bin"] {
         let o = sh(&w.data, &["anim", "validate", p(&d.join(name))]);
         assert_eq!(code(&o), 3, "{name}: {}", err(&o));
-        assert!(out(&o).contains("not an .ANI file (this command checks .ANI files only"), "{name}: {}", out(&o));
+        assert!(out(&o).contains("not an .ANI file (validate and compare read .ANI files only"), "{name}: {}", out(&o));
         let o = sh(&w.data, &["anim", "compare", p(&d.join(name)), p(&d.join("good.ani"))]);
-        assert_ne!(code(&o), 0, "{name}");
-        assert!(err(&o).contains("this command compares .ANI files only"), "{name}: {}", err(&o));
+        assert_eq!(code(&o), 3, "{name}: {}", err(&o));
+        assert!(err(&o).contains(&format!("{name}: FAILED: ")) && err(&o).contains("not an .ANI file (validate and compare read .ANI files only"), "{name}: {}", err(&o));
         let o = sh(&w.data, &["anim", "compare", p(&d.join("good.ani")), p(&d.join(name))]);
-        assert_ne!(code(&o), 0, "{name}");
-        assert!(err(&o).contains("this command compares .ANI files only"), "{name}: {}", err(&o));
+        assert_eq!(code(&o), 3, "{name}: {}", err(&o));
+        assert!(err(&o).contains(&format!("{name}: FAILED: ")) && err(&o).contains("not an .ANI file (validate and compare read .ANI files only"), "{name}: {}", err(&o));
     }
+    let v = json(&sh(&w.data, &["anim", "compare", p(&d.join("x.bin")), p(&d.join("good.ani")), "--json"]));
+    assert!(v["error"].as_str().is_some_and(|e| e.contains("not an .ANI file")), "{v}");
     // a folder is searched for .ani only by validate, so the other formats are not even listed
     let o = sh(&w.data, &["anim", "validate", p(&d)]);
     assert_eq!(code(&o), 0, "{}", err(&o));
     assert!(err(&o).contains("1 file: 0 errors"), "{}", err(&o));
     let h = sh(&w.data, &["anim", "info", "--help"]);
     assert!(out(&h).contains("`validate` and `compare` read .ANI files only"), "{}", out(&h));
+}
+
+#[test]
+fn info_does_not_call_a_non_positive_frame_time_a_time_per_step() {
+    use shaiya_testkit::anim::box_vani;
+    let w = world();
+    let d = w.tmp.path().join("f");
+    write(&d.join("z.VANI"), &box_vani(3, 0));
+    write(&d.join("g.VANI"), &box_vani(3, 33));
+    let o = sh(&w.data, &["anim", "info", p(&d.join("z.VANI")), p(&d.join("g.VANI"))]);
+    assert_eq!(code(&o), 0, "{}", err(&o));
+    let t = out(&o);
+    assert!(t.contains("z.VANI: vertex-animated model, 1 item, 8 vertices per step, 12 triangles, 3 steps, frame_ms 0 is not a positive time"), "{t}");
+    assert!(!t.contains("about 0 ms") && t.contains("g.VANI: ") && t.contains("about 33 ms per step (inferred)"), "{t}");
 }
 
 // ---- opt-in: a real client (read only; outputs go to SHAIYA_SCRATCH) ---------------------------------------------------------------
