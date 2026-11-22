@@ -2,7 +2,8 @@
 //! that are applied to the client folder only after a confirmation, through the same crash-safe procedure as the command line.
 
 use crate::explain::{self, Rows};
-use crate::preview::{self, PreviewData};
+use crate::anim_view::{self, AnimPlayer};
+use crate::preview::{self, MeshChoice, PreviewData};
 use crate::ToolkitSettings;
 use egui::{Color32, RichText};
 use shaiya_archive::check::{check_archive, CheckOptions, CheckReport, Severity};
@@ -477,6 +478,11 @@ pub struct PreviewState {
     texture_name: Option<String>,
     goto: String,
     pub error: Option<String>,
+    /// The meshes an `.ANI` preview is drawn on (back to the default when another row is selected).
+    pub anim_mesh: MeshChoice,
+    pub player: AnimPlayer,
+    /// The one texture of the `.ANI` frame on screen, with the frame it shows.
+    anim_tex: Option<(usize, egui::TextureHandle)>,
 }
 
 pub enum OpenSource {
@@ -608,6 +614,9 @@ impl ArchiveView {
                 texture_name: None,
                 goto: String::new(),
                 error: None,
+                anim_mesh: MeshChoice::Default,
+                player: AnimPlayer::default(),
+                anim_tex: None,
             },
             textures: Vec::new(),
             pending: Vec::new(),
@@ -864,6 +873,7 @@ impl ArchiveView {
                     self.preview.encoding = want.unwrap_or(*guess);
                 }
                 self.preview.texture_name = None;
+                self.preview.anim_tex = None;
                 if let PreviewData::Image { width, height, rgba, .. } | PreviewData::Map { width, height, rgba, .. } | PreviewData::Model { width, height, rgba, .. } = &d {
                     if !rgba.is_empty() {
                         let name = self.preview.row.and_then(|i| self.loaded.as_ref().map(|l| l.rows[i].path.clone())).unwrap_or_default();
@@ -1457,6 +1467,10 @@ impl ArchiveView {
             h.cancel();
         }
         self.preview.handle = None;
+        if self.preview.row != Some(row) {
+            self.preview.anim_mesh = MeshChoice::Default;
+            self.preview.player = AnimPlayer::default();
+        }
         self.preview.row = Some(row);
         self.preview.data = None;
         self.preview.error = None;
@@ -1465,14 +1479,22 @@ impl ArchiveView {
         let Some(l) = &self.loaded else { return };
         let Some(a) = l.archive.clone() else { return };
         let r = &l.rows[row];
-        let (entry, path, all) = (r.entry.clone(), r.path.clone(), self.preview.text_all);
-        let h = cx.shell.tasks().spawn(TaskSpec { title: format!("Preview {}", r.name()), cancellable: true, exclusive: None }, move |job| preview::make_preview(&a, &entry, &path, all, 0, job));
+        let (entry, path, all, mesh) = (r.entry.clone(), r.path.clone(), self.preview.text_all, self.preview.anim_mesh.clone());
+        let h = cx.shell.tasks().spawn(TaskSpec { title: format!("Preview {}", r.name()), cancellable: true, exclusive: None }, move |job| preview::make_preview_with(&a, &entry, &path, all, 0, &mesh, job));
         self.preview.handle = Some(h);
     }
 
     /// The kind of the current preview ("image", "text", "sdata", "hex", "empty", "failed"), once it is ready.
     pub fn preview_kind(&self) -> Option<&'static str> {
         self.preview.data.as_ref().map(|d| d.kind())
+    }
+
+    /// Draws the open `.ANI` on another choice of meshes (what the Mesh box does): the preview restarts with it.
+    pub fn choose_anim_mesh(&mut self, choice: MeshChoice, cx: &mut ToolkitCx<'_>) {
+        self.preview.anim_mesh = choice;
+        if let Some(r) = self.preview.row {
+            self.start_preview(r, cx);
+        }
     }
 
     pub fn preview_ready(&self) -> bool {
@@ -1484,6 +1506,9 @@ impl ArchiveView {
     }
 
     pub fn has_texture(&self) -> bool {
+        if let Some(PreviewData::Anim { frames, .. }) = &self.preview.data {
+            return !frames.frames.is_empty() && self.preview.anim_tex.is_some();
+        }
         self.preview.texture_name.as_ref().is_some_and(|n| self.textures.iter().any(|(t, _)| t == n)) && matches!(self.preview.data, Some(PreviewData::Image { .. } | PreviewData::Map { .. } | PreviewData::Model { .. }))
     }
 
@@ -2274,8 +2299,16 @@ impl ArchiveView {
                     picture_view(ui, &mut self.preview.fit, None, tex);
                 }
             }
-            Some(PreviewData::Model { header, missing, see_through, invisible, rgba, .. }) => {
+            Some(data @ PreviewData::Anim { .. }) => {
+                if anim_view::draw(ui, &pal, &mut self.preview.player, data, &mut self.preview.anim_tex, &mut self.preview.anim_mesh) {
+                    acts.push(Act::Open("anim-mesh".into()));
+                }
+            }
+            Some(PreviewData::Model { header, missing, see_through, invisible, notes, rgba, .. }) => {
                 ui.label(header);
+                for note in notes {
+                    ui.label(RichText::new(note).color(pal.weak));
+                }
                 if !missing.is_empty() {
                     ui.label(RichText::new(format!("texture missing or unreadable, drawn grey: {}", missing.join(", "))).color(pal.warning));
                 }
@@ -2728,7 +2761,7 @@ impl ArchiveView {
                     }
                 }
                 Act::Open(what) => {
-                    if what == "reload-preview" {
+                    if what == "reload-preview" || what == "anim-mesh" {
                         if let Some(r) = self.preview.row {
                             self.start_preview(r, cx);
                         }

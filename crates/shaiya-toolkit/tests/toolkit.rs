@@ -1621,7 +1621,7 @@ fn a_smod_in_the_archive_previews_as_a_model_and_other_model_formats_stay_hex() 
     SahBuilder::new(0)
         .file(b"Entity/Building/tiny.smod", &tiny_model())
         .file(b"Entity/Texture/top.tga", &shaiya_testkit::tga_stub(8, 8))
-        .file(b"Entity/Building/x.3DC", &[1u8, 2, 3, 4, 5, 6, 7, 8])
+        .file(b"Entity/Building/x.3DO", &[1u8, 2, 3, 4, 5, 6, 7, 8])
         .write_to(w.client.path());
     w.h.frames(2);
     let dir = w.client_dir();
@@ -1635,7 +1635,7 @@ fn a_smod_in_the_archive_previews_as_a_model_and_other_model_formats_stay_hex() 
     assert!(w.h.app.app.archive.has_texture(), "the picture is uploaded as a texture");
     let t = w.h.text();
     assert!(t.contains("2 modules, 4 triangles, 2 textures (1 missing)") && t.contains("gone.tga"), "{t}");
-    with_cx(&mut w.h, |app, cx| app.archive.select_path("Entity/Building/x.3DC", cx));
+    with_cx(&mut w.h, |app, cx| app.archive.select_path("Entity/Building/x.3DO", cx));
     assert!(preview_ready(&mut w.h));
     w.h.frames(2);
     assert_eq!(w.h.app.app.archive.preview_kind(), Some("hex"));
@@ -2550,4 +2550,79 @@ fn a_stashed_queue_is_restored_when_the_folder_is_opened_under_another_spelling(
     w.h.frames(3);
     assert!(!w.h.app.app.archive.is_applying(), "a queue from a different folder is refused");
     assert_eq!(file_hashes(b.path()), b_before);
+}
+
+/// A synthetic client with one animation and its mesh (`huwm_117_test.ANI`, the three-bone arm), opened in the Archive tab.
+fn ani_world(tag: &str) -> World {
+    let mut w = world(tag);
+    SahBuilder::new(0)
+        .file(b"Character/Human/ANI/huwm_117_test.ANI", &shaiya_testkit::anim::arm_ani(60))
+        .file(b"Character/Human/3DC/huwm_torso001.3DC", &shaiya_testkit::anim::arm_mesh_3dc())
+        .write_to(w.client.path());
+    w.h.frames(2);
+    let dir = w.client_dir();
+    with_cx(&mut w.h, |app, cx| app.add_client("US test", &dir, true, cx)).unwrap();
+    assert!(w.h.wait_until(WAIT, |h| h.app.app.archive.is_open()), "the archive opens");
+    w.h.frames(2);
+    w
+}
+
+const ANI_PATH: &str = "Character/Human/ANI/huwm_117_test.ANI";
+
+#[test]
+fn selecting_an_ani_shows_the_player() {
+    let mut w = ani_world("t10-ani-player");
+    with_cx(&mut w.h, |app, cx| app.archive.select_path(ANI_PATH, cx));
+    assert!(preview_ready(&mut w.h));
+    w.h.frames(3);
+    assert_eq!(w.h.app.app.archive.preview_kind(), Some("anim"));
+    assert!(w.h.app.app.archive.has_texture(), "the frame on screen is a texture");
+    let t = w.h.text();
+    assert!(t.contains("Character animation, rig huwm (Human)"), "{t}");
+    assert!(t.contains("3 bones, end key 60 (2.0 s at 30 keys per second)"), "{t}");
+    for want in ["Loop", "Bones", "Mesh: Default parts (1)", "of 60,"] {
+        assert!(t.contains(want), "{want}: {t}");
+    }
+    assert!(t.contains("Pause") || t.contains("Play"), "{t}");
+}
+
+#[test]
+fn changing_the_mesh_restarts_the_preview_with_that_mesh() {
+    use shaiya_toolkit::preview::{MeshChoice, PreviewData};
+    let mut w = ani_world("t10-ani-mesh");
+    with_cx(&mut w.h, |app, cx| app.archive.select_path(ANI_PATH, cx));
+    assert!(preview_ready(&mut w.h));
+    w.h.frames(2);
+    assert!(w.h.app.app.archive.has_texture());
+    with_cx(&mut w.h, |app, cx| app.archive.choose_anim_mesh(MeshChoice::Skeleton, cx));
+    assert!(preview_ready(&mut w.h));
+    w.h.frames(2);
+    match w.h.app.app.archive.preview_data() {
+        Some(PreviewData::Anim { mesh, frames, .. }) => assert!(*mesh == MeshChoice::Skeleton && frames.frames.is_empty()),
+        other => panic!("{other:?}"),
+    }
+    assert!(!w.h.app.app.archive.has_texture(), "the skeleton alone has no picture");
+    let torso = "Character/Human/3DC/huwm_torso001.3DC".to_string();
+    with_cx(&mut w.h, |app, cx| app.archive.choose_anim_mesh(MeshChoice::One(torso.clone()), cx));
+    assert!(preview_ready(&mut w.h));
+    w.h.frames(2);
+    match w.h.app.app.archive.preview_data() {
+        Some(PreviewData::Anim { mesh, frames, .. }) => assert!(*mesh == MeshChoice::One(torso) && frames.frames.len() == 61),
+        other => panic!("{other:?}"),
+    }
+    assert!(w.h.app.app.archive.has_texture());
+    // another file starts again from the default meshes
+    with_cx(&mut w.h, |app, cx| app.archive.select_path("Character/Human/3DC/huwm_torso001.3DC", cx));
+    assert!(preview_ready(&mut w.h));
+    w.h.frames(2);
+    assert_eq!(w.h.app.app.archive.preview_kind(), Some("model"), "a .3DC previews as a model");
+    assert!(w.h.app.app.archive.has_texture());
+    assert!(w.h.text().contains("Skinned mesh: 16 vertices, 24 triangles, 3 bones"), "{}", w.h.text());
+    with_cx(&mut w.h, |app, cx| app.archive.select_path(ANI_PATH, cx));
+    assert!(preview_ready(&mut w.h));
+    w.h.frames(2);
+    match w.h.app.app.archive.preview_data() {
+        Some(PreviewData::Anim { mesh, .. }) => assert!(*mesh == MeshChoice::Default),
+        other => panic!("{other:?}"),
+    }
 }

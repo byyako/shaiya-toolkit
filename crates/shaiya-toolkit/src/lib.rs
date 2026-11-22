@@ -2,6 +2,7 @@
 //! shortcuts and the file inspector, on the shared GUI shell. Every change to a client folder goes through the same crash-safe
 //! procedure as the command line (`shaiya_archive::edit`, `shaiya_patch::apply_with`), after a confirmation.
 
+pub mod anim_view;
 pub mod apply_tab;
 pub mod archive_view;
 pub mod clients;

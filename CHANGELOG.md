@@ -4,6 +4,11 @@ All notable changes are listed here, newest first. The format follows [Keep a Ch
 
 ## [Unreleased]
 
+### Shaiya Toolkit
+
+- The Archive tab plays `.ANI` animations: it shows the kind and rig ("Character animation, rig huwm (Human)"), the bone count, end key and seconds at 30 keys per second, the key counts, a first field other than 0 labelled "inferred: start key", the validation errors and a count of warnings, a picture of the animation posed on a mesh (plain grey with wire) with the bones drawn as lines, Play/Pause, a slider, Loop, Bones, a Mesh choice (Skeleton only, Default parts, or one mesh) and a Bones table. The mesh is found by name in the `3DC` folder next to the `ANI` folder; a mesh is offered only when every bone it uses exists in the animation. The frames (at most 241 per animation) are prepared on a worker thread before playing. An approximation of the game's playback, validated offline; every file was read on US EP4.5 only, the eight other matrix clients have their index only.
+- The Archive tab previews `.3DC` skinned meshes at rest, in plain grey with the wire, with "Skinned mesh: N vertices, N triangles, N bones" (or the cloak and second-mesh headers). A `.3DC` or `.ANI` that does not read to the last byte shows its error and the bytes as hex; a `.3DO` with text-like bytes now stays hex with "no preview (format not documented yet)" instead of showing as text.
+
 ### Libraries
 
 - `shaiya-clientdata`: `anim::Ani` reads a `.ANI` skeletal animation to the last byte and writes it back byte for byte (floats and NaN bits are kept exactly); `anim::validate` lists errors and warnings per bone (per file for `end-before-last-key`), `anim::rig_check` and `anim::passes` compare a candidate with the file it would replace (bone count, parents, reference matrices as raw bits, and the first field as a separate difference), and `anim::rig_of` names the kind and rig of an archive path. On US EP4.5, all 3,509 `.ANI` files read and write back byte for byte; the eight other matrix clients are index only (files counted, none read).

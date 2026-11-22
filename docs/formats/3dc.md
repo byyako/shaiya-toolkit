@@ -47,18 +47,19 @@ The pose is the toolkit's own statement of the math, an approximation of the gam
 - At time `t` (in key units) a bone's `Local` gets the sampled rotation in its upper 3 x 3 and the sampled translation in its last row, when it has such keys. Before a track's first key its first value holds and at or after its last key its last value holds; in between, rotations are slerped the short way and translations are linear. A bone's world matrix is its `Local` times its parent's world matrix.
 - A `.3DC` vertex with weight `w` and bones `b1`, `b2` moves with `w * (B[b1] * World[b1]) + (1 - w) * (B[b2] * World[b2])`, where `B` are the mesh's own matrices. A vertex that names a bone the animation (or the mesh) does not have keeps its rest position and is counted.
 
-The game's own handling of the last segment of a track and of a track that starts late is not reproduced.
+Only plain interpolation is modelled; the game may differ.
 
-On US EP4.5, each of the 16 character rigs posed with its first `<rig>_000_` animation and the default parts of that rig (torso, lower, hand, boots, face, hair) at the first and the last key keeps finite positions, leaves no vertex unposed and keeps a bounding box between 0.90 and 0.98 times that of the rest mesh (opt-in test).
+On US EP4.5, each of the 16 character rigs posed with its first `<rig>_000_` animation and the default parts of that rig (torso, lower, hand, boots, face, hair) at key 0 and at the end key keeps finite positions, leaves no vertex unposed and keeps a bounding box between 0.90 and 0.98 times that of the rest mesh (opt-in test).
 
 ## What the toolkit does with it
 
 | Program | Use |
 |---|---|
 | `shaiya-clientdata` `mesh3dc` | parses the three layouts, writes back in memory, names the texture and the highest bone a vertex uses |
-| `shaiya-clientdata` `render` | `skin` poses a mesh, `c3dc_picture` draws it at rest and `anim_frames` pre-renders an animation on it (library only; no program shows it yet) |
+| `shaiya-clientdata` `render` | `skin` poses a mesh, `c3dc_picture` draws it at rest and `anim_frames` pre-renders an animation on it |
+| Shaiya Toolkit, Archive tab | previews a `.3DC` at rest, and uses it as the mesh of an `.ANI` preview (see [ani.md](ani.md#in-the-archive-tab)) |
 
-No program shows a `.3DC` yet: the Archive tab lists, extracts and replaces it like any file and shows it as hex.
+No program writes a `.3DC` file. Selecting a `.3DC` in the Archive tab shows its first mesh at rest, in plain grey with the wire, under a header: "Skinned mesh: N vertices, N triangles, N bones", "Cloak mesh without bones: N vertices, N triangles", or, for the layout with a second mesh, the same with "a second mesh follows (N vertices); the picture shows the first". A weak line says "shown in the mesh's own rest pose, plain grey (the mesh file names no texture)", or "(textures are not looked up for skinned meshes)" for a mesh that does name one. A `.3DC` is never shown as text, even when its bytes look like text: a file that does not read to the last byte (or that two layouts read) shows the reader's error and the bytes as hex.
 
 ## Verified on
 
