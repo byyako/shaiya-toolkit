@@ -12,7 +12,7 @@
 //! Floats are kept exactly as stored (`f32::from_bits`, written with `to_bits`, so NaN payloads survive), which is what lets
 //! [`Ani::to_bytes`] give back the bytes [`Ani::parse`] read. A file is read only when it ends exactly after the last bone.
 
-use crate::error::{Cur, Result};
+use crate::error::{Cur, Error, Result};
 
 /// A rotation key: a quaternion `(x, y, z, w)` at `key`.
 #[derive(Clone, Debug, PartialEq)]
@@ -85,7 +85,24 @@ impl Ani {
     }
 
     /// The bytes of this animation; for a parsed file, exactly the bytes that were read.
+    ///
+    /// Panics when the animation cannot be written (more than 65,535 bones or a track longer than `i32::MAX`), which no parsed file can
+    /// hold; use [`Ani::try_to_bytes`] for an animation built in memory.
     pub fn to_bytes(&self) -> Vec<u8> {
+        self.try_to_bytes().expect("animation cannot be written")
+    }
+
+    /// Like [`Ani::to_bytes`], but refuses an animation whose counts do not fit the file (never writes wrong bytes).
+    pub fn try_to_bytes(&self) -> Result<Vec<u8>> {
+        let too_big = |what: String| Error::Format { file: "animation".into(), what, offset: 0 };
+        if self.bones.len() > u16::MAX as usize {
+            return Err(too_big(format!("{} bones do not fit the 16-bit bone count", self.bones.len())));
+        }
+        for (i, b) in self.bones.iter().enumerate() {
+            if b.rot.len() > i32::MAX as usize || b.trans.len() > i32::MAX as usize {
+                return Err(too_big(format!("bone {i}: a track is too long for a 32-bit key count")));
+            }
+        }
         let (nr, nt) = self.key_counts();
         let mut d = Vec::with_capacity(10 + self.bones.len() * BONE_MIN + nr * 20 + nt * 16);
         d.extend_from_slice(&self.first_field.to_le_bytes());
@@ -111,7 +128,7 @@ impl Ani {
                 }
             }
         }
-        d
+        Ok(d)
     }
 
     /// The highest key of any track of any bone.
@@ -361,6 +378,16 @@ mod tests {
     }
 
     #[test]
+    fn an_animation_with_too_many_bones_is_refused_not_truncated() {
+        let bone = AniBone { parent: -1, matrix: [0.0; 16], rot: Vec::new(), trans: Vec::new() };
+        let mut a = Ani { first_field: 0, end_key: 0, bones: vec![bone; u16::MAX as usize] };
+        assert_eq!(parse(&a.try_to_bytes().unwrap()).unwrap().bones.len(), u16::MAX as usize);
+        a.bones.push(a.bones[0].clone());
+        let e = a.try_to_bytes().unwrap_err().to_string();
+        assert!(e.contains("65536 bones"), "{e}");
+    }
+
+    #[test]
     fn a_count_that_cannot_fit_is_refused_without_allocating() {
         let mut d = ani_bytes(0, 0, &[bone(-1, identity_bits())]);
         // the rotation count sits after first field, end key, bone count, parent and the matrix
@@ -535,7 +562,7 @@ mod tests {
         assert_eq!(rig_of("Character/Human/ANI/xxxx_1.ANI").rig, None);
         assert_eq!(rig_of("Character/Human/ANI/huwm.ANI").rig, None);
         assert_eq!(rig_of("Character/Human/ANI/huwmx_1.ANI").rig, None);
-        assert_eq!(rig_of("Character\\DeathEater\\ANI\\dewr_1_a.ANI").rig, Some(("dewr", "DeathEater")));
+        assert_eq!(rig_of(r"Character\DeathEater\ANI\dewr_1_a.ANI").rig, Some(("dewr", "DeathEater")));
         assert_eq!(rig_of("").kind, "");
         for (name, race) in RIGS {
             let path = format!("Character/{race}/ANI/{name}_001_a.ANI");

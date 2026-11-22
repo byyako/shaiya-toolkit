@@ -31,7 +31,7 @@ fn every_ani_of_the_us_client_reads_writes_back_and_has_no_error() {
     let a = Archive::open(&dir).unwrap();
     let mut by_code: BTreeMap<&'static str, usize> = BTreeMap::new();
     let (mut errors, mut late_tracks, mut late_files) = (0usize, 0usize, 0usize);
-    let (mut late_rot, mut late_trans) = (0usize, 0usize);
+    let (mut late_rot, mut late_trans, mut minus_one_tracks) = (0usize, 0usize, 0usize);
     let (mut first_minus_one, mut starts_at_minus_one): (BTreeSet<String>, BTreeSet<String>) = Default::default();
     let mut other_first_fields = BTreeSet::new();
     let n = each_ani(&a, |path, bytes| {
@@ -60,6 +60,7 @@ fn every_ani_of_the_us_client_reads_writes_back_and_has_no_error() {
                 other_first_fields.insert(other);
             }
         }
+        minus_one_tracks += ani.bones.iter().filter(|b| b.rot.first().is_some_and(|k| k.key == -1)).count() + ani.bones.iter().filter(|b| b.trans.first().is_some_and(|k| k.key == -1)).count();
         if ani.bones.iter().any(|b| b.rot.first().is_some_and(|k| k.key == -1) || b.trans.first().is_some_and(|k| k.key == -1)) {
             starts_at_minus_one.insert(path.to_string());
         }
@@ -73,6 +74,8 @@ fn every_ani_of_the_us_client_reads_writes_back_and_has_no_error() {
     assert_eq!(by_code.get(issue::KEY_BEFORE_START).copied().unwrap_or(0), 0);
     assert_eq!(by_code.get(issue::KEYS_CLOSE).copied().unwrap_or(0), 0);
     assert_eq!((late_tracks, late_files), (382, 254));
+    assert_eq!((late_rot, late_trans), (382, 0), "every late track is a rotation track");
+    assert_eq!(minus_one_tracks, 269, "tracks whose first key is -1");
     assert_eq!(by_code.get(issue::TRACK_STARTS_LATE).copied().unwrap_or(0), late_files);
     assert!(other_first_fields.is_empty());
     assert_eq!(first_minus_one.len(), 7);

@@ -12,7 +12,7 @@ i32 end key
 u16 bone count
 per bone:
   i32 parent                     -1 for a root, else the index of an earlier bone
-  f32 reference matrix[16]       64 bytes, row-major, translation in elements 12 to 14
+  f32 reference matrix[16]       64 bytes, row-major
   i32 nRot,   nRot   x { i32 key; f32 x, y, z, w }    rotation keys (a quaternion)
   i32 nTrans, nTrans x { i32 key; f32 x, y, z }       translation keys
 ```
@@ -29,7 +29,7 @@ The toolkit also asks for the same first field as the file it replaces (inferred
 
 ## What the toolkit checks (validation codes)
 
-`shaiya-clientdata` `anim::validate` finds, one finding per code and bone:
+`shaiya-clientdata` `anim::validate` finds, one finding per code and bone (per file for `end-before-last-key`):
 
 | Code | Kind | Meaning | Files on US EP4.5 |
 |---|---|---|---|
@@ -47,7 +47,7 @@ A negative key is not an error: 269 tracks start at key -1, all in the 7 files w
 
 ## Rig check
 
-Between a candidate and the file it replaces, `rig_check` compares the bone count, every parent and every reference matrix as raw bits (the skeleton), and separately the first field. A candidate passes when it has the same skeleton, the same first field and no validation error.
+Between a candidate and the file it replaces, `rig_check` compares the bone count, every parent and every reference matrix as raw bits (the skeleton), and separately the first field. A candidate passes when it has the same skeleton, the same first field (inferred to be the start key; not checked in the game) and no validation error.
 
 ## What the toolkit does with it
 
