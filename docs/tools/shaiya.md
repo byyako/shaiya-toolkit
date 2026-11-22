@@ -10,6 +10,7 @@ shaiya [GLOBAL FLAGS] <COMMAND> [ARGS]
 | [`archive`](#shaiya-archive) | List, check, extract, edit, compare, pack, swap `data.sah` / `data.saf` |
 | [`patch`](#shaiya-patch) | Build, verify, apply and roll back `psNNNN.patch` files; sign them |
 | [`sdata`](#shaiya-sdata) | Describe, check, decrypt and encrypt SData files; show a table as CSV or JSON |
+| [`anim`](#shaiya-anim) | Describe and check `.ANI` and `.3DC` files; compare a candidate `.ANI`'s skeleton with the file it replaces |
 | [`svmap`](#shaiya-svmap) | Server map files (`.svmap`): check, dump, build, round trip, compare; check a client's `.wld` files; spawn report; bulk-edit dry run |
 | [`clients`](#shaiya-clients) | The saved "my client folders" list (`@name`) |
 | [`version`](#shaiya-version) | Version, git revision, target |
@@ -254,6 +255,30 @@ $ shaiya sdata encrypt plain/ -o enc/ --like "@us"
 JSON: `{"items": [{"name", "status", "size", "plain_size", "crc", "crc_ok", "padding_zero", "tail_zero", "out", "message"}], "summary": {"<status>": count}}`. For `table`: `{"layout", "table", "chosen_by", "status", "loader_verified_on", "fit_only_on", "sheets": [{"name", "columns": [{"name", "kind"}], "row_count", "rows": [[...]]}]}` (`kind` is `int`, `float` or `text`; `--section` keeps one sheet); with `--csv` and `--json` together, `{"layout", "table", "chosen_by", "status", "loader_verified_on", "fit_only_on", "section", "rows", "columns", "out"}`.
 
 Guide: [SData files](../guides/sdata-files.md).
+
+## `shaiya anim`
+
+Animation files: `.ANI` (skeletal animations) and `.3DC` (the skinned meshes they move). Read only: no `anim` command writes a file. The formats are in [formats/ani.md](../formats/ani.md) and [formats/3dc.md](../formats/3dc.md). A file is described only when it reads to its last byte; otherwise the command says so and exits 3. Every file was read on US EP4.5 only; the eight other matrix clients have their index only.
+
+| Command | Arguments and flags | Exit |
+|---|---|---|
+| `info` | `INPUT...` or `--from ARCHIVE [PATTERN]...` | 0; 3 a file does not read (the others are still reported) |
+| `validate` | same as `info`; `.ANI` only | 0 no file has an error (warnings are allowed); 1 a file has an error; 3 a file does not read |
+| `compare` | `CANDIDATE TARGET` or `CANDIDATE TARGET --from ARCHIVE` | 0 the candidate passes; 1 it does not; 3 a file does not read, or `TARGET` is not in the archive |
+
+- Inputs are files, or folders searched recursively for names ending in `.ani` or `.3dc` in any letter case (`ARM.ANI`, `arm.Ani` and `arm.3dc` are all found). With `--from`, the inputs are patterns over the archive's visible files (default `*.ani` and `*.3dc` for `info`, `*.ani` for `validate`); only `.ani` and `.3dc` files that match are described. A file named on the command line is always read, and one that is neither an `.ANI` nor a `.3DC` (or, for `validate`, not an `.ANI`) is reported as `FAILED` with exit 3.
+- `info` prints one line per file, for example `Character/Human/ANI/huwm_000_x.ANI: animation, Character rig huwm (Human), 65 bones, end key 240 (8.0 s), 2,210 rotation keys, 130 translation keys, 0 errors, 1 warning` or `Mob.3DC: skinned mesh, 1,234 vertices, 2,100 triangles, 65 bones, highest vertex bone 64`. The kind and rig come from an archive path only (`--from`); a file on disk gets neither. Seconds are the end key at 30 key units per second. A first field other than 0 is shown as `first field -1 (inferred: start key)`. A cloak mesh is shown as `cloak mesh without bones`.
+- `validate` prints each finding on stderr as `error: PATH: CODE: message` or `warning: PATH: CODE: message` (warnings are hidden by `--quiet`, errors never), then a summary line. The codes are the ones in [formats/ani.md](../formats/ani.md#what-the-toolkit-checks-validation-codes).
+- `compare` checks a candidate `.ANI` against the file it would replace. It prints `same skeleton as TARGET: 65 bones, parents and reference matrices identical`, or `the skeleton differs from TARGET:` with each difference (the first 10 of each kind, then `and N more reference matrix differences`); then its own line for the first field, `first field: same (0)` or `first field differs: candidate 0, target -1 (inferred: the start key; not checked in the game)`; then the candidate's validation errors; and last `passes` or `does not pass`. The candidate passes when its skeleton (bone count, every parent, every reference matrix bit for bit) is the same as the target's, it has the same first field (inferred to be the start key; not checked in the game) and it has no validation error. The first field is not part of the skeleton: it is reported as its own difference and `same skeleton` can be printed above a `does not pass`.
+- Validated offline only; the commands say nothing about what the game does with a file.
+
+```
+$ shaiya anim info --from "@us" "character/human/ani/huwm_000_*"
+$ shaiya anim validate --from "@us"
+$ shaiya anim compare new.ani "Character/Human/ANI/huwm_117_x.ANI" --from "@us"
+```
+
+JSON. `info`: `{"files": [...]}` where an `.ANI` entry is `{"path", "format": "ani", "kind", "rig", "race", "bones", "end_key", "seconds", "rotation_keys", "translation_keys", "first_field", "first_field_inferred": "start key", "issues": [{"code", "severity", "bone", "message"}]}`, a `.3DC` entry is `{"path", "format": "3dc", "layout": "skinned" or "skinned-with-second-mesh" or "cloak", "vertices", "triangles", "bones", "max_vertex_bone"}`, and a file that does not read is `{"path", "error"}`. `validate`: the same plus `"errors"` and `"warnings"` (totals). `compare`: `{"candidate", "target", "same_skeleton", "same_first_field", "passes", "differences": [{"kind": "bone_count" or "parent" or "matrix" or "first_field", "skeleton", "bone", "candidate", "target"}], "candidate_issues": [...]}` (every difference, not only the first 10).
 
 ## `shaiya svmap`
 

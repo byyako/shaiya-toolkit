@@ -58,6 +58,7 @@ On US EP4.5, each of the 16 character rigs posed with its first `<rig>_000_` ani
 | `shaiya-clientdata` `mesh3dc` | parses the three layouts, writes back in memory, names the texture and the highest bone a vertex uses |
 | `shaiya-clientdata` `render` | `skin` poses a mesh, `c3dc_picture` draws it at rest and `anim_frames` pre-renders an animation on it |
 | Shaiya Toolkit, Archive tab | previews a `.3DC` at rest, and uses it as the mesh of an `.ANI` preview (see [ani.md](ani.md#in-the-archive-tab)) |
+| `shaiya anim info` (command line) | describes a `.3DC`: layout, vertices, triangles, bones and the highest bone a vertex uses ([shaiya anim](../tools/shaiya.md#shaiya-anim)) |
 
 No program writes a `.3DC` file. Selecting a `.3DC` in the Archive tab shows its first mesh at rest, in plain grey with the wire, under a header: "Skinned mesh: N vertices, N triangles, N bones", "Cloak mesh without bones: N vertices, N triangles", or, for the layout with a second mesh, the same with "a second mesh follows (N vertices); the picture shows the first". A weak line says "shown in the mesh's own rest pose, plain grey (the mesh file names no texture)", or "(textures are not looked up for skinned meshes)" for a mesh that does name one. A `.3DC` is never shown as text, even when its bytes look like text: a file that does not read to the last byte (or that two layouts read) shows the reader's error and the bytes as hex.
 

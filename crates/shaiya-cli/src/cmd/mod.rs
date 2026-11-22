@@ -1,5 +1,6 @@
 //! One module per command group. Each group adds `src/cmd/<group>.rs` and one enum variant in `main.rs`.
 
+pub mod anim;
 pub mod archive;
 pub mod clients;
 pub mod info;

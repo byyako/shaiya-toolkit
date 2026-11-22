@@ -97,6 +97,13 @@ struct SdataGroup {
 
 #[derive(clap::Args)]
 #[command(arg_required_else_help = true, subcommand_required = true)]
+struct AnimGroup {
+    #[command(subcommand)]
+    cmd: cmd::anim::Cmd,
+}
+
+#[derive(clap::Args)]
+#[command(arg_required_else_help = true, subcommand_required = true)]
 struct ClientsGroup {
     #[command(subcommand)]
     cmd: cmd::clients::Cmd,
@@ -119,6 +126,8 @@ enum Command {
     Patch(PatchGroup),
     /// SData files: info, check, decrypt, encrypt
     Sdata(SdataGroup),
+    /// Animation files (.ANI, .3DC): describe, check, compare the skeleton with the file a candidate replaces
+    Anim(AnimGroup),
     /// The saved "my client folders" list (use them as @name)
     Clients(ClientsGroup),
     /// Server map files (.svmap): check, dump, build, round trip, compare; check a client's .wld files; spawn report; bulk-edit dry run
@@ -186,6 +195,7 @@ fn run() -> u8 {
                 Command::Archive(g) => cmd::archive::run(&ctx, &g.cmd, &job),
                 Command::Patch(g) => cmd::patch::run(&ctx, &g.cmd, &job),
                 Command::Sdata(g) => cmd::sdata::run(&ctx, &g.cmd, &job),
+                Command::Anim(g) => cmd::anim::run(&ctx, &g.cmd, &job),
                 Command::Clients(g) => cmd::clients::run(&ctx, &g.cmd),
                 Command::Svmap(g) => cmd::svmap::run(&ctx, &g.cmd, &job),
                 Command::Version => unreachable!("handled above"),

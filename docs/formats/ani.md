@@ -68,6 +68,7 @@ On US EP4.5 the first rotation key of 123,201 of the 124,089 tracks that have on
 |---|---|
 | `shaiya-clientdata` `anim` | parses, writes back in memory, validates, runs the rig check, names the kind and rig of an archive path and computes a pose (`locals`, `pose`) |
 | Shaiya Toolkit, Archive tab | previews and plays an `.ANI` (below) |
+| `shaiya anim` (command line) | `info` describes, `validate` checks and `compare` runs the rig check against the file a candidate replaces (below) |
 
 No program writes an `.ANI` file.
 
@@ -80,6 +81,10 @@ Below that is a picture of the animation posed on a mesh, with the bones drawn o
 The mesh is found by name, never from a list file: the `3DC` folder next to the `ANI` folder (any letter case), files whose name equals the animation's prefix or starts with the prefix and an underscore. For `Character/<race>/ANI/<rig>_...` the prefix is the rig (`huwm`); for any other animation it is the file name without its last `_` part (`Mob_Bear_01_Att1` finds `Mob_Bear_01_A.3DC` but not `Mob_Bear_010_A.3DC`). A mesh is offered only when every bone its vertices use exists in the animation. The default is the first torso, lower, hand, boots, face and hair part of a character, and every compatible mesh (up to 8) for anything else; the Mesh box also offers "Skeleton only" and each mesh alone. Without a compatible mesh it says "no matching .3DC in <folder>; showing the skeleton" and draws the bones only. A vertex that names a bone the animation lacks is drawn unposed and counted. A file that does not read to the last byte shows the reader's error and the bytes as hex.
 
 On US EP4.5, the default parts of each of the 16 character rigs, posed with that rig's first `<rig>_000_` animation, leave no vertex unposed (opt-in test, validated offline; the eight other matrix clients have their index only).
+
+### On the command line
+
+`shaiya anim info` prints one line per file (kind and rig of an archive path, bones, end key and seconds, key counts, errors and warnings; a first field other than 0 as "inferred: start key"). `shaiya anim validate` prints each finding with its code and exits 1 when a file has an error. `shaiya anim compare CANDIDATE TARGET` prints "same skeleton as TARGET" or each skeleton difference, the first field on its own line, the candidate's validation errors and `passes` or `does not pass` (exit 0 or 1); it passes under the rig-check rule above. Folders are searched for `.ani` and `.3dc` in any letter case. Details and JSON: [shaiya anim](../tools/shaiya.md#shaiya-anim).
 
 ## Verified on
 
