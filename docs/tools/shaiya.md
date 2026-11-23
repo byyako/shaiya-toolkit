@@ -365,7 +365,7 @@ Any `ARCHIVE` or `CLIENT` argument may then be `@name` (names are matched case-i
 ## `shaiya version`
 
 ```
-shaiya 0.4.0 (git 0123456789ab, x86_64-pc-windows-msvc)
+shaiya 0.4.1 (git 0123456789ab, x86_64-pc-windows-msvc)
 ```
 
-With `--json`: `{"version": "0.4.0", "git": "0123456789ab", "target": "x86_64-pc-windows-msvc"}`. `shaiya -V` prints the same line.
+With `--json`: `{"version": "0.4.1", "git": "0123456789ab", "target": "x86_64-pc-windows-msvc"}`. `shaiya -V` prints the same line.

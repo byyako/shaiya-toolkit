@@ -29,6 +29,8 @@ The `README.txt` inside each zip carries the same notice as the repository READM
 
 ## Budgets
 
+<!-- TODO(0.4.1): the measured numbers below are from the 0.4.0 dry run; replace them with the 0.4.1 dry run numbers (a follow-up commit) -->
+
 | Item | Budget |
 |---|---|
 | `shaiya.exe` (command line), release, Windows x86_64 | 6 MB (measured (0.4.0 dry run) 4,268,032 bytes) |
