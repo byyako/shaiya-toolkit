@@ -121,6 +121,8 @@ pub struct Loaded {
     /// The client folder this archive belongs to (`None`: an archive opened from a file; nothing can be changed in place).
     pub client_dir: Option<PathBuf>,
     pub archive: Option<Arc<Archive>>,
+    /// What the `.ANI` previews learned about the `.3DC` candidates of this archive (new whenever an archive is loaded).
+    pub mesh_cache: preview::MeshInfoCache,
     pub rows: Vec<RowData>,
     pub tree: Tree,
     by_folder: HashMap<String, Vec<usize>>,
@@ -169,7 +171,7 @@ fn load(path: &Path, label: String, client_dir: Option<PathBuf>, job: &shaiya_co
     for (i, r) in rows.iter().enumerate() {
         by_folder.entry(r.folder().to_lowercase()).or_default().push(i);
     }
-    Ok(Opened { loaded: Loaded { label, sah, client_dir, archive, rows, tree, by_folder, sah_version, visible, saf_len, dead }, notes })
+    Ok(Opened { loaded: Loaded { label, sah, client_dir, archive, mesh_cache: preview::MeshInfoCache::default(), rows, tree, by_folder, sah_version, visible, saf_len, dead }, notes })
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -1478,9 +1480,10 @@ impl ArchiveView {
         self.preview.plain_view = false;
         let Some(l) = &self.loaded else { return };
         let Some(a) = l.archive.clone() else { return };
+        let cache = l.mesh_cache.clone();
         let r = &l.rows[row];
         let (entry, path, all, mesh) = (r.entry.clone(), r.path.clone(), self.preview.text_all, self.preview.anim_mesh.clone());
-        let h = cx.shell.tasks().spawn(TaskSpec { title: format!("Preview {}", r.name()), cancellable: true, exclusive: None }, move |job| preview::make_preview_with(&a, &entry, &path, all, 0, &mesh, job));
+        let h = cx.shell.tasks().spawn(TaskSpec { title: format!("Preview {}", r.name()), cancellable: true, exclusive: None }, move |job| preview::make_preview_with(&a, &entry, &path, all, 0, &mesh, &cache, job));
         self.preview.handle = Some(h);
     }
 
@@ -2429,7 +2432,7 @@ impl ArchiveView {
         // Replace with a file that looks broken
         if let Some((items, findings)) = self.replace_ask.take() {
             let c = Confirm {
-                title: "This file looks broken".into(),
+                title: crate::replace_title::findings_title(&findings).into(),
                 text: findings_question(&findings, "queue"),
                 buttons: vec!["Add anyway".into(), "Cancel".into()],
                 ..Default::default()

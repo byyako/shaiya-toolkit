@@ -4,6 +4,12 @@ All notable changes are listed here, newest first. The format follows [Keep a Ch
 
 ## [Unreleased]
 
+### Shaiya Toolkit
+
+- The `.ANI` preview says when bones cannot be posed ("N bones cannot be posed (a reference matrix holds NaN or infinity, or cannot be inverted) and are not drawn").
+- The `.ANI` preview parses each candidate `.3DC` at most once per opened archive (the answers are dropped when the archive is loaded again) and skips a candidate over 32 MiB.
+- The question before an `.ani` with a different skeleton is queued is titled "The skeleton differs from the file it replaces"; it keeps "This file looks broken" when an SData finding also asks.
+
 ### Documentation
 
 - Opt-in tests can be made to fail when their variable is missing: set `SHAIYA_OPTIN_REQUIRE` to a list of variable names (the svmap crates still only skip). `SHAIYA_EXPECT_CHANGED_ANI` sets the number of changed `.ANI` files the two opt-in comparisons expect; without it no count is asserted.

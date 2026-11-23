@@ -15,6 +15,7 @@ pub mod patch_builder;
 pub mod preview;
 pub mod preview_models;
 pub mod publish_form;
+pub mod replace_title;
 pub mod sdata_tab;
 pub mod sdata_table;
 pub mod shot;

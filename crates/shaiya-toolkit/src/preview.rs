@@ -6,7 +6,9 @@ use shaiya_archive::{Archive, Entry};
 use shaiya_core::text::Encoding;
 pub use shaiya_clientdata::meshpick::{mesh_candidates_in, MeshInfo};
 use shaiya_core::{Error, Job, Result, Unit};
+use std::collections::HashMap;
 use std::path::Path;
+use std::sync::{Arc, Mutex};
 
 pub const TEXT_FIRST: u64 = 1 << 20;
 pub const TEXT_ALL: u64 = 16 << 20;
@@ -258,12 +260,53 @@ pub fn model_preview(archive: &Archive, data: &[u8], path: &str, job: &Job) -> s
 /// `_segment`. At most 64 candidates (by name) are read with `read` (archive path to bytes); one is offered when it is a skinned
 /// layout, has vertices and every bone its vertices name is below `bone_count`. Returns (compatible, default parts), both archive
 /// paths in name order.
-pub fn mesh_candidates(index: &shaiya_archive::Index, ani_path: &str, bone_count: usize, read: &mut dyn FnMut(&str) -> Option<Vec<u8>>) -> (Vec<String>, Vec<String>) {
+pub fn mesh_candidates(index: &shaiya_archive::Index, ani_path: &str, bone_count: usize, cache: &MeshInfoCache, read: &mut dyn FnMut(&str) -> Option<Vec<u8>>) -> (Vec<String>, Vec<String>) {
     let paths: Vec<String> = index.visible().into_iter().map(|f| f.path).filter(|p| ext_of(p) == "3dc").collect();
     mesh_candidates_in(&paths, ani_path, bone_count, &mut |p| {
-        let c = shaiya_clientdata::C3dc::parse(&read(p)?, p).ok()?;
-        Some(MeshInfo::of(&c))
+        let entry = index.get(p)?;
+        if entry.length as u64 > MESH_CANDIDATE_LIMIT {
+            return None;
+        }
+        let key = p.replace('\\', "/").to_ascii_lowercase();
+        if let Some(known) = cache.get(&key, entry.offset, entry.length) {
+            return known;
+        }
+        let info = read(p).and_then(|b| shaiya_clientdata::C3dc::parse(&b, p).ok()).map(|c| MeshInfo::of(&c));
+        cache.put(key, entry.offset, entry.length, info);
+        info
     })
+}
+
+/// Candidate `.3DC` files over this many bytes are neither read nor offered (the largest of the matrix client is about 300 KB).
+pub const MESH_CANDIDATE_LIMIT: u64 = 32 << 20;
+
+/// What was learned about each candidate `.3DC` of one opened archive, so a file is parsed at most once per archive: lower-cased archive
+/// path to (entry offset, entry length, the answer). An entry whose offset or length differs from the index is read again. A new cache
+/// is made whenever an archive is loaded or reloaded, so applied changes are never served stale.
+#[derive(Clone, Debug, Default)]
+pub struct MeshInfoCache(Arc<Mutex<HashMap<String, CachedMesh>>>);
+
+/// Entry offset, entry length and what was learned (`None`: the file does not read).
+type CachedMesh = (u64, u32, Option<MeshInfo>);
+
+impl MeshInfoCache {
+    fn get(&self, key: &str, offset: u64, length: u32) -> Option<Option<MeshInfo>> {
+        let m = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        m.get(key).filter(|(o, l, _)| *o == offset && *l == length).map(|(_, _, i)| *i)
+    }
+
+    fn put(&self, key: String, offset: u64, length: u32, info: Option<MeshInfo>) {
+        self.0.lock().unwrap_or_else(|e| e.into_inner()).insert(key, (offset, length, info));
+    }
+
+    /// How many files are remembered.
+    pub fn len(&self) -> usize {
+        self.0.lock().unwrap_or_else(|e| e.into_inner()).len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
 }
 
 fn kind_line(path: &str) -> String {
@@ -280,7 +323,7 @@ fn kind_line(path: &str) -> String {
 /// The preview of an `.ANI` from its bytes: header, validation lines, bones table and the frames pre-rendered on the meshes chosen by
 /// `mesh` (found in `archive` by name, see [`mesh_candidates`]). A file that does not read is an error (the caller shows it as Failed).
 /// The frames are made here, on the worker thread, and the job's cancel stops them.
-pub fn anim_preview(archive: &Archive, data: &[u8], path: &str, mesh: &MeshChoice, job: &Job) -> shaiya_clientdata::Result<PreviewData> {
+pub fn anim_preview(archive: &Archive, data: &[u8], path: &str, mesh: &MeshChoice, cache: &MeshInfoCache, job: &Job) -> shaiya_clientdata::Result<PreviewData> {
     use shaiya_clientdata::anim::{self, Severity};
     let ani = shaiya_clientdata::Ani::parse(data, path)?;
     let (rot, trans) = ani.key_counts();
@@ -338,7 +381,7 @@ pub fn anim_preview(archive: &Archive, data: &[u8], path: &str, mesh: &MeshChoic
         job.check().ok()?;
         archive.read_entry(archive.index().get(p)?).ok()
     };
-    let (compatible, defaults) = mesh_candidates(archive.index(), path, ani.bones.len(), &mut read);
+    let (compatible, defaults) = mesh_candidates(archive.index(), path, ani.bones.len(), cache, &mut read);
     let mesh = match mesh {
         MeshChoice::One(_) | MeshChoice::Default if compatible.is_empty() => MeshChoice::Skeleton,
         MeshChoice::One(p) if !compatible.contains(p) => MeshChoice::Default,
@@ -367,6 +410,13 @@ pub fn anim_preview(archive: &Archive, data: &[u8], path: &str, mesh: &MeshChoic
     }
     if frames.unposed_vertices > 0 {
         notes.push(format!("{} name bones this animation does not have; drawn unposed", n(frames.unposed_vertices, "vertex", "vertices")));
+    }
+    if frames.nonfinite_bones > 0 {
+        notes.push(format!(
+            "{} cannot be posed (a reference matrix holds NaN or infinity, or cannot be inverted) and {} not drawn",
+            n(frames.nonfinite_bones, "bone", "bones"),
+            if frames.nonfinite_bones == 1 { "is" } else { "are" }
+        ));
     }
     if frames.step > 1.0 {
         notes.push(format!("the frames are prepared before playing: one every {} key units (at most {} frames)", frames.step, shaiya_clientdata::render::MAX_ANIM_FRAMES));
@@ -433,11 +483,12 @@ fn read_all(archive: &Archive, entry: &Entry, cap: u64, job: &Job) -> Result<Vec
 /// Builds the preview of `entry` (`path` decides what it should be, the bytes can overrule). `text_all`: read up to 16 MiB of text
 /// instead of 1 MiB. `hex_from`: where the hex window starts for entries over 64 MiB.
 pub fn make_preview(archive: &Archive, entry: &Entry, path: &str, text_all: bool, hex_from: u64, job: &Job) -> Result<PreviewData> {
-    make_preview_with(archive, entry, path, text_all, hex_from, &MeshChoice::Default, job)
+    make_preview_with(archive, entry, path, text_all, hex_from, &MeshChoice::Default, &MeshInfoCache::default(), job)
 }
 
 /// [`make_preview`] with the mesh choice of an `.ANI` preview.
-pub fn make_preview_with(archive: &Archive, entry: &Entry, path: &str, text_all: bool, hex_from: u64, mesh: &MeshChoice, job: &Job) -> Result<PreviewData> {
+#[allow(clippy::too_many_arguments)]
+pub fn make_preview_with(archive: &Archive, entry: &Entry, path: &str, text_all: bool, hex_from: u64, mesh: &MeshChoice, cache: &MeshInfoCache, job: &Job) -> Result<PreviewData> {
     if entry.length == 0 {
         return Ok(PreviewData::Empty);
     }
@@ -496,7 +547,7 @@ pub fn make_preview_with(archive: &Archive, entry: &Entry, path: &str, text_all:
     if matches!(ext.as_str(), "ani" | "3dc" | "vani" | "mani" | "3do" | "3de") {
         let data = read_all(archive, entry, 128 << 20, job)?;
         let made = match ext.as_str() {
-            "ani" => anim_preview(archive, &data, path, mesh, job),
+            "ani" => anim_preview(archive, &data, path, mesh, cache, job),
             "3dc" => c3dc_preview(&data, path),
             "vani" => preview_models::vani_preview(archive, &data, path, job),
             "mani" => preview_models::mani_preview(&data, path),
@@ -966,7 +1017,7 @@ mod anim_tests {
     }
 
     fn pv(a: &Archive, path: &str, mesh: &MeshChoice) -> PreviewData {
-        make_preview_with(a, a.index().get(path).unwrap(), path, false, 0, mesh, &Job::silent()).unwrap()
+        make_preview_with(a, a.index().get(path).unwrap(), path, false, 0, mesh, &MeshInfoCache::default(), &Job::silent()).unwrap()
     }
 
     struct Seen {
@@ -1009,11 +1060,11 @@ mod anim_tests {
         assert_eq!(f.unposed_vertices, 0);
         // the candidates themselves, with the default parts
         let mut read = |p: &str| a.index().get(p).and_then(|e| a.read_entry(e).ok());
-        let (all, defaults) = mesh_candidates(a.index(), ANI, 3, &mut read);
+        let (all, defaults) = mesh_candidates(a.index(), ANI, 3, &MeshInfoCache::default(), &mut read);
         assert_eq!(all, vec!["Character/Human/3DC/huwm_torso001.3DC".to_string()]);
         assert_eq!(defaults, all);
         // with fewer bones than the mesh names, nothing is offered
-        let (none, _) = mesh_candidates(a.index(), ANI, 2, &mut read);
+        let (none, _) = mesh_candidates(a.index(), ANI, 2, &MeshInfoCache::default(), &mut read);
         assert!(none.is_empty(), "a mesh is offered only when every bone it uses exists in the animation");
     }
 
@@ -1058,7 +1109,7 @@ mod anim_tests {
             ],
         );
         let mut read = |p: &str| a.index().get(p).and_then(|e| a.read_entry(e).ok());
-        let (all, defaults) = mesh_candidates(a.index(), "Monster/ANI/Mob_T_01_Att1.ANI", 3, &mut read);
+        let (all, defaults) = mesh_candidates(a.index(), "Monster/ANI/Mob_T_01_Att1.ANI", 3, &MeshInfoCache::default(), &mut read);
         let mut names: Vec<String> = all.iter().map(|p| p.rsplit('/').next().unwrap().to_ascii_lowercase()).collect();
         names.sort();
         assert_eq!(names, ["mob_t_01.3dc", "mob_t_01_a.3dc", "mob_t_01_b.3dc"], "any case; not _02 and not _010");
@@ -1093,7 +1144,7 @@ mod anim_tests {
             ],
         );
         let mut read = |p: &str| a.index().get(p).and_then(|e| a.read_entry(e).ok());
-        let (all, defaults) = mesh_candidates(a.index(), ANI, 3, &mut read);
+        let (all, defaults) = mesh_candidates(a.index(), ANI, 3, &MeshInfoCache::default(), &mut read);
         assert_eq!(all.len(), 5);
         let short: Vec<&str> = defaults.iter().map(|p| p.rsplit('/').next().unwrap()).collect();
         assert_eq!(short, ["huwm_torso001.3DC", "huwm_lower001.3DC", "HUWM_hair001.3DC"], "torso, lower, hair; the cape is not a default part");
@@ -1190,10 +1241,10 @@ mod anim_tests {
         let cancel = Cancel::new();
         let job = Job::new(&Silent, cancel.clone());
         cancel.cancel();
-        let e = make_preview_with(&a, a.index().get(ANI).unwrap(), ANI, false, 0, &MeshChoice::Default, &job).unwrap_err();
+        let e = make_preview_with(&a, a.index().get(ANI).unwrap(), ANI, false, 0, &MeshChoice::Default, &MeshInfoCache::default(), &job).unwrap_err();
         assert!(matches!(e, Error::Cancelled), "{e:?}");
         let data = a.read_entry(a.index().get(ANI).unwrap()).unwrap();
-        assert!(anim_preview(&a, &data, ANI, &MeshChoice::Default, &job).is_err());
+        assert!(anim_preview(&a, &data, ANI, &MeshChoice::Default, &MeshInfoCache::default(), &job).is_err());
     }
 
     #[test]

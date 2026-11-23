@@ -7,7 +7,7 @@ use shaiya_clientdata::anim::RIGS;
 use shaiya_clientdata::Ani;
 use shaiya_core::Job;
 use shaiya_testkit::env_client;
-use shaiya_toolkit::preview::{anim_preview, mesh_candidates_in, MeshChoice, MeshInfo, PreviewData};
+use shaiya_toolkit::preview::{anim_preview, mesh_candidates_in, MeshChoice, MeshInfo, MeshInfoCache, PreviewData};
 use std::collections::BTreeMap;
 
 fn client() -> Option<Archive> {
@@ -79,7 +79,7 @@ fn one_file_per_rig_builds_its_full_preview() {
         let pick = anis.iter().find(|(p, _)| p.to_ascii_lowercase().contains(&format!("{rig}_000_"))).or(anis.first()).unwrap_or_else(|| panic!("rig {rig} has no .ANI"));
         let data = a.read_entry(pick.1).unwrap();
         // one frame set at a time: it is dropped before the next rig starts
-        match anim_preview(&a, &data, &pick.0, &MeshChoice::Default, &Job::silent()).unwrap() {
+        match anim_preview(&a, &data, &pick.0, &MeshChoice::Default, &MeshInfoCache::default(), &Job::silent()).unwrap() {
             PreviewData::Anim { frames, mesh_choices, header, .. } => {
                 assert_eq!(frames.unposed_vertices, 0, "rig {rig}");
                 assert!(!frames.frames.is_empty(), "rig {rig}: default parts are drawn");
