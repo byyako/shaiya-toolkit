@@ -29,7 +29,7 @@ A `.MANI` is exactly 108 bytes, with no counts and no header, little-endian. A f
 | 100 | `move_accel` | f32 | speed factor per step |
 | 104 | `move_distance` | f32 | end point = `move_dir` times this |
 
-The 20 fields cover the 108 bytes with no gap (a test checks it). The file is kept as its 108 raw bytes with typed views, so `Mani::to_bytes` gives back the bytes `Mani::parse` read whatever the float bits are. No program writes a `.MANI` file.
+The 20 fields cover the 108 bytes with no gap (a test checks it). The file is kept as its 108 raw bytes with typed views, so `Mani::to_bytes` gives back the bytes `Mani::parse` read whatever the float bits are.
 
 ## Two writer generations
 
@@ -40,6 +40,8 @@ Two kinds of file exist in the archive; the toolkit shows both and interprets ne
 | Program | Use |
 |---|---|
 | `shaiya-clientdata` `mani` | parses the 108 bytes, writes them back in memory and gives every field with its offset, name, type and inferred meaning |
+| `shaiya anim export` and `import` (command line) | `export` turns a file into JSON and `import` turns the JSON back into the file; both write only their `-o` file ([JSON](#json-export-and-import)) |
+| Shaiya Toolkit, Archive tab | Export as JSON... writes the JSON of the selected `.MANI` file to a file outside every client folder ([JSON](#json-export-and-import)); the Toolkit imports nothing |
 
 In Shaiya Toolkit's Archive tab a `.MANI` is shown as a table of its 20 fields (Offset, Field, Meaning, Value), under the header "Motion parameters for a placed building model (108 bytes). Field meanings are inferred and were not checked in the game." Every meaning is labelled inferred, and the stored bits of a value are on hover. The field at offset 104 is also shown as an integer when its bits read as a float are a denormal (the first of the two writer generations), and a file of the integer generation (the integer at offset 104 with zero bytes at 80 to 83) gets a note saying so (shown, not interpreted); a file of the other generation gets no note. A file that is not 108 bytes shows the error and the bytes as hex. `shaiya anim info` prints one line per file and, with `--json`, every field with its `offset`, `name`, `value`, `raw` (the stored bytes in hex), `meaning` and `"inferred": true`; `shaiya anim validate` and `compare` read `.ANI` files only.
 

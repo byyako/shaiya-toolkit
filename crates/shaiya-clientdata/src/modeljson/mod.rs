@@ -134,6 +134,9 @@ impl From<Error> for JsonError {
 pub(crate) fn json_error(e: serde_json::Error) -> JsonError {
     let (line, column) = (e.line(), e.column());
     let mut message = e.to_string();
+    if message.contains(types::TOO_MANY) {
+        return JsonError::TooLarge(format!("{} (line {line}, column {column})", message.rsplit_once(" at line ").map_or(message.as_str(), |m| m.0)));
+    }
     if let Some(at) = message.rfind(" at line ") {
         message.truncate(at);
     }

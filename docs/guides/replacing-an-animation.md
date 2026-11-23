@@ -50,7 +50,7 @@ shaiya anim export "Character/Human/ANI/huwm_117_emoti002.ANI" --from "@mymod" -
 shaiya anim import huwm_117_emoti002.json --like "Character/Human/ANI/huwm_117_emoti002.ANI" --from "@mymod" -o my_emote.ANI
 ```
 
-`--like` is required for an `.ANI`: it names the file you are replacing (with `--from`, a path in the archive). The import runs the same check as `anim compare` (section 5) and prints the same lines. Exit 0 means the file passed and was written; exit 1 means the validation errors or differences are printed (with `--json`, only `written: false`), `nothing written` follows and no file is made. A refused value, index, unknown key or `columns` exits 3, a missing `--like` exits 2, and an `-o` inside a client folder or one that already exists exits 4 (see [shaiya anim](../tools/shaiya.md#shaiya-anim)). The `-o` file must end in `.ANI`.
+`--like` is required for an `.ANI`: it names the file you are replacing (with `--from`, a path in the archive). The import runs the same check as `anim compare` (section 5) and prints the same lines. Exit 0 means the file passed and was written; exit 1 means the validation errors or differences are printed (with `--json`, the keys of `compare` and `written: false`), `nothing written` follows and no file is made. A refused value, index, unknown key or `columns` exits 3, a missing `--like` exits 2, and an `-o` inside a client folder or one that already exists exits 4 (see [shaiya anim](../tools/shaiya.md#shaiya-anim)). The `-o` file must end in `.ANI`.
 
 **e. Then** check it with `anim compare` and `anim validate` (section 5) and put it in (section 6). The file is validated offline like every file in this guide.
 

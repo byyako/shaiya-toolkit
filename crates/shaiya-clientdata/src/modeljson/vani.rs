@@ -1,6 +1,6 @@
 //! `.VANI` as JSON: schema `shaiya-toolkit-vani-v1`.
 
-use super::types::{check_columns, check_limit, hex_encode, required, texture_from_hex, Face, Obj, Size, F32};
+use super::types::{Bounded, COLUMN_LIMIT, check_columns, check_limit, hex_encode, required, texture_from_hex, Face, Obj, Size, F32};
 use super::{json_error, JsonError, ModelFormat};
 use crate::vani::{Vani, VaniCollision, VaniItem, VaniVertex, COUNT_LIMIT, ITEM_LIMIT, STEP_LIMIT, TEXTURE_LIMIT};
 use serde::de::IgnoredAny;
@@ -104,23 +104,23 @@ pub(super) fn export(bytes: &[u8], source: &str, json_cap: u64) -> Result<String
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ColumnsIn {
-    vertices: Vec<String>,
+    vertices: Bounded<String, COLUMN_LIMIT>,
 }
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ItemIn {
     texture_hex: String,
-    faces: Vec<Face>,
+    faces: Bounded<Face, COUNT_LIMIT>,
     verts_per_step: u64,
-    vertices: Vec<VertexRec>,
+    vertices: Bounded<VertexRec, COUNT_LIMIT>,
 }
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct CollisionIn {
-    points: Vec<Vec3>,
-    faces: Vec<Face>,
+    points: Bounded<Vec3, COUNT_LIMIT>,
+    faces: Bounded<Face, COUNT_LIMIT>,
 }
 
 #[derive(Deserialize)]
@@ -142,7 +142,7 @@ struct VaniIn {
     box_max: Vec3,
     step_count: u64,
     frame_ms: i32,
-    items: Vec<Obj<ItemIn>>,
+    items: Bounded<Obj<ItemIn>, ITEM_LIMIT>,
     box2_min: Vec3,
     box2_max: Vec3,
     #[serde(deserialize_with = "required")]

@@ -1,6 +1,6 @@
 //! `.ANI` as JSON: schema `shaiya-toolkit-ani-v1`.
 
-use super::types::{hex_encode, hex_exact, KeyF32, Obj, F32};
+use super::types::{Bounded, COLUMN_LIMIT, hex_encode, hex_exact, KeyF32, Obj, F32};
 use super::{json_error, JsonError, ModelFormat};
 use crate::anim::{track_fits, Ani, AniBone, RotKey, TransKey, KEY_LIMIT};
 use serde::de::IgnoredAny;
@@ -85,8 +85,8 @@ pub(super) fn export(bytes: &[u8], source: &str, json_cap: u64) -> Result<String
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ColumnsIn {
-    rotation_keys: Vec<String>,
-    translation_keys: Vec<String>,
+    rotation_keys: Bounded<String, COLUMN_LIMIT>,
+    translation_keys: Bounded<String, COLUMN_LIMIT>,
 }
 
 #[derive(Deserialize)]
@@ -95,8 +95,8 @@ struct BoneIn {
     index: u64,
     parent: i32,
     matrix_hex: String,
-    rotation_keys: Vec<(i32, KeyF32, KeyF32, KeyF32, KeyF32)>,
-    translation_keys: Vec<(i32, KeyF32, KeyF32, KeyF32)>,
+    rotation_keys: Bounded<(i32, KeyF32, KeyF32, KeyF32, KeyF32), KEY_LIMIT>,
+    translation_keys: Bounded<(i32, KeyF32, KeyF32, KeyF32), KEY_LIMIT>,
 }
 
 #[derive(Deserialize)]

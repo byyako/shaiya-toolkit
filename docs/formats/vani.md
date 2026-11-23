@@ -25,7 +25,7 @@ i32 collision flag               0, or 1 followed by a collision mesh
 
 A vertex is 36 bytes: position (3 x f32), normal (3 x f32), a diffuse colour (u32) and texture coordinates (2 x f32).
 
-The toolkit keeps floats exactly as stored (NaN bits included) and texture names as raw bytes (displayed as text up to the first NUL), so a file written back is the same bytes as the file read. Before it allocates, the reader checks that `vertices per step x step count x 36` fits in the bytes left. Writing is in memory only (`Vani::to_bytes`): no program writes a `.VANI` file.
+The toolkit keeps floats exactly as stored (NaN bits included) and texture names as raw bytes (displayed as text up to the first NUL), so a file written back is the same bytes as the file read. Before it allocates, the reader checks that `vertices per step x step count x 36` fits in the bytes left. `Vani::to_bytes` writes in memory; the only program that writes a `.VANI` file is `shaiya anim import`, from its JSON and only to the `-o` file.
 
 `frame_ms` is inferred to be the time of one step in milliseconds; it was not checked in the game.
 
@@ -40,6 +40,8 @@ On US EP4.5 the collision flag is 0 in all 66 files, so no real file exercises t
 | `shaiya-clientdata` `vani` | parses, writes back in memory, gives the vertices of an item at a step and the texture name |
 | Shaiya Toolkit, Archive tab | previews it: the model picture of every step (textures looked up under `Entity/Texture` as for a `.smod`, a missing one named and drawn grey), played one step per `frame_ms` milliseconds with Play/Pause, a slider and Loop; the header says "about N ms per step (inferred from the file; not checked in the game)". At most 241 pictures are prepared on a worker thread, one every few steps for a longer file. A file that does not read to the last byte shows its error and the bytes as hex, also when the bytes look like text |
 | `shaiya anim info` | one line per file (items, vertices per step, triangles, steps, `frame_ms` as inferred); `--json` has the same as keys. `shaiya anim validate` and `compare` read `.ANI` files only |
+| `shaiya anim export` and `import` (command line) | `export` turns a file into JSON and `import` turns the JSON back into the file; both write only their `-o` file ([JSON](#json-export-and-import)) |
+| Shaiya Toolkit, Archive tab | Export as JSON... writes the JSON of the selected `.VANI` file to a file outside every client folder ([JSON](#json-export-and-import)); the Toolkit imports nothing |
 
 The preview and the player are validated offline on US EP4.5 files; the eight other matrix clients have their index only.
 

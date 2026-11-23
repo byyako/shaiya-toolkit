@@ -1,6 +1,6 @@
 //! `.3DC` as JSON: schema `shaiya-toolkit-3dc-v1`.
 
-use super::types::{check_columns, check_limit, hex_encode, hex_exact, matrix_bytes, matrix_from_bytes, texture_from_hex, Face, Obj, Size, F32};
+use super::types::{Bounded, COLUMN_LIMIT, check_columns, check_limit, hex_encode, hex_exact, matrix_bytes, matrix_from_bytes, texture_from_hex, Face, Obj, Size, F32};
 use super::{json_error, JsonError, ModelFormat};
 use crate::mesh3dc::{C3dc, C3dcLayout, C3dcMesh, C3dcVertex, BONE_LIMIT, COUNT_LIMIT, TEXTURE_LIMIT};
 use serde::de::IgnoredAny;
@@ -68,16 +68,16 @@ pub(super) fn export(bytes: &[u8], source: &str, json_cap: u64) -> Result<String
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ColumnsIn {
-    vertices: Vec<String>,
+    vertices: Bounded<String, COLUMN_LIMIT>,
 }
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct MeshIn {
     texture_hex: String,
-    bones_hex: Vec<String>,
-    vertices: Vec<VertexRec>,
-    faces: Vec<Face>,
+    bones_hex: Bounded<String, BONE_LIMIT>,
+    vertices: Bounded<VertexRec, COUNT_LIMIT>,
+    faces: Bounded<Face, COUNT_LIMIT>,
 }
 
 #[derive(Deserialize)]
@@ -94,7 +94,7 @@ struct C3dcIn {
     #[serde(default)]
     columns: Option<Obj<ColumnsIn>>,
     layout: String,
-    meshes: Vec<Obj<MeshIn>>,
+    meshes: Bounded<Obj<MeshIn>, 2>,
 }
 
 pub(super) fn import(json: &[u8], model_cap: u64) -> Result<Vec<u8>, JsonError> {
@@ -310,6 +310,20 @@ mod tests {
         assert!(matches!(e, Err(JsonError::Json { .. })), "{e:?}");
         let e = import(br#"["shaiya-toolkit-3dc-v1", "skinned", []]"#);
         assert!(matches!(e, Err(JsonError::Json { .. })), "{e:?}");
+    }
+
+    #[test]
+    fn a_list_over_its_limit_is_refused_while_it_is_read() {
+        // The bounded reader stops at the entry after the limit: its own message appears (a list parsed in full and counted afterwards
+        // would give the message of check_limit, "entries is over the limit").
+        let bones = vec![r#""""#; BONE_LIMIT + 1].join(",");
+        let text = format!(r#"{{"format": "shaiya-toolkit-3dc-v1", "layout": "skinned", "meshes": [{{"texture_hex": "", "bones_hex": [{bones}], "vertices": [], "faces": []}}]}}"#);
+        let e = import(text.as_bytes()).unwrap_err();
+        assert!(matches!(e, JsonError::TooLarge(_)) && e.to_string().contains("a list may hold at most 4096"), "{e}");
+        let columns = vec![r#""x""#; COLUMN_LIMIT + 1].join(",");
+        let text = format!(r#"{{"format": "shaiya-toolkit-3dc-v1", "layout": "cloak", "columns": {{"vertices": [{columns}]}}, "meshes": []}}"#);
+        let e = import(text.as_bytes()).unwrap_err();
+        assert!(matches!(e, JsonError::TooLarge(_)) && e.to_string().contains("a list may hold at most 64"), "{e}");
     }
 
     #[test]

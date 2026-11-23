@@ -34,7 +34,7 @@ A vertex is 40 bytes, in this order:
 
 The matrices of the bone block are the mesh's own inverse bind pose. They are not the inverse of an animation's reference matrices.
 
-The toolkit keeps floats exactly as stored (NaN bits included) and the texture name as raw bytes (displayed as text up to the first NUL), so a file written back is the same bytes as the file read. Writing is in memory only (`C3dc::to_bytes`): no program writes a `.3DC` file.
+The toolkit keeps floats exactly as stored (NaN bits included) and the texture name as raw bytes (displayed as text up to the first NUL), so a file written back is the same bytes as the file read. `C3dc::to_bytes` writes in memory; the only program that writes a `.3DC` file is `shaiya anim import`, from its JSON and only to the `-o` file.
 
 Cloak meshes: the layout reads all 48 of them to the last byte; how the game moves them was not checked.
 
@@ -59,8 +59,10 @@ On US EP4.5, each of the 16 character rigs posed with its first `<rig>_000_` ani
 | `shaiya-clientdata` `render` | `skin` poses a mesh, `c3dc_picture` draws it at rest and `anim_frames` pre-renders an animation on it |
 | Shaiya Toolkit, Archive tab | previews a `.3DC` at rest, and uses it as the mesh of an `.ANI` preview (see [ani.md](ani.md#in-the-archive-tab)) |
 | `shaiya anim info` (command line) | describes a `.3DC`: layout, vertices, triangles, bones and the highest bone a vertex uses ([shaiya anim](../tools/shaiya.md#shaiya-anim)) |
+| `shaiya anim export` and `import` (command line) | `export` turns a file into JSON and `import` turns the JSON back into the file; both write only their `-o` file ([JSON](#json-export-and-import)) |
+| Shaiya Toolkit, Archive tab | Export as JSON... writes the JSON of the selected `.3DC` file to a file outside every client folder ([JSON](#json-export-and-import)); the Toolkit imports nothing |
 
-No program writes a `.3DC` file. Selecting a `.3DC` in the Archive tab shows its first mesh at rest, in plain grey with the wire, under a header: "Skinned mesh: N vertices, N triangles, N bones", "Cloak mesh without bones: N vertices, N triangles", or, for the layout with a second mesh, the same with "a second mesh follows (N vertices); the picture shows the first". A weak line says "shown in the mesh's own rest pose, plain grey (the mesh file names no texture)", or "(textures are not looked up for skinned meshes)" for a mesh that does name one. A `.3DC` is never shown as text, even when its bytes look like text: a file that does not read to the last byte (or that two layouts read) shows the reader's error and the bytes as hex.
+Selecting a `.3DC` in the Archive tab shows its first mesh at rest, in plain grey with the wire, under a header: "Skinned mesh: N vertices, N triangles, N bones", "Cloak mesh without bones: N vertices, N triangles", or, for the layout with a second mesh, the same with "a second mesh follows (N vertices); the picture shows the first". A weak line says "shown in the mesh's own rest pose, plain grey (the mesh file names no texture)", or "(textures are not looked up for skinned meshes)" for a mesh that does name one. A `.3DC` is never shown as text, even when its bytes look like text: a file that does not read to the last byte (or that two layouts read) shows the reader's error and the bytes as hex.
 
 ## JSON (export and import)
 

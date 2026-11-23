@@ -44,6 +44,20 @@ pub(crate) fn refusal(out: &Path, client_dir: Option<&Path>, saved: &[PathBuf]) 
     client_folder_above(out, &all).map(|dir| format!("Choose a folder outside the client: {}", dir.display()))
 }
 
+/// True when two export targets are the same file name: letter case is ignored on Windows, where `A.json` and `a.json` are one file.
+fn same_target(a: &Path, b: &Path) -> bool {
+    if cfg!(windows) {
+        a.to_string_lossy().eq_ignore_ascii_case(&b.to_string_lossy())
+    } else {
+        a == b
+    }
+}
+
+/// True when the file name ends in `.json` (any letter case), like the CLI's `-o` rule.
+pub(crate) fn is_json_name(out: &Path) -> bool {
+    out.extension().is_some_and(|e| e.eq_ignore_ascii_case("json"))
+}
+
 fn to_error(path: &str, e: modeljson::JsonError) -> Error {
     match e {
         modeljson::JsonError::Unreadable(shaiya_clientdata::Error::Format { file, what, offset }) => Error::format(file, Some(offset as u64), what),
@@ -78,12 +92,16 @@ impl JsonExports {
     pub(crate) fn start(&mut self, archive: Arc<Archive>, entry: Entry, path: String, out: PathBuf, client_dir: Option<&Path>, cx: &mut ToolkitCx<'_>) {
         let name = path.rsplit('/').next().unwrap_or(&path).to_string();
         let Some(format) = ModelFormat::from_file_name(&name) else { return };
+        if !is_json_name(&out) {
+            cx.shell.error("Export failed", &Error::Refused(format!("The file name must end in .json: {}", out.display())));
+            return;
+        }
         let saved: Vec<PathBuf> = cx.shell.shared().clients.iter().map(|c| PathBuf::from(&c.path)).collect();
         if let Some(text) = refusal(&out, client_dir, &saved) {
             cx.shell.error("Export failed", &Error::Refused(text));
             return;
         }
-        if self.running.iter().any(|(_, t, _)| *t == out) {
+        if self.running.iter().any(|(_, t, _)| same_target(t, &out)) {
             cx.shell.error("Export failed", &Error::Refused(format!("An export to {} is running", out.display())));
             return;
         }
@@ -109,5 +127,23 @@ impl JsonExports {
             }
         }
         status
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_saved_folder_without_data_sah_still_refuses_and_a_json_name_is_checked() {
+        let dir = std::env::temp_dir().join(format!("t12-refusal-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let out = dir.join("x.json");
+        assert!(refusal(&out, None, &[]).is_none(), "an ordinary folder is fine");
+        assert!(refusal(&out, None, std::slice::from_ref(&dir)).is_some_and(|t| t.starts_with("Choose a folder outside the client:")), "a saved folder is refused");
+        assert!(is_json_name(Path::new("a.JSON")) && !is_json_name(Path::new("a.ani")) && !is_json_name(Path::new("json")));
+        assert!(same_target(Path::new("a.json"), Path::new("a.json")));
+        assert_eq!(same_target(Path::new("a.json"), Path::new("A.JSON")), cfg!(windows));
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }

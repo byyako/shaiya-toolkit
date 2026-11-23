@@ -1,6 +1,6 @@
 //! `.3DE` as JSON: schema `shaiya-toolkit-3de-v1`. A file the reader refuses (neither layout reads it) is not exported.
 
-use super::types::{check_columns, check_limit, hex_encode, required, texture_from_hex, Face, Obj, Size, F32};
+use super::types::{Bounded, COLUMN_LIMIT, check_columns, check_limit, hex_encode, required, texture_from_hex, Face, Obj, Size, F32};
 use super::{json_error, JsonError, ModelFormat};
 use crate::mesh3de::{Frame3de, FrameBlock3de, FrameVertex3de, Mesh3de, Vertex3de, COUNT_LIMIT, FRAME_LIMIT, TEXTURE_LIMIT};
 use serde::de::IgnoredAny;
@@ -81,22 +81,22 @@ pub(super) fn export(bytes: &[u8], source: &str, json_cap: u64) -> Result<String
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ColumnsIn {
-    vertices: Vec<String>,
-    frame_vertices: Vec<String>,
+    vertices: Bounded<String, COLUMN_LIMIT>,
+    frame_vertices: Bounded<String, COLUMN_LIMIT>,
 }
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct FrameIn {
     key: i32,
-    vertices: Vec<FrameRec>,
+    vertices: Bounded<FrameRec, COUNT_LIMIT>,
 }
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct BlockIn {
     max_key: i32,
-    frames: Vec<Obj<FrameIn>>,
+    frames: Bounded<Obj<FrameIn>, FRAME_LIMIT>,
 }
 
 #[derive(Deserialize)]
@@ -114,8 +114,8 @@ struct In {
     columns: Option<Obj<ColumnsIn>>,
     layout: String,
     texture_hex: String,
-    vertices: Vec<VertexRec>,
-    faces: Vec<Face>,
+    vertices: Bounded<VertexRec, COUNT_LIMIT>,
+    faces: Bounded<Face, COUNT_LIMIT>,
     #[serde(deserialize_with = "required")]
     frame_block: Option<Obj<BlockIn>>,
 }

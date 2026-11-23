@@ -124,6 +124,52 @@ pub(crate) fn required<'de, D: Deserializer<'de>, T: Deserialize<'de>>(d: D) -> 
     Option::<T>::deserialize(d)
 }
 
+/// The start of the error text of a [`Bounded`] list that is over its limit ([`json_error`](super::json_error) turns it into `TooLarge`).
+pub(crate) const TOO_MANY: &str = "too many entries";
+
+/// The most entries a `columns` list may hold (the documented lists have fewer than ten).
+pub(crate) const COLUMN_LIMIT: usize = 64;
+
+/// A list that is read with a bound: the reader stops with an error at entry `N + 1` instead of building the whole list first, so a
+/// hand-made file with millions of tiny entries cannot exhaust memory before the limit check. Derefs to the `Vec`.
+#[derive(Debug)]
+pub(crate) struct Bounded<T, const N: usize>(pub Vec<T>);
+
+impl<T, const N: usize> std::ops::Deref for Bounded<T, N> {
+    type Target = Vec<T>;
+
+    fn deref(&self) -> &Vec<T> {
+        &self.0
+    }
+}
+
+struct BoundedVisitor<T, const N: usize>(std::marker::PhantomData<T>);
+
+impl<'de, T: Deserialize<'de>, const N: usize> Visitor<'de> for BoundedVisitor<T, N> {
+    type Value = Bounded<T, N>;
+
+    fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("a list")
+    }
+
+    fn visit_seq<A: de::SeqAccess<'de>>(self, mut seq: A) -> Result<Bounded<T, N>, A::Error> {
+        let mut out = Vec::with_capacity(seq.size_hint().unwrap_or(0).min(4096).min(N));
+        while let Some(x) = seq.next_element::<T>()? {
+            if out.len() >= N {
+                return Err(de::Error::custom(format!("{TOO_MANY}: a list may hold at most {N}")));
+            }
+            out.push(x);
+        }
+        Ok(Bounded(out))
+    }
+}
+
+impl<'de, T: Deserialize<'de>, const N: usize> Deserialize<'de> for Bounded<T, N> {
+    fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        d.deserialize_seq(BoundedVisitor::<T, N>(std::marker::PhantomData))
+    }
+}
+
 /// A triangle: three `u16` indices, written on one line.
 pub(crate) type Face = [u16; 3];
 

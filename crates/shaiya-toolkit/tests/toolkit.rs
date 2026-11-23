@@ -3026,6 +3026,60 @@ fn a_second_export_to_a_target_that_is_being_written_is_refused() {
 }
 
 #[test]
+fn exporting_into_a_saved_client_that_is_not_open_is_refused() {
+    let mut w = ani_world("t12-saved");
+    let other = client_of("t12-saved-other", &[("tex/a.dds", b"DDS not really")]);
+    let other_dir = other.path().to_path_buf();
+    add_saved(&mut w, "Other", &other_dir);
+    assert_ne!(w.h.app.app.archive.client_dir(), Some(other_dir.as_path()), "the other client is saved, not open");
+    with_cx(&mut w.h, |app, cx| app.archive.select_path(ANI_PATH, cx));
+    assert!(preview_ready(&mut w.h));
+    let before = tree(other.path());
+    let inside = other_dir.join("x.json");
+    with_cx(&mut w.h, |app, cx| app.archive.export_json_to(&inside, cx));
+    assert!(!w.h.app.app.archive.is_exporting_json() && !inside.exists(), "nothing starts");
+    assert_eq!(tree(other.path()), before, "the saved client's folder is as it was");
+    let d = w.h.app.shell.banner_details().expect("the error is shown").to_string();
+    assert!(d.contains("Choose a folder outside the client:"), "{d}");
+}
+
+#[test]
+fn a_second_export_to_the_same_file_in_another_letter_case_is_refused_on_windows() {
+    if !cfg!(windows) {
+        return; // other systems keep the two names apart
+    }
+    let mut w = ani_world("t12-case");
+    let out_dir = TempDir::new("t12-case-out");
+    with_cx(&mut w.h, |app, cx| app.archive.select_path(ANI_PATH, cx));
+    assert!(preview_ready(&mut w.h));
+    with_cx(&mut w.h, |app, cx| app.archive.export_json_to(&out_dir.path().join("x.json"), cx));
+    with_cx(&mut w.h, |app, cx| app.archive.export_json_to(&out_dir.path().join("X.JSON"), cx));
+    let d = w.h.app.shell.banner_details().expect("the second export is refused with a message").to_string();
+    assert!(d.contains("An export to") && d.contains("is running"), "{d}");
+    assert!(export_done(&mut w));
+}
+
+#[test]
+fn an_export_target_must_be_a_json_file_name() {
+    let mut w = ani_world("t12-ext");
+    with_cx(&mut w.h, |app, cx| app.archive.select_path(ANI_PATH, cx));
+    assert!(preview_ready(&mut w.h));
+    let out_dir = TempDir::new("t12-ext-out");
+    for name in ["wave.ani", "wave", "wave.json.txt"] {
+        let out = out_dir.path().join(name);
+        with_cx(&mut w.h, |app, cx| app.archive.export_json_to(&out, cx));
+        assert!(!w.h.app.app.archive.is_exporting_json() && !out.exists(), "{name}: nothing starts");
+        let d = w.h.app.shell.banner_details().expect("the refusal is shown").to_string();
+        assert!(d.contains("The file name must end in .json"), "{d}");
+    }
+    let ok = out_dir.path().join("Wave.JSON");
+    with_cx(&mut w.h, |app, cx| app.archive.export_json_to(&ok, cx));
+    assert!(export_done(&mut w));
+    w.h.frames(2);
+    assert!(ok.exists(), "an upper-case .JSON is accepted");
+}
+
+#[test]
 fn exporting_to_a_missing_folder_is_refused() {
     let mut w = ani_world("t11-w8-nofolder");
     with_cx(&mut w.h, |app, cx| app.archive.select_path(ANI_PATH, cx));

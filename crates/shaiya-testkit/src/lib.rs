@@ -215,9 +215,21 @@ pub fn env_var_path(var: &str) -> Option<PathBuf> {
     env_path(var)
 }
 
-/// An optional integer from the environment (no skip message): `None` when unset, empty or not a number.
+/// An optional integer from the environment (no skip message): `None` when unset or empty. A value that is set but not a whole number
+/// panics with a message naming the variable (a typo must not switch a count check off without a word).
 pub fn env_usize(var: &str) -> Option<usize> {
-    std::env::var(var).ok()?.trim().parse().ok()
+    parse_usize(var, std::env::var(var).ok().as_deref())
+}
+
+fn parse_usize(var: &str, raw: Option<&str>) -> Option<usize> {
+    let text = raw?.trim();
+    if text.is_empty() {
+        return None;
+    }
+    match text.parse() {
+        Ok(n) => Some(n),
+        Err(_) => panic!("{var} is set to {text:?}, which is not a whole number"),
+    }
 }
 
 /// Opt-in data. Prints "skipped: SHAIYA_CLIENT not set" to stderr and returns None when unset.
@@ -377,6 +389,19 @@ mod tests {
     fn a_required_variable_that_is_missing_panics() {
         let var = probe();
         let _ = env_path_with(&var, &format!("SHAIYA_CLIENT, {var}"));
+    }
+
+    #[test]
+    fn a_numeric_or_unset_count_variable_is_read() {
+        assert_eq!(parse_usize("V", None), None);
+        assert_eq!(parse_usize("V", Some("")), None);
+        assert_eq!(parse_usize("V", Some(" 2 ")), Some(2));
+    }
+
+    #[test]
+    #[should_panic(expected = "SHAIYA_EXPECT_CHANGED_ANI is set to \"two\", which is not a whole number")]
+    fn a_set_but_non_numeric_count_variable_panics() {
+        let _ = parse_usize("SHAIYA_EXPECT_CHANGED_ANI", Some("two"));
     }
 
     #[test]

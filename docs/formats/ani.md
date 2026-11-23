@@ -73,8 +73,10 @@ On US EP4.5 the first rotation key of 123,201 of the 124,089 tracks that have on
 | `shaiya-clientdata` `anim` | parses, writes back in memory, validates, runs the rig check, names the kind and rig of an archive path and computes a pose (`locals`, `pose`) |
 | Shaiya Toolkit, Archive tab | previews and plays an `.ANI` (below) |
 | `shaiya anim` (command line) | `info` describes, `validate` checks and `compare` runs the rig check against the file a candidate replaces (below) |
+| `shaiya anim export` and `import` (command line) | `export` turns a file into JSON and `import` turns the JSON back into the file; both write only their `-o` file ([JSON](#json-export-and-import)) |
+| Shaiya Toolkit, Archive tab | Export as JSON... writes the JSON of the selected `.ANI` file to a file outside every client folder ([JSON](#json-export-and-import)); the Toolkit imports nothing |
 
-No program writes an `.ANI` file.
+`shaiya anim import` writes an `.ANI` from its JSON, only to the `-o` file and only when it passes `compare` against the file it replaces; no other program writes one.
 
 ### In the Archive tab
 

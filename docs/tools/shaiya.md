@@ -10,7 +10,7 @@ shaiya [GLOBAL FLAGS] <COMMAND> [ARGS]
 | [`archive`](#shaiya-archive) | List, check, extract, edit, compare, pack, swap `data.sah` / `data.saf` |
 | [`patch`](#shaiya-patch) | Build, verify, apply and roll back `psNNNN.patch` files; sign them |
 | [`sdata`](#shaiya-sdata) | Describe, check, decrypt and encrypt SData files; show a table as CSV or JSON |
-| [`anim`](#shaiya-anim) | Describe `.ANI`, `.3DC`, `.VANI`, `.MANI`, `.3DO` and `.3DE` files and check `.ANI` files; compare a candidate `.ANI`'s skeleton with the file it replaces |
+| [`anim`](#shaiya-anim) | Describe `.ANI`, `.3DC`, `.VANI`, `.MANI`, `.3DO` and `.3DE` files and check `.ANI` files; compare a candidate `.ANI`'s skeleton with the file it replaces; export the six formats to JSON and import the JSON back |
 | [`svmap`](#shaiya-svmap) | Server map files (`.svmap`): check, dump, build, round trip, compare; check a client's `.wld` files; spawn report; bulk-edit dry run |
 | [`clients`](#shaiya-clients) | The saved "my client folders" list (`@name`) |
 | [`version`](#shaiya-version) | Version, git revision, target |
@@ -48,7 +48,7 @@ They may come before or after the command.
 - **Shadowed entries.** When two entries have the same name (any case) in one folder, the client loads the later one; the earlier is *shadowed*. Commands show only visible files; `--include-shadowed` adds the others (extract names them `name~shadowed-N.ext`). See [the archive format](../formats/archive.md#shadowing).
 - Archive paths are shown with `/`, matched case-insensitively, and handled in code page 949 in the archive.
 - Human output goes to **stdout** (one record per line for listings; summaries go to stderr); progress, notes, warnings and errors go to **stderr** (`error: <message>`, optional `hint: <text>` lines).
-- **`--json`**: stdout holds exactly one JSON value, the result object or an error object, for example `{"error": {"kind": "format", "message": "Item.SData: SEED checksum failed (at byte 40)", "file": "Item.SData", "offset": 40}}`. The error kinds are `io`, `format`, `unsupported`, `refused`, `cancelled`, plus `usage` (exit 2) and `internal` (exit 5) from `shaiya svmap`. Keys are snake_case, sizes are integers in bytes, hashes lower-case hex, times ISO-8601 UTC, archive paths use `/`. Adding a key is not a breaking change; renaming or removing one is (CHANGELOG "Breaking").
+- **`--json`**: stdout holds exactly one JSON value, the result object or an error object, for example `{"error": {"kind": "format", "message": "Item.SData: SEED checksum failed (at byte 40)", "file": "Item.SData", "offset": 40}}`. The error kinds are `io`, `format`, `unsupported`, `refused`, `cancelled`, plus `usage` (exit 2) and `internal` (exit 5) from `shaiya svmap`, `shaiya anim export` and `shaiya anim import`. Keys are snake_case, sizes are integers in bytes, hashes lower-case hex, times ISO-8601 UTC, archive paths use `/`. Adding a key is not a breaking change; renaming or removing one is (CHANGELOG "Breaking").
 - Progress line (stderr, at most 10 updates per second): `[stage]  45%  900.0 MB / 2.0 GB  120.0 MB/s  ETA 8 s`, shown for jobs over 64 MiB or 2 seconds.
 - Output files are written atomically (temporary file, then rename), so an interrupted run leaves the target as it was and at most a `*.shaiya-tmp` file.
 - On Windows, when `shaiya.exe` is started by double-click, it prints the help and "This is a command-line program. Open a terminal and run `shaiya --help`." and waits for Enter.

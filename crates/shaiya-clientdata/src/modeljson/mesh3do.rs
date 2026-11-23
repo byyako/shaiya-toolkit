@@ -1,6 +1,6 @@
 //! `.3DO` as JSON: schema `shaiya-toolkit-3do-v1`.
 
-use super::types::{check_columns, check_limit, hex_encode, texture_from_hex, Face, Obj, Size, F32};
+use super::types::{Bounded, COLUMN_LIMIT, check_columns, check_limit, hex_encode, texture_from_hex, Face, Obj, Size, F32};
 use super::{json_error, JsonError, ModelFormat};
 use crate::mesh3do::{Frame3do, Mesh3do, Vertex3do, COUNT_LIMIT, FRAME_LIMIT, TEXTURE_LIMIT};
 use serde::de::IgnoredAny;
@@ -71,15 +71,15 @@ pub(super) fn export(bytes: &[u8], source: &str, json_cap: u64) -> Result<String
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ColumnsIn {
-    vertices: Vec<String>,
-    frame_vertices: Vec<String>,
+    vertices: Bounded<String, COLUMN_LIMIT>,
+    frame_vertices: Bounded<String, COLUMN_LIMIT>,
 }
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct FrameIn {
     key: i32,
-    vertices: Vec<FrameRec>,
+    vertices: Bounded<FrameRec, COUNT_LIMIT>,
 }
 
 #[derive(Deserialize)]
@@ -96,10 +96,10 @@ struct In {
     #[serde(default)]
     columns: Option<Obj<ColumnsIn>>,
     texture_hex: String,
-    vertices: Vec<VertexRec>,
-    faces: Vec<Face>,
+    vertices: Bounded<VertexRec, COUNT_LIMIT>,
+    faces: Bounded<Face, COUNT_LIMIT>,
     frame_rate: i32,
-    frames: Vec<Obj<FrameIn>>,
+    frames: Bounded<Obj<FrameIn>, FRAME_LIMIT>,
 }
 
 pub(super) fn import(json: &[u8], model_cap: u64) -> Result<Vec<u8>, JsonError> {

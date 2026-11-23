@@ -19,7 +19,7 @@ per frame:
 
 A vertex is 32 bytes, in this order: position (3 x f32), normal (3 x f32) and texture coordinates (2 x f32).
 
-The toolkit keeps floats exactly as stored (NaN bits included) and the texture name as raw bytes (displayed as text up to the first NUL), so a file written back is the same bytes as the file read. Before it allocates, the reader checks that the counts fit in the bytes left (for the frames: `frame count x (4 + 24 x vertex count)`). Writing is in memory only (`Mesh3do::to_bytes`): no program writes a `.3DO` file.
+The toolkit keeps floats exactly as stored (NaN bits included) and the texture name as raw bytes (displayed as text up to the first NUL), so a file written back is the same bytes as the file read. Before it allocates, the reader checks that the counts fit in the bytes left (for the frames: `frame count x (4 + 24 x vertex count)`). `Mesh3do::to_bytes` writes in memory; the only program that writes a `.3DO` file is `shaiya anim import`, from its JSON and only to the `-o` file.
 
 `frame_rate` is inferred to be the number of frames per second; it was not checked in the game.
 
@@ -28,6 +28,8 @@ The toolkit keeps floats exactly as stored (NaN bits included) and the texture n
 | Program | Use |
 |---|---|
 | `shaiya-clientdata` `mesh3do` | parses, writes back in memory, names the texture, gives the vertices of a frame (the positions and normals of that frame with the texture coordinates of the mesh) |
+| `shaiya anim export` and `import` (command line) | `export` turns a file into JSON and `import` turns the JSON back into the file; both write only their `-o` file ([JSON](#json-export-and-import)) |
+| Shaiya Toolkit, Archive tab | Export as JSON... writes the JSON of the selected `.3DO` file to a file outside every client folder ([JSON](#json-export-and-import)); the Toolkit imports nothing |
 
 In Shaiya Toolkit's Archive tab a `.3DO` shows its mesh in plain grey with the wire, under "3DO mesh: N vertices, N triangles" (a texture the file names is not looked up, and the note says so). A file with frames (US EP4.5: only `Item/3DO/arrow.3DO`) plays them at its frame rate, shown as "N frames at N per second (inferred from the file; not checked in the game)", with Play/Pause, a slider and Loop; a rate that is not positive plays at 30 frames per second and says so. A file that does not read to the last byte shows its error and the bytes as hex, also when the bytes look like text. `shaiya anim info` prints one line per file (vertices, triangles, frames, rate as inferred); `--json` has the same as keys. `shaiya anim validate` and `compare` read `.ANI` files only. Validated offline on US EP4.5 files.
 
