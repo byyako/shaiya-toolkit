@@ -111,7 +111,7 @@ struct AniIn {
     #[allow(dead_code)]
     inferred: Option<IgnoredAny>,
     #[serde(default)]
-    columns: Option<ColumnsIn>,
+    columns: Option<Obj<ColumnsIn>>,
     first_field: i32,
     end_key: i32,
     bones: Vec<Obj<BoneIn>>,
@@ -123,7 +123,7 @@ fn same(found: &[String], want: &[&str]) -> bool {
 
 pub(super) fn import(json: &[u8], model_cap: u64) -> Result<Vec<u8>, JsonError> {
     let Obj(input): Obj<AniIn> = serde_json::from_slice(json).map_err(json_error)?;
-    if let Some(c) = &input.columns {
+    if let Some(Obj(c)) = &input.columns {
         if !same(&c.rotation_keys, &ROTATION_COLUMNS) {
             return Err(JsonError::Schema(format!("columns.rotation_keys must be {ROTATION_COLUMNS:?}, found {:?}", c.rotation_keys)));
         }
@@ -401,6 +401,11 @@ mod tests {
   \"first_field\": 0").unwrap() + 1;
         let without = format!("{}{}", &text[..start], &text[end..]);
         assert_eq!(import(without.as_bytes()).unwrap().1, arm_ani(60));
+        // the positional form is refused: columns is an object
+        let positional = format!("{}  \"columns\": [[\"key\", \"x\", \"y\", \"z\", \"w\"], [\"key\", \"x\", \"y\", \"z\"]],
+{}", &text[..start], &text[end..]);
+        let e = import(positional.as_bytes());
+        assert!(matches!(e, Err(JsonError::Json { .. })), "{e:?}");
     }
 
     #[test]

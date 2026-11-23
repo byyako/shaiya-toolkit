@@ -64,7 +64,7 @@ No program writes a `.3DC` file. Selecting a `.3DC` in the Archive tab shows its
 
 ## JSON (export and import)
 
-The toolkit's library can turn a `.3DC` into a JSON text (`shaiya-toolkit-3dc-v1`) and that text back into the file. An unedited file comes back byte for byte (US EP4.5: all 2,431 `.3DC` files; validated offline; the eight other matrix clients have their index only and were not read). The JSON goes in through the same Replace and `archive replace` paths as any file: nothing is written into a client folder.
+The toolkit's library can turn a `.3DC` into a JSON text (`shaiya-toolkit-3dc-v1`) and that text back into the file. An unedited file comes back byte for byte (US EP4.5: all 2,431 `.3DC` files; validated offline; the eight other matrix clients have their index only and were not read). The library writes no file into a client folder: the file made from the JSON is what goes in, through Replace or `archive replace` like any other file.
 
 | Key | Content |
 |---|---|

@@ -148,7 +148,7 @@ pub(super) fn import(json: &[u8], model_cap: u64) -> Result<Vec<u8>, JsonError> 
         }
         size.add(8);
         size.add_mul(b.frames.len(), 4);
-        size.add_mul(b.frames.iter().map(|f| f.0.vertices.len()).sum(), 20);
+        size.add_mul(b.frames.iter().try_fold(0usize, |a, f| a.checked_add(f.0.vertices.len())).unwrap_or(usize::MAX), 20);
     }
     size.finish(model_cap)?;
 
@@ -299,6 +299,14 @@ mod tests {
         let missing = without.replacen(",\n  \"frame_block\": null", "", 1);
         assert_ne!(missing, without);
         assert!(matches!(import(missing.as_bytes()), Err(JsonError::Json { .. })));
+    }
+
+    #[test]
+    fn more_frames_than_the_reader_reads_are_refused() {
+        let frames = vec![r#"{"key": 0, "vertices": []}"#; FRAME_LIMIT + 1].join(",");
+        let text = format!(r#"{{"format": "shaiya-toolkit-3de-v1", "layout": "standard", "texture_hex": "", "vertices": [], "faces": [], "frame_block": {{"max_key": 0, "frames": [{frames}]}}}}"#);
+        let e = import(text.as_bytes());
+        assert!(matches!(e, Err(JsonError::TooLarge(_))), "{e:?}");
     }
 
     #[test]

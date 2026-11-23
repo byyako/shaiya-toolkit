@@ -111,6 +111,7 @@ fn value_of(f: &FieldIn, i: usize, kind: ManiType) -> Result<ManiValue, JsonErro
     }
 }
 
+// The output is always the 108 bytes of MANI_FIELDS, so the model cap cannot be exceeded and is not checked.
 pub(super) fn import(json: &[u8], _model_cap: u64) -> Result<Vec<u8>, JsonError> {
     let Obj(input): Obj<ManiIn> = serde_json::from_slice(json).map_err(json_error)?;
     if input.fields.len() != MANI_FIELDS.len() {

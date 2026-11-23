@@ -122,7 +122,7 @@ pub(super) fn import(json: &[u8], model_cap: u64) -> Result<Vec<u8>, JsonError> 
     size.add(4 + 4 + 4);
     size.add_mul(input.faces.len(), 6);
     size.add_mul(input.frames.len(), 4);
-    size.add_mul(input.frames.iter().map(|f| f.0.vertices.len()).sum(), 24);
+    size.add_mul(input.frames.iter().try_fold(0usize, |a, f| a.checked_add(f.0.vertices.len())).unwrap_or(usize::MAX), 24);
     size.finish(model_cap)?;
 
     let mesh = Mesh3do {
@@ -257,6 +257,14 @@ mod tests {
         let diff: Vec<usize> = (0..bytes.len()).filter(|&i| bytes[i] != original[i]).collect();
         assert!(!diff.is_empty() && diff.len() <= 4, "{diff:?}");
         assert_eq!(Mesh3do::parse(&bytes, "x").unwrap().vertices[1].pos[0], 1.5);
+    }
+
+    #[test]
+    fn more_frames_than_the_reader_reads_are_refused() {
+        let frames = vec![r#"{"key": 0, "vertices": []}"#; FRAME_LIMIT + 1].join(",");
+        let text = format!(r#"{{"format": "shaiya-toolkit-3do-v1", "texture_hex": "", "vertices": [], "faces": [], "frame_rate": 20, "frames": [{frames}]}}"#);
+        let e = import(text.as_bytes());
+        assert!(matches!(e, Err(JsonError::TooLarge(_))), "{e:?}");
     }
 
     #[test]

@@ -45,7 +45,7 @@ In Shaiya Toolkit's Archive tab a `.MANI` is shown as a table of its 20 fields (
 
 ## JSON (export and import)
 
-The toolkit's library can turn a `.MANI` into a JSON text (`shaiya-toolkit-mani-v1`) and that text back into the file. An unedited file comes back byte for byte (US EP4.5: all 23 `.MANI` files; validated offline; the eight other matrix clients have their index only and were not read). The JSON goes in through the same Replace and `archive replace` paths as any file: nothing is written into a client folder. Every meaning of a field is inferred and was not checked in the game.
+The toolkit's library can turn a `.MANI` into a JSON text (`shaiya-toolkit-mani-v1`) and that text back into the file. An unedited file comes back byte for byte (US EP4.5: all 23 `.MANI` files; validated offline; the eight other matrix clients have their index only and were not read). The library writes no file into a client folder: the file made from the JSON is what goes in, through Replace or `archive replace` like any other file. Every meaning of a field is inferred and was not checked in the game.
 
 | Key | Content |
 |---|---|

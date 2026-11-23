@@ -45,7 +45,7 @@ In Shaiya Toolkit's Archive tab a `.3DE` shows its mesh in plain grey with the w
 
 ## JSON (export and import)
 
-The toolkit's library can turn a `.3DE` into a JSON text (`shaiya-toolkit-3de-v1`) and that text back into the file. An unedited file comes back byte for byte (US EP4.5: 467 of the 469 `.3DE` files; validated offline; the eight other matrix clients have their index only and were not read). The 2 files the toolkit does not read (`004.3de` and `Deathknight007.3DE`) are not exported: they are refused with the reader's reason. The JSON goes in through the same Replace and `archive replace` paths as any file: nothing is written into a client folder.
+The toolkit's library can turn a `.3DE` into a JSON text (`shaiya-toolkit-3de-v1`) and that text back into the file. An unedited file comes back byte for byte (US EP4.5: 467 of the 469 `.3DE` files; validated offline; the eight other matrix clients have their index only and were not read). The 2 files the toolkit does not read (`004.3de` and `Deathknight007.3DE`) are not exported: they are refused with the reader's reason. The library writes no file into a client folder: the file made from the JSON is what goes in, through Replace or `archive replace` like any other file.
 
 | Key | Content |
 |---|---|

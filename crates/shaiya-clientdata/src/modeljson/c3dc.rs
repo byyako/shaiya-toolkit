@@ -89,6 +89,9 @@ struct C3dcIn {
     #[allow(dead_code)]
     source: Option<IgnoredAny>,
     #[serde(default)]
+    #[allow(dead_code)]
+    inferred: Option<IgnoredAny>,
+    #[serde(default)]
     columns: Option<Obj<ColumnsIn>>,
     layout: String,
     meshes: Vec<Obj<MeshIn>>,
@@ -273,6 +276,15 @@ mod tests {
     }
 
     #[test]
+    fn the_label_keys_source_and_inferred_are_accepted_and_ignored() {
+        let text = export(ModelFormat::C3dc, &small(), "t.3dc").unwrap();
+        let with = text.replacen("\"layout\"", "\"inferred\": {\"x\": \"y\"},
+  \"layout\"", 1);
+        assert_ne!(with, text);
+        assert_eq!(import(with.as_bytes()).unwrap().1, import(text.as_bytes()).unwrap().1);
+    }
+
+    #[test]
     fn a_3dc_that_two_layouts_would_read_is_refused() {
         // The mesh of `mesh3dc.rs` `try_to_bytes_refuses_a_mesh_another_layout_also_reads`, written by hand (it has no file to export):
         // skinned, empty texture, one bone whose element 10 holds the bits 18, two vertices, no faces. The same bytes also read as a cloak.
@@ -280,6 +292,7 @@ mod tests {
         let vertex = "[0.0, 0.0, 0.0, 0.0, 0, 0, 0, 0.0, 0.0, 0.0, 0.0, 0.0]";
         let text = format!(r#"{{"format": "shaiya-toolkit-3dc-v1", "layout": "skinned", "meshes": [{{"texture_hex": "", "bones_hex": ["{bone}"], "vertices": [{vertex}, {vertex}], "faces": []}}]}}"#);
         let e = import(text.as_bytes());
+        // the reader's own text says "ambiguous"; the test asserts the variant only, as the spec asks
         assert!(matches!(e, Err(JsonError::NotWritable(_))), "{e:?}");
     }
 
