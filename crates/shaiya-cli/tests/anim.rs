@@ -4,9 +4,9 @@
 mod common;
 
 use common::*;
-use shaiya_testkit::anim::{ani_bytes, arm_ani, arm_mesh_3dc, c3dc_cloak_bytes, identity_bits, translation_bits, BoneSpec, VertSpec};
+use shaiya_testkit::anim::{ani_bytes, animated_3do, arm_ani, arm_mesh_3dc, box_3de, box_vani, c3dc_cloak_bytes, identity_bits, mani_bytes, translation_bits, BoneSpec, VertSpec};
 use shaiya_testkit::{env_client, env_client_original, env_scratch, SahBuilder};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 fn bone(parent: i32, y: f32) -> BoneSpec {
     BoneSpec { parent, matrix: translation_bits(0.0, y, 0.0), rot: Vec::new(), trans: Vec::new() }
@@ -529,6 +529,486 @@ fn info_does_not_call_a_non_positive_frame_time_a_time_per_step() {
     assert!(!t.contains("about 0 ms") && t.contains("g.VANI: ") && t.contains("about 33 ms per step (inferred)"), "{t}");
 }
 
+// ---- export and import --------------------------------------------------------------------------------------------------------------
+
+/// One synthetic file of each of the six formats, named as the archive would name them (mixed letter case on purpose).
+fn all_six() -> Vec<(&'static str, Vec<u8>)> {
+    vec![
+        ("arm.ANI", arm_ani(30)),
+        ("arm.3DC", arm_mesh_3dc()),
+        ("box.vani", box_vani(4, 66)),
+        ("bld.Mani", mani_bytes(33, 1, 200, 500)),
+        ("box.3do", animated_3do(3, 20)),
+        ("fx.3DE", box_3de(Some(3))),
+    ]
+}
+
+fn export(w: &World, input: &Path, out: &Path, extra: &[&str]) -> std::process::Output {
+    let mut args = vec!["anim", "export", p(input), "-o", p(out)];
+    args.extend_from_slice(extra);
+    sh(&w.data, &args)
+}
+
+fn import(w: &World, input: &Path, out: &Path, extra: &[&str]) -> std::process::Output {
+    let mut args = vec!["anim", "import", p(input), "-o", p(out)];
+    args.extend_from_slice(extra);
+    sh(&w.data, &args)
+}
+
+/// The JSON file as a value, edited by `f`, written back to `to`.
+fn edit_json(from: &Path, to: &Path, f: impl FnOnce(&mut serde_json::Value)) {
+    let mut v: serde_json::Value = serde_json::from_slice(&std::fs::read(from).unwrap()).unwrap();
+    f(&mut v);
+    std::fs::write(to, serde_json::to_vec_pretty(&v).unwrap()).unwrap();
+}
+
+fn names_in(d: &Path) -> Vec<String> {
+    let mut v: Vec<String> = std::fs::read_dir(d).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
+    v.sort();
+    v
+}
+
+/// A work folder with `arm.ANI` (the three-bone arm) and its JSON in it.
+fn arm_work(w: &World) -> (PathBuf, PathBuf, PathBuf) {
+    let d = w.tmp.path().join("work");
+    let ani = d.join("arm.ANI");
+    write(&ani, &arm_ani(30));
+    let json = d.join("arm.json");
+    let o = export(w, &ani, &json, &[]);
+    assert_eq!(code(&o), 0, "{}", err(&o));
+    (d, ani, json)
+}
+
+#[test]
+fn export_and_import_give_back_each_format() {
+    let w = world();
+    let d = w.tmp.path().join("six");
+    for (name, bytes) in all_six() {
+        let input = d.join("in").join(name);
+        write(&input, &bytes);
+        let json = d.join("json").join(format!("{name}.json"));
+        std::fs::create_dir_all(json.parent().unwrap()).unwrap();
+        let o = export(&w, &input, &json, &[]);
+        assert_eq!(code(&o), 0, "{name}: {}", err(&o));
+        assert!(out(&o).starts_with(&format!("wrote {}: ", p(&json))), "{name}: {}", out(&o));
+        let back = d.join("back").join(name);
+        std::fs::create_dir_all(back.parent().unwrap()).unwrap();
+        let like = [String::from("--like"), p(&input).to_string()];
+        let extra: Vec<&str> = if name.ends_with(".ANI") { like.iter().map(String::as_str).collect() } else { Vec::new() };
+        let o = import(&w, &json, &back, &extra);
+        assert_eq!(code(&o), 0, "{name}: {}{}", out(&o), err(&o));
+        assert_eq!(std::fs::read(&back).unwrap(), bytes, "{name}: the file made from the JSON differs from the original");
+    }
+}
+
+#[test]
+fn export_source_is_the_file_name_only() {
+    let w = world();
+    let (d, _, json) = arm_work(&w);
+    let text = std::fs::read_to_string(&json).unwrap();
+    let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(v["source"], "arm.ANI");
+    assert!(!text.contains(p(&d)) && !text.contains(p(w.tmp.path())), "the JSON holds a folder path: {text}");
+    // from an archive the source is the archive path
+    let c = client_with(&w, "c", &[("Monster/ANI/Mob_A_Att1.ANI", chain(0))]);
+    let out_json = w.tmp.path().join("fromarchive.json");
+    let o = sh(&w.data, &["anim", "export", "Monster/ANI/Mob_A_Att1.ANI", "--from", p(&c), "-o", p(&out_json)]);
+    assert_eq!(code(&o), 0, "{}", err(&o));
+    let text = std::fs::read_to_string(&out_json).unwrap();
+    assert_eq!(serde_json::from_str::<serde_json::Value>(&text).unwrap()["source"], "Monster/ANI/Mob_A_Att1.ANI");
+    assert!(!text.contains(p(w.tmp.path())), "{text}");
+}
+
+#[test]
+fn export_from_an_archive_takes_one_exact_path() {
+    let w = world();
+    let c = client_with(&w, "c", &[("Monster/ANI/Mob_A_Att1.ANI", chain(0)), ("Monster/ANI/Mob_B_Att1.ANI", chain(0)), ("Monster/3DC/Mob_A.3DC", arm_mesh_3dc())]);
+    let d = w.tmp.path().join("o");
+    std::fs::create_dir_all(&d).unwrap();
+    let ok = d.join("a.json");
+    let o = sh(&w.data, &["anim", "export", "Monster/ANI/Mob_A_Att1.ANI", "--from", p(&c), "-o", p(&ok)]);
+    assert_eq!(code(&o), 0, "{}", err(&o));
+    assert!(out(&o).contains("as shaiya-toolkit-ani-v1"), "{}", out(&o));
+    for (arg, why) in [("Monster/ANI/Mob_*.ANI", "not in the archive"), ("Monster/ANI/Mob_*", "not an .ANI"), ("Monster/ANI/Nope.ANI", "not in the archive")] {
+        let bad = d.join("bad.json");
+        let o = sh(&w.data, &["anim", "export", arg, "--from", p(&c), "-o", p(&bad)]);
+        assert_eq!(code(&o), 3, "{arg}: {}{}", out(&o), err(&o));
+        assert!(err(&o).contains(why), "{arg}: {}", err(&o));
+        assert!(!bad.exists());
+    }
+    assert_eq!(names_in(&d), vec!["a.json"]);
+}
+
+#[test]
+fn import_ani_with_the_same_skeleton_writes_and_exits_0() {
+    let w = world();
+    let (d, ani, json) = arm_work(&w);
+    let new = d.join("new.ani");
+    let o = import(&w, &json, &new, &["--like", p(&ani)]);
+    assert_eq!(code(&o), 0, "{}", err(&o));
+    let t = out(&o);
+    assert!(t.contains(&format!("same skeleton as {}: 3 bones, parents and reference matrices identical", p(&ani))), "{t}");
+    assert!(t.contains("first field: same (0)") && t.contains("passes\nwrote "), "{t}");
+    assert!(t.trim_end().ends_with(&format!("wrote {}: .ANI, {} bytes", p(&new), std::fs::metadata(&ani).unwrap().len())), "{t}");
+    assert_eq!(std::fs::read(&new).unwrap(), arm_ani(30));
+    // with --from the target is an archive path
+    let c = client_with(&w, "c", &[("Monster/ANI/Mob_A_Att1.ANI", arm_ani(30))]);
+    let new2 = d.join("new2.ANI");
+    let o = import(&w, &json, &new2, &["--like", "Monster/ANI/Mob_A_Att1.ANI", "--from", p(&c)]);
+    assert_eq!(code(&o), 0, "{}", err(&o));
+    assert!(out(&o).contains("same skeleton as Monster/ANI/Mob_A_Att1.ANI: 3 bones"), "{}", out(&o));
+    assert!(new2.exists());
+}
+
+#[test]
+fn import_ani_with_a_changed_parent_matrix_bit_or_bone_count_exits_1_and_writes_nothing() {
+    let w = world();
+    let (d, ani, jf) = arm_work(&w);
+    type Edit = fn(&mut serde_json::Value);
+    let cases: [(&str, Edit, &str); 3] = [
+        ("parent", |v| v["bones"][2]["parent"] = serde_json::json!(0), "  bone 2: parent is 0, target 1"),
+        (
+            "matrix",
+            |v| {
+                let hex = v["bones"][1]["matrix_hex"].as_str().unwrap().to_string();
+                let flipped = match hex.strip_prefix('0') {
+                    Some(rest) => format!("1{rest}"),
+                    None => format!("0{}", &hex[1..]),
+                };
+                v["bones"][1]["matrix_hex"] = serde_json::json!(flipped);
+            },
+            "  bone 1: reference matrix differs",
+        ),
+        ("bones", |v| drop(v["bones"].as_array_mut().unwrap().pop()), "  bone count: candidate 2, target 3"),
+    ];
+    for (what, edit, line) in cases {
+        let edited = d.join(format!("{what}.json"));
+        edit_json(&jf, &edited, edit);
+        let new = d.join(format!("{what}.ani"));
+        let o = import(&w, &edited, &new, &["--like", p(&ani)]);
+        assert_eq!(code(&o), 1, "{what}: {}{}", out(&o), err(&o));
+        let t = out(&o);
+        assert!(t.contains(&format!("the skeleton differs from {}:", p(&ani))) && t.contains(line), "{what}: {t}");
+        assert!(t.trim_end().ends_with("does not pass\nnothing written"), "{what}: {t}");
+        assert!(!new.exists(), "{what}: the output was written");
+        let v = json(&import(&w, &edited, &new, &["--like", p(&ani), "--json"]));
+        assert_eq!((v["passes"].as_bool(), v["written"].as_bool()), (Some(false), Some(false)), "{what}: {v}");
+        assert_eq!(v["candidate"].as_str(), Some(p(&edited)));
+        assert_eq!(v["target"].as_str(), Some(p(&ani)));
+        assert!(!new.exists());
+    }
+    // no temp file is left behind
+    assert!(names_in(&d).iter().all(|n| !n.ends_with(".shaiya-tmp")), "{:?}", names_in(&d));
+}
+
+
+#[test]
+fn import_ani_with_another_first_field_exits_1() {
+    let w = world();
+    let (d, ani, jf) = arm_work(&w);
+    let edited = d.join("ff.json");
+    edit_json(&jf, &edited, |v| v["first_field"] = serde_json::json!(-1));
+    let new = d.join("ff.ani");
+    let o = import(&w, &edited, &new, &["--like", p(&ani)]);
+    assert_eq!(code(&o), 1, "{}{}", out(&o), err(&o));
+    assert!(out(&o).contains("first field differs: candidate -1, target 0 (inferred: the start key; not checked in the game)"), "{}", out(&o));
+    assert!(out(&o).contains("does not pass") && !new.exists());
+}
+
+#[test]
+fn import_ani_with_an_edited_key_passes_and_writes_the_edit() {
+    let w = world();
+    let (d, ani, json) = arm_work(&w);
+    let edited = d.join("key.json");
+    // the second rotation key of bone 1 moves from key 30 to key 25 (the end key stays 30)
+    edit_json(&json, &edited, |v| v["bones"][1]["rotation_keys"][1][0] = serde_json::json!(25));
+    let new = d.join("key.ani");
+    let o = import(&w, &edited, &new, &["--like", p(&ani)]);
+    assert_eq!(code(&o), 0, "{}{}", out(&o), err(&o));
+    let written = std::fs::read(&new).unwrap();
+    assert_ne!(written, arm_ani(30));
+    assert_eq!(written.len(), arm_ani(30).len());
+    // read back through export: the edit is in the file, the rest is as it was
+    let again = d.join("key-again.json");
+    assert_eq!(code(&export(&w, &new, &again, &[])), 0);
+    let v: serde_json::Value = serde_json::from_slice(&std::fs::read(&again).unwrap()).unwrap();
+    assert_eq!(v["bones"][1]["rotation_keys"][1][0], 25);
+    assert_eq!(v["bones"][1]["rotation_keys"][0][0], 0);
+}
+
+#[test]
+fn import_without_like_for_ani_exits_2() {
+    let w = world();
+    let (d, _, json) = arm_work(&w);
+    let new = d.join("n.ani");
+    let o = import(&w, &json, &new, &[]);
+    assert_eq!(code(&o), 2, "{}{}", out(&o), err(&o));
+    assert!(err(&o).contains("--like is required for .ANI: the file it will replace"), "{}", err(&o));
+    assert!(!new.exists());
+}
+
+#[test]
+fn like_for_another_format_exits_2() {
+    let w = world();
+    let d = w.tmp.path().join("work");
+    let input = d.join("arm.3DC");
+    write(&input, &arm_mesh_3dc());
+    let json = d.join("arm3dc.json");
+    assert_eq!(code(&export(&w, &input, &json, &[])), 0);
+    let new = d.join("new.3DC");
+    let o = import(&w, &json, &new, &["--like", p(&input)]);
+    assert_eq!(code(&o), 2, "{}", err(&o));
+    assert!(err(&o).contains("--like is for .ANI only"), "{}", err(&o));
+    let o = import(&w, &json, &new, &["--from", p(&w.client)]);
+    assert_eq!(code(&o), 2, "{}", err(&o));
+    assert!(err(&o).contains("--from needs --like"), "{}", err(&o));
+    assert!(!new.exists());
+}
+
+#[test]
+fn export_output_must_be_json_exits_2() {
+    let w = world();
+    let (d, ani, _) = arm_work(&w);
+    for bad in ["out.txt", "out", "out.ANI"] {
+        let o = export(&w, &ani, &d.join(bad), &[]);
+        assert_eq!(code(&o), 2, "{bad}: {}", err(&o));
+        assert!(err(&o).contains("must end in .json"), "{}", err(&o));
+        assert!(!d.join(bad).exists());
+    }
+    // any letter case of the extension is accepted
+    assert_eq!(code(&export(&w, &ani, &d.join("up.JSON"), &[])), 0);
+}
+
+#[test]
+fn import_of_an_unknown_or_newer_format_exits_3() {
+    let w = world();
+    let d = w.tmp.path().join("work");
+    for (name, text, why) in [
+        ("newer.json", r#"{"format": "shaiya-toolkit-ani-v2"}"#, "made by a newer toolkit (v2)"),
+        ("foreign.json", r#"{"format": "something-else"}"#, "not a toolkit model JSON"),
+        ("nojson.json", "this is not json", "line 1"),
+    ] {
+        let f = d.join(name);
+        write(&f, text.as_bytes());
+        let new = d.join("n.ANI");
+        let o = import(&w, &f, &new, &["--like", p(&f)]);
+        assert_eq!(code(&o), 3, "{name}: {}{}", out(&o), err(&o));
+        assert!(err(&o).contains(why), "{name}: {}", err(&o));
+        assert!(!new.exists());
+    }
+    let missing = import(&w, &d.join("missing.json"), &d.join("n.ANI"), &[]);
+    assert_eq!(code(&missing), 3, "{}", err(&missing));
+}
+
+#[test]
+fn import_with_a_mismatched_extension_exits_3() {
+    let w = world();
+    let d = w.tmp.path().join("work");
+    let input = d.join("arm.3DC");
+    write(&input, &arm_mesh_3dc());
+    let json = d.join("arm3dc.json");
+    assert_eq!(code(&export(&w, &input, &json, &[])), 0);
+    for bad in ["out.ANI", "out.bin", "out"] {
+        let o = import(&w, &json, &d.join(bad), &[]);
+        assert_eq!(code(&o), 3, "{bad}: {}{}", out(&o), err(&o));
+        assert!(err(&o).contains("holds shaiya-toolkit-3dc-v1, but ") && err(&o).contains("asks for"), "{bad}: {}", err(&o));
+        assert!(!d.join(bad).exists());
+    }
+    assert!(err(&import(&w, &json, &d.join("out.ANI"), &[])).contains("asks for .ANI"));
+    // any letter case of the right extension is accepted
+    assert_eq!(code(&import(&w, &json, &d.join("out.3dc"), &[])), 0);
+}
+
+#[test]
+fn an_existing_output_exits_4_and_force_replaces_it() {
+    let w = world();
+    let (d, ani, json) = arm_work(&w);
+    // export
+    let before = std::fs::read(&json).unwrap();
+    write(&json, b"mine");
+    let o = export(&w, &ani, &json, &[]);
+    assert_eq!(code(&o), 4, "{}", err(&o));
+    assert!(err(&o).contains(&format!("{} exists; use --force to replace it", p(&json))), "{}", err(&o));
+    assert_eq!(std::fs::read(&json).unwrap(), b"mine");
+    let o = export(&w, &ani, &json, &["--force"]);
+    assert_eq!(code(&o), 0, "{}", err(&o));
+    assert_eq!(std::fs::read(&json).unwrap(), before);
+    // import
+    let new = d.join("new.ANI");
+    write(&new, b"mine");
+    let o = import(&w, &json, &new, &["--like", p(&ani)]);
+    assert_eq!(code(&o), 4, "{}", err(&o));
+    assert!(err(&o).contains("exists; use --force to replace it"));
+    assert_eq!(std::fs::read(&new).unwrap(), b"mine");
+    let o = import(&w, &json, &new, &["--like", p(&ani), "--force"]);
+    assert_eq!(code(&o), 0, "{}", err(&o));
+    assert_eq!(std::fs::read(&new).unwrap(), arm_ani(30));
+    assert!(names_in(&d).iter().all(|n| !n.ends_with(".shaiya-tmp")), "{:?}", names_in(&d));
+}
+
+#[test]
+fn an_output_inside_a_client_folder_exits_4() {
+    let w = world();
+    let (d, ani, json) = arm_work(&w);
+    // a folder with data.sah (any letter case) and a subfolder of it
+    let cf = w.tmp.path().join("cf");
+    let sub = cf.join("sub").join("deeper");
+    std::fs::create_dir_all(&sub).unwrap();
+    write(&cf.join("DATA.SAH"), b"x");
+    for dir in [&cf, &sub] {
+        let o = export(&w, &ani, &dir.join("o.json"), &[]);
+        assert_eq!(code(&o), 4, "{}", err(&o));
+        assert!(err(&o).contains("is inside the client folder") && err(&o).contains("put it in with Replace or archive replace"), "{}", err(&o));
+        assert!(!dir.join("o.json").exists());
+        let o = import(&w, &json, &dir.join("o.ANI"), &["--like", p(&ani)]);
+        assert_eq!(code(&o), 4, "{}", err(&o));
+        assert!(!dir.join("o.ANI").exists());
+    }
+    assert_eq!(names_in(&cf), vec!["DATA.SAH", "sub"]);
+    // --force does not lift it
+    assert_eq!(code(&export(&w, &ani, &cf.join("o.json"), &["--force"])), 4);
+    // a saved client folder counts even when it holds no data.sah (any more)
+    let saved = w.tmp.path().join("saved");
+    std::fs::create_dir_all(&saved).unwrap();
+    std::fs::copy(w.client.join("data.sah"), saved.join("data.sah")).unwrap();
+    std::fs::copy(w.client.join("data.saf"), saved.join("data.saf")).unwrap();
+    assert_eq!(code(&sh(&w.data, &["clients", "add", "mine", p(&saved)])), 0);
+    std::fs::remove_file(saved.join("data.sah")).unwrap();
+    std::fs::remove_file(saved.join("data.saf")).unwrap();
+    let o = export(&w, &ani, &saved.join("o.json"), &[]);
+    assert_eq!(code(&o), 4, "{}", err(&o));
+    assert!(err(&o).contains("is inside the client folder"), "{}", err(&o));
+    assert!(names_in(&saved).is_empty());
+    // a folder that does not exist is an input error
+    let o = export(&w, &ani, &d.join("nope").join("o.json"), &[]);
+    assert_eq!(code(&o), 3, "{}", err(&o));
+    assert!(err(&o).contains("folder does not exist"), "{}", err(&o));
+}
+
+#[test]
+fn output_equal_to_an_input_exits_4() {
+    let w = world();
+    let (d, ani, json) = arm_work(&w);
+    // the --like file of an .ANI import cannot be overwritten (the other inputs cannot be named by -o: their extensions differ)
+    let o = import(&w, &json, &ani, &["--like", p(&ani), "--force"]);
+    assert_eq!(code(&o), 4, "{}{}", out(&o), err(&o));
+    assert!(err(&o).contains("is the input"), "{}", err(&o));
+    assert_eq!(std::fs::read(&ani).unwrap(), arm_ani(30));
+    // the same file through another spelling of the path
+    let spelled = d.join(".").join("arm.ANI");
+    let o = import(&w, &json, &spelled, &["--like", p(&ani), "--force"]);
+    assert_eq!(code(&o), 4, "{}", err(&o));
+    assert_eq!(std::fs::read(&ani).unwrap(), arm_ani(30));
+}
+
+#[test]
+fn export_of_a_nan_key_exits_3_and_writes_nothing() {
+    let w = world();
+    let d = w.tmp.path().join("work");
+    let nan = ani_bytes(0, 30, &[BoneSpec { parent: -1, matrix: identity_bits(), rot: vec![(0, [0.0, 0.0, f32::NAN, 1.0])], trans: Vec::new() }]);
+    let input = d.join("nan.ANI");
+    write(&input, &nan);
+    let json = d.join("nan.json");
+    let o = export(&w, &input, &json, &[]);
+    assert_eq!(code(&o), 3, "{}{}", out(&o), err(&o));
+    assert!(err(&o).contains("finite"), "{}", err(&o));
+    assert!(!json.exists());
+    assert_eq!(names_in(&d), vec!["nan.ANI"]);
+}
+
+#[test]
+fn export_of_a_3de_in_another_layout_exits_3_with_the_reason() {
+    let w = world();
+    let d = w.tmp.path().join("work");
+    let bytes = box_3de(Some(3));
+    let input = d.join("odd.3DE");
+    write(&input, &bytes[..bytes.len() - 3]);
+    let json = d.join("odd.json");
+    let o = export(&w, &input, &json, &[]);
+    assert_eq!(code(&o), 3, "{}{}", out(&o), err(&o));
+    assert!(err(&o).contains("does not follow the .3DE layout the toolkit reads"), "{}", err(&o));
+    assert!(!json.exists());
+    // a file that is not one of the six is refused by name, before it is read
+    let text = d.join("notes.txt");
+    write(&text, b"x");
+    let o = export(&w, &text, &d.join("n.json"), &[]);
+    assert_eq!(code(&o), 3, "{}", err(&o));
+    assert!(err(&o).contains("not an .ANI, .3DC, .VANI, .MANI, .3DO or .3DE file"), "{}", err(&o));
+}
+
+#[test]
+fn the_json_of_export_and_import_has_the_documented_keys() {
+    let w = world();
+    let (d, ani, json_file) = arm_work(&w);
+    let keys = |v: &serde_json::Value| {
+        let mut k: Vec<String> = v.as_object().unwrap().keys().cloned().collect();
+        k.sort();
+        k
+    };
+    let e = d.join("e.json");
+    let v = json(&sh(&w.data, &["anim", "export", p(&ani), "-o", p(&e), "--json"]));
+    assert_eq!(keys(&v), ["bytes", "format", "input", "out", "schema"]);
+    assert_eq!((v["format"].as_str(), v["schema"].as_str(), v["bytes"].as_u64()), (Some("ani"), Some("shaiya-toolkit-ani-v1"), Some(std::fs::metadata(&e).unwrap().len())));
+    // an .ANI import: the compare keys and the write keys
+    let new = d.join("j.ani");
+    let v = json(&sh(&w.data, &["anim", "import", p(&json_file), "-o", p(&new), "--like", p(&ani), "--json"]));
+    assert_eq!(
+        keys(&v),
+        ["bytes", "candidate", "candidate_issues", "differences", "format", "input", "out", "passes", "same_first_field", "same_skeleton", "target", "written"]
+    );
+    assert_eq!((v["written"].as_bool(), v["passes"].as_bool(), v["bytes"].as_u64()), (Some(true), Some(true), Some(arm_ani(30).len() as u64)));
+    assert_eq!((v["candidate"].as_str(), v["target"].as_str(), v["format"].as_str()), (Some(p(&json_file)), Some(p(&ani)), Some("ani")));
+    // another format: the write keys only
+    let mesh = d.join("m.3DC");
+    write(&mesh, &arm_mesh_3dc());
+    let mj = d.join("m.json");
+    assert_eq!(code(&export(&w, &mesh, &mj, &[])), 0);
+    let out_mesh = d.join("m-out.3DC");
+    let v = json(&sh(&w.data, &["anim", "import", p(&mj), "-o", p(&out_mesh), "--json"]));
+    assert_eq!(keys(&v), ["bytes", "format", "input", "out", "written"]);
+    assert_eq!((v["written"].as_bool(), v["format"].as_str()), (Some(true), Some("3dc")));
+}
+
+#[test]
+fn compare_output_is_unchanged() {
+    // the exact text of `compare`, which `import` shares: the lines are asserted whole (the other compare tests above stay as they were)
+    let w = world();
+    let d = w.tmp.path().join("f");
+    write(&d.join("same.ani"), &chain(0));
+    write(&d.join("target.ani"), &chain(0));
+    let o = sh(&w.data, &["anim", "compare", p(&d.join("same.ani")), p(&d.join("target.ani"))]);
+    assert_eq!(code(&o), 0);
+    assert_eq!(out(&o), format!("same skeleton as {}: 3 bones, parents and reference matrices identical\nfirst field: same (0)\npasses\n", p(&d.join("target.ani"))));
+    write(&d.join("other.ani"), &chain(-1));
+    let o = sh(&w.data, &["anim", "compare", p(&d.join("other.ani")), p(&d.join("target.ani"))]);
+    assert_eq!(code(&o), 1);
+    assert_eq!(
+        out(&o),
+        format!(
+            "same skeleton as {}: 3 bones, parents and reference matrices identical\nfirst field differs: candidate -1, target 0 (inferred: the start key; not checked in the game)\ndoes not pass\n",
+            p(&d.join("target.ani"))
+        )
+    );
+    let v = json(&sh(&w.data, &["anim", "compare", p(&d.join("other.ani")), p(&d.join("target.ani")), "--json"]));
+    let mut k: Vec<&String> = v.as_object().unwrap().keys().collect();
+    k.sort();
+    assert_eq!(k, ["candidate", "candidate_issues", "differences", "passes", "same_first_field", "same_skeleton", "target"]);
+}
+
+#[test]
+fn help_lists_export_and_import() {
+    let w = world();
+    let o = sh(&w.data, &["anim", "--help"]);
+    assert_eq!(code(&o), 0);
+    for sub in ["export", "import"] {
+        assert!(out(&o).contains(sub), "{sub}: {}", out(&o));
+    }
+    let o = sh(&w.data, &["anim", "import", "--help"]);
+    assert!(out(&o).contains("--like") && out(&o).contains("--force") && out(&o).contains("-o, --out"), "{}", out(&o));
+    let o = sh(&w.data, &["--help"]);
+    assert!(out(&o).contains("export any of them to JSON and import it back"), "{}", out(&o));
+}
+
 // ---- opt-in: a real client (read only; outputs go to SHAIYA_SCRATCH) ---------------------------------------------------------------
 
 #[test]
@@ -591,3 +1071,49 @@ impl Drop for RemoveDirOnDrop {
     }
 }
 
+
+/// Opt-in: through the binary, one file per format of the US client (the first by sorted path; a `.3DE` the reader refuses is skipped), plus a
+/// file with NaN matrices and a `.3DC` written with `bits:`. Export, import (an `.ANI` with `--like` the same archive path), bytes compared with
+/// the archive entries. Outputs go to a new folder under `SHAIYA_SCRATCH`, removed by a guard.
+#[test]
+fn export_and_import_of_us_client_files_give_the_same_bytes() {
+    let (Some(client), Some(scratch)) = (env_client(), env_scratch()) else { return };
+    let out_dir = scratch.join(format!("anim-json-{}", std::process::id()));
+    std::fs::create_dir_all(&out_dir).unwrap();
+    let _cleanup = RemoveDirOnDrop(out_dir.clone());
+    let archive = shaiya_archive::Archive::open(&client).unwrap();
+    let w = world();
+    let mut paths: Vec<String> = archive.index().visible().iter().map(|f| f.path.clone()).collect();
+    paths.sort();
+    // the two `.3DE` files the reader refuses (named on the format page) are not picked
+    let refused = ["004.3de", "deathknight007.3de"];
+    let mut picks: Vec<String> = Vec::new();
+    for ext in [".ani", ".3dc", ".vani", ".mani", ".3do", ".3de"] {
+        let first = paths
+            .iter()
+            .find(|p| {
+                let l = p.to_ascii_lowercase();
+                l.ends_with(ext) && !refused.iter().any(|r| l.ends_with(r))
+            })
+            .unwrap_or_else(|| panic!("no {ext} file in the client"));
+        picks.push(first.clone());
+    }
+    picks.push("Monster/ANI/Mob_Scorp01_Idle.ANI".to_string());
+    picks.push("Monster/3DC/Mob_Rashiel_03.3DC".to_string());
+    for (i, path) in picks.iter().enumerate() {
+        let want = archive.read(path).unwrap_or_else(|e| panic!("{path}: {e}"));
+        let ext = Path::new(path).extension().unwrap().to_string_lossy().into_owned();
+        let json_file = out_dir.join(format!("f{i}.json"));
+        let o = sh(&w.data, &["anim", "export", path, "--from", p(&client), "-o", p(&json_file)]);
+        assert_eq!(code(&o), 0, "{path}: {}", err(&o));
+        let back = out_dir.join(format!("f{i}.{ext}"));
+        let mut args = vec!["anim", "import", p(&json_file), "-o", p(&back)];
+        if ext.eq_ignore_ascii_case("ani") {
+            args.extend(["--like", path.as_str(), "--from", p(&client)]);
+        }
+        let o = sh(&w.data, &args);
+        assert_eq!(code(&o), 0, "{path}: {}{}", out(&o), err(&o));
+        assert_eq!(std::fs::read(&back).unwrap(), want, "{path}: the file made from the JSON differs");
+        println!("{path}: {} bytes, {} bytes of JSON", want.len(), std::fs::metadata(&json_file).unwrap().len());
+    }
+}

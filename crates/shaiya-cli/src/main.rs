@@ -126,7 +126,7 @@ enum Command {
     Patch(PatchGroup),
     /// SData files: info, check, decrypt, encrypt
     Sdata(SdataGroup),
-    /// Animation and model files (.ANI, .3DC, .VANI, .MANI, .3DO, .3DE): describe them; check .ANI files and compare their skeleton with the file a candidate replaces
+    /// Animation and model files (.ANI, .3DC, .VANI, .MANI, .3DO, .3DE): describe them; check .ANI files and compare their skeleton with the file a candidate replaces; export any of them to JSON and import it back
     Anim(AnimGroup),
     /// The saved "my client folders" list (use them as @name)
     Clients(ClientsGroup),

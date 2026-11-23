@@ -82,6 +82,25 @@ pub fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
     Ok(())
 }
 
+/// [`write_atomic`] with a check of the temp file: write `.<name>.<pid>.shaiya-tmp`, fsync, close it, call `check(temp)`, and rename it over
+/// `path` only when the check returns `Ok`. On `Err` (or a failed write or rename) the temp file is removed, `path` is left as it was and
+/// the error is returned. The check reads the file back from disk, so it sees what a later reader will see.
+pub fn write_atomic_checked(path: &Path, bytes: &[u8], check: &dyn Fn(&Path) -> Result<()>) -> Result<()> {
+    let tmp = temp_path(path);
+    let result = (|| -> Result<()> {
+        let mut f = File::create(&tmp).map_err(|e| Error::io(&tmp, e))?;
+        f.write_all(bytes).map_err(|e| Error::io(&tmp, e))?;
+        f.sync_all().map_err(|e| Error::io(&tmp, e))?;
+        drop(f);
+        check(&tmp)?;
+        std::fs::rename(&tmp, path).map_err(|e| Error::io(path, e))
+    })();
+    if result.is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+    result
+}
+
 /// Streams `src` into a temp file next to `path` (1 MiB buffer, `job.check()` between chunks, byte progress), then renames it over
 /// `path`. A cancelled or failed run removes the temp file and leaves `path` as it was. Returns the bytes written.
 pub fn write_atomic_from(path: &Path, src: &mut dyn Read, job: &Job) -> Result<u64> {
@@ -219,6 +238,41 @@ pub fn same_file(a: &Path, b: &Path) -> bool {
         (Ok(x), Ok(y)) => x == y,
         _ => absolute(a) == absolute(b),
     }
+}
+
+/// True when `a` and `b` are the same path, ignoring letter case on Windows.
+fn same_path_text(a: &Path, b: &Path) -> bool {
+    if cfg!(windows) {
+        a.to_string_lossy().eq_ignore_ascii_case(&b.to_string_lossy())
+    } else {
+        a == b
+    }
+}
+
+/// True when the folder lists an entry named `data.sah` in any letter case (a listing error counts as "no").
+fn holds_data_sah(dir: &Path) -> bool {
+    let Ok(rd) = std::fs::read_dir(dir) else { return false };
+    rd.flatten().any(|e| e.file_name().to_string_lossy().eq_ignore_ascii_case("data.sah"))
+}
+
+/// The first client folder at or above the folder that will hold `path`, or `None`. The folder is the parent of `path`, made absolute
+/// (the caller has checked that it exists). It and every ancestor are looked at, and then `canonicalize` of the folder and every ancestor of
+/// that, so a link or junction that leads into a client folder or one of its subfolders does not escape. A folder is a client folder when it
+/// holds an entry named `data.sah` in any letter case, or when it is one of `saved` (the saved client folders; each is also compared by its
+/// canonical form). A canonicalize error skips only the second walk.
+pub fn client_folder_above(path: &Path, saved: &[PathBuf]) -> Option<PathBuf> {
+    let parent = match path.parent() {
+        Some(p) if !p.as_os_str().is_empty() => p.to_path_buf(),
+        _ => PathBuf::from("."),
+    };
+    let folder = absolute(&parent);
+    let mut walks: Vec<PathBuf> = folder.ancestors().map(Path::to_path_buf).collect();
+    if let Ok(real) = std::fs::canonicalize(&folder) {
+        walks.extend(real.ancestors().map(Path::to_path_buf));
+    }
+    let mut saved_all: Vec<PathBuf> = saved.iter().map(|s| absolute(s)).collect();
+    saved_all.extend(saved.iter().filter_map(|s| std::fs::canonicalize(s).ok()));
+    walks.into_iter().find(|d| saved_all.iter().any(|s| same_path_text(d, s)) || holds_data_sah(d))
 }
 
 /// Removes this toolkit's `*.shaiya-tmp` files older than 24 h in `dir`.
@@ -375,6 +429,104 @@ mod tests {
         assert!(same_file(&p, &d.join(".").join("a.txt")));
         assert!(!same_file(&p, &d.join("b.txt")));
         assert!(same_file(&d.join("nope"), &d.join("nope")));
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn a_failed_check_leaves_the_old_file_and_no_temp() {
+        let d = scratch("checked-fail");
+        let p = d.join("a.bin");
+        write_atomic(&p, b"old").unwrap();
+        let seen = std::cell::RefCell::new(Vec::new());
+        let r = write_atomic_checked(&p, b"new", &|t| {
+            seen.borrow_mut().push((t.to_path_buf(), std::fs::read(t).unwrap()));
+            Err(Error::Refused("no".into()))
+        });
+        assert!(matches!(r, Err(Error::Refused(_))));
+        assert_eq!(std::fs::read(&p).unwrap(), b"old");
+        assert_eq!(std::fs::read_dir(&d).unwrap().count(), 1, "temp file removed");
+        // the check saw the temp file, with the new bytes, not the target
+        let seen = seen.into_inner();
+        assert_eq!(seen.len(), 1);
+        assert_ne!(seen[0].0, p);
+        assert_eq!(seen[0].1, b"new");
+        // a target that did not exist is still absent
+        let q = d.join("b.bin");
+        assert!(write_atomic_checked(&q, b"x", &|_| Err(Error::Refused("no".into()))).is_err());
+        assert!(!q.exists());
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn a_passing_check_replaces_the_file() {
+        let d = scratch("checked-ok");
+        let p = d.join("a.bin");
+        write_atomic_checked(&p, b"one", &|t| if std::fs::read(t).map_err(|e| Error::io(t, e))? == b"one" { Ok(()) } else { Err(Error::Refused("x".into())) }).unwrap();
+        write_atomic_checked(&p, b"two!", &|_| Ok(())).unwrap();
+        assert_eq!(std::fs::read(&p).unwrap(), b"two!");
+        assert_eq!(std::fs::read_dir(&d).unwrap().count(), 1, "temp file removed");
+        assert!(write_atomic_checked(&d.join("no-such-dir").join("x"), b"x", &|_| Ok(())).is_err());
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn a_folder_with_data_sah_or_its_subfolder_is_a_client_folder() {
+        let d = scratch("guard-sah");
+        let client = d.join("client");
+        let sub = client.join("deep").join("er");
+        std::fs::create_dir_all(&sub).unwrap();
+        std::fs::write(client.join("DATA.SAH"), b"x").unwrap();
+        assert_eq!(client_folder_above(&client.join("out.json"), &[]), Some(absolute(&client)));
+        assert_eq!(client_folder_above(&sub.join("out.json"), &[]), Some(absolute(&client)));
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn a_saved_client_folder_is_a_client_folder() {
+        let d = scratch("guard-saved");
+        let saved = d.join("saved");
+        let sub = saved.join("sub");
+        std::fs::create_dir_all(&sub).unwrap();
+        let other = d.join("other");
+        std::fs::create_dir_all(&other).unwrap();
+        assert_eq!(client_folder_above(&sub.join("o.json"), std::slice::from_ref(&saved)), Some(absolute(&saved)));
+        assert_eq!(client_folder_above(&saved.join("o.json"), std::slice::from_ref(&saved)), Some(absolute(&saved)));
+        assert_eq!(client_folder_above(&other.join("o.json"), std::slice::from_ref(&saved)), None);
+        // a saved folder that is gone still counts by its path
+        let gone = d.join("gone");
+        assert_eq!(client_folder_above(&gone.join("x").join("o.json"), std::slice::from_ref(&gone)), Some(absolute(&gone)));
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn an_unrelated_folder_is_not() {
+        let d = scratch("guard-none");
+        std::fs::write(d.join("data.sah.txt"), b"x").unwrap();
+        std::fs::write(d.join("data.saf"), b"x").unwrap();
+        assert_eq!(client_folder_above(&d.join("o.json"), &[]), None);
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    /// On Windows a directory junction is not made by the test: there the canonical walk of `client_folder_above` is cited by code.
+    #[cfg(unix)]
+    #[test]
+    fn a_link_into_a_client_folder_is_a_client_folder() {
+        let d = scratch("guard-link");
+        let client = d.join("client");
+        let sub = client.join("sub");
+        std::fs::create_dir_all(&sub).unwrap();
+        std::fs::write(client.join("data.sah"), b"x").unwrap();
+        let elsewhere = d.join("elsewhere");
+        std::fs::create_dir_all(&elsewhere).unwrap();
+        std::os::unix::fs::symlink(&sub, elsewhere.join("link")).unwrap();
+        // the link sits in an unrelated folder, but its target is inside the client folder
+        let found = client_folder_above(&elsewhere.join("link").join("o.json"), &[]);
+        assert_eq!(found, std::fs::canonicalize(&client).ok());
+        // a saved folder reached through a link is found by its canonical form
+        let plain = d.join("plain");
+        std::fs::create_dir_all(&plain).unwrap();
+        std::os::unix::fs::symlink(&plain, elsewhere.join("plain-link")).unwrap();
+        assert!(client_folder_above(&elsewhere.join("plain-link").join("o.json"), std::slice::from_ref(&plain)).is_some());
         let _ = std::fs::remove_dir_all(&d);
     }
 

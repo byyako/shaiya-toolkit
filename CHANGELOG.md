@@ -8,10 +8,17 @@ All notable changes are listed here, newest first. The format follows [Keep a Ch
 
 - Opt-in tests can be made to fail when their variable is missing: set `SHAIYA_OPTIN_REQUIRE` to a list of variable names (the svmap crates still only skip). `SHAIYA_EXPECT_CHANGED_ANI` sets the number of changed `.ANI` files the two opt-in comparisons expect; without it no count is asserted.
 
+### shaiya (CLI)
+
+- `shaiya anim export INPUT -o OUT.json` turns an `.ANI`, `.3DC`, `.VANI`, `.MANI`, `.3DO` or `.3DE` (a file, or with `--from` one exact archive path) into its JSON, and `shaiya anim import IN.json -o OUT` turns that JSON back into the file; an unedited JSON gives back the same bytes. The `source` in the JSON is the archive path or the file name, never a folder. An `.ANI` import needs `--like TARGET` (the file it will replace) and is written only when it passes the same check as `anim compare` (same skeleton, same first field, no validation error; exit 1 and nothing written otherwise). Both write only the `-o` file, as a new file (`--force` replaces an existing one), checked on disk before it replaces anything, and refuse an `-o` inside a client folder (exit 4). Exit 3 for a file that does not read, a refused value or a wrong extension, 5 for a bug (nothing is written). Validated offline; every file was read on US EP4.5 only, the eight other matrix clients have their index only.
+- Every `anim` command refuses a model file over 128 MiB without reading it (`FAILED: larger than 128 MiB: not read`, exit 3).
+- Exit code 4 of the table also covers an output inside a client folder; exit code 5 also covers a bug of `anim export` and `anim import`.
+
 ### Libraries
 
 - `shaiya-clientdata`: the new `modeljson` module turns an `.ANI` into a documented JSON text (`shaiya-toolkit-ani-v1`) and back; floats are numbers in their shortest form or `"bits:XXXXXXXX"`, reference matrices are hex, unknown keys and other columns are refused, key values must be finite. On US EP4.5, all 3,509 `.ANI` files export and import back byte for byte (validated offline); the eight other matrix clients are index only. `Ani::try_to_bytes` now also reads its bytes back and refuses a track longer than the reader accepts.
 - `shaiya-clientdata`: `modeljson` also covers `.3DC`, `.VANI`, `.MANI`, `.3DO` and `.3DE` (`shaiya-toolkit-3dc-v1`, `-vani-v1`, `-mani-v1`, `-3do-v1`, `-3de-v1`): an unedited file comes back byte for byte (US EP4.5: 2,431 `.3DC`, 66 `.VANI`, 23 `.MANI`, 271 `.3DO` and 467 of 469 `.3DE`; validated offline), NaN and infinity in a vertex are written as `"bits:XXXXXXXX"`, the 2 `.3DE` the reader refuses are not exported, and bytes made from a JSON are read back by the format's reader before they are returned. New `Mani::from_values`.
+- `shaiya-core`: `fs::client_folder_above` finds the client folder (a folder with `data.sah` in any letter case, or a saved client folder) at or above a path, also through a link or junction; `fs::write_atomic_checked` writes a temp file, lets a check read it back and renames it over the target only when the check passes.
 
 ## [0.4.0] - 2026-11-22
 

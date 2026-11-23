@@ -1,4 +1,5 @@
-//! `shaiya anim ...`: describe and check animation files (`.ANI`, `.3DC`) and compare a candidate's skeleton with the file it replaces.
+//! `shaiya anim ...`: describe and check animation and model files, compare a candidate `.ANI`'s skeleton with the file it replaces, and
+//! export any of the six formats to JSON and import it back (`export` and `import` write only their `-o` file).
 
 use super::util::*;
 use crate::output::print_json;
@@ -8,10 +9,13 @@ use shaiya_archive::Archive;
 use shaiya_clientdata::anim::{passes, rig_check, rig_of, same_skeleton, validate, AniIssue, RigDiff, Severity};
 use shaiya_clientdata::mesh3dc::C3dcLayout;
 use shaiya_clientdata::mani::{ManiValue, MANI_FIELDS, MANI_SIZE};
+use shaiya_clientdata::modeljson::{self, JsonError, ModelFormat, MAX_JSON_BYTES, MAX_MODEL_BYTES};
 use shaiya_clientdata::mesh3de::De3Layout;
 use shaiya_clientdata::{Ani, C3dc, Mani, Mesh3de, Mesh3do, Vani};
+use shaiya_core::fs::{client_folder_above, same_file, write_atomic_checked};
 use shaiya_core::glob::{Filter, Pattern};
 use shaiya_core::{Error, Result};
+use std::cell::Cell;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
@@ -34,6 +38,22 @@ pub enum Cmd {
     ///
     /// Example: shaiya anim compare new.ani character/human/ani/huwm_117_x.ani --from "@us"
     Compare(CompareArgs),
+    /// Export an animation or model file to JSON: .ANI, .3DC, .VANI, .MANI, .3DO or .3DE (the format comes from the file's extension)
+    ///
+    /// Writes only the -o file, as a new file (an existing one only with --force), never inside a client folder. The JSON is read back and
+    /// compared with the file before anything is written; an unedited JSON imports back to the same bytes. Exit 0 written, 2 -o does not end in
+    /// .json, 3 the file does not read (or is over 128 MiB), 4 the output exists, is inside a client folder or is the input, 5 a bug.
+    ///
+    /// Example: shaiya anim export "character/human/ani/huwm_117_x.ani" --from "@us" -o wave.json
+    Export(ExportArgs),
+    /// Turn a JSON made by `export` back into a file (the format comes from the JSON, the -o extension must match)
+    ///
+    /// An .ANI needs --like: the file it will replace. It is written only when it passes the same check as `compare` (same skeleton, same first
+    /// field, no validation error); exit 1 and nothing written otherwise. Writes only the -o file, as a new file (an existing one only with
+    /// --force), never inside a client folder. Put the result into a client with Replace or `archive replace`.
+    ///
+    /// Example: shaiya anim import wave.json -o new.ani --like "character/human/ani/huwm_117_x.ani" --from "@us"
+    Import(ImportArgs),
 }
 
 #[derive(clap::Args)]
@@ -59,16 +79,149 @@ pub struct CompareArgs {
     pub from: Option<String>,
 }
 
+#[derive(clap::Args)]
+pub struct ExportArgs {
+    /// The file to export: a file on disk, or with --from its exact path in the archive (not a pattern)
+    #[arg(value_name = "INPUT")]
+    pub input: String,
+    /// Read INPUT from this archive (a client folder, a .sah file or @name)
+    #[arg(long, value_name = "ARCHIVE")]
+    pub from: Option<String>,
+    /// The JSON file to write (must end in .json)
+    #[arg(short = 'o', long = "out", value_name = "OUT.json")]
+    pub out: PathBuf,
+    /// Replace an existing output
+    #[arg(long)]
+    pub force: bool,
+}
+
+#[derive(clap::Args)]
+pub struct ImportArgs {
+    /// The JSON file made by `export`
+    #[arg(value_name = "IN.json")]
+    pub input: String,
+    /// The file to write; its extension must be the JSON's format (.ANI, .3DC, .VANI, .MANI, .3DO or .3DE)
+    #[arg(short = 'o', long = "out", value_name = "OUT")]
+    pub out: PathBuf,
+    /// For .ANI only (required there): the file the new animation will replace, a file or with --from its path in the archive
+    #[arg(long, value_name = "TARGET")]
+    pub like: Option<String>,
+    /// Read the --like file from this archive (a client folder, a .sah file or @name)
+    #[arg(long, value_name = "ARCHIVE")]
+    pub from: Option<String>,
+    /// Replace an existing output
+    #[arg(long)]
+    pub force: bool,
+}
+
+/// Why a command stopped: a usage error (exit 2), an error (the exit code of its kind) or a bug of the toolkit (exit 5).
+enum Fail {
+    Usage(String),
+    Error(Error),
+    Bug(String),
+}
+
+impl From<Error> for Fail {
+    fn from(e: Error) -> Fail {
+        Fail::Error(e)
+    }
+}
+
+type Res = std::result::Result<i32, Fail>;
+
+fn usage(ctx: &Ctx, message: &str) -> i32 {
+    if !ctx.json || !ctx.quiet {
+        eprintln!("error: {message}");
+    }
+    if ctx.json {
+        print_json(&json!({ "error": { "kind": "usage", "message": message } }));
+    }
+    2
+}
+
+/// The output did not read back as it was made: a bug of ours, exit 5, nothing written (an existing output is kept).
+fn internal(ctx: &Ctx, message: &str) -> i32 {
+    eprintln!("error: internal error (this is a bug): {message}");
+    eprintln!("hint: please report it at https://github.com/byyako/shaiya-toolkit/issues and say which command you ran");
+    if ctx.json {
+        print_json(&json!({ "error": { "kind": "internal", "message": message } }));
+    }
+    5
+}
+
+/// The exit code of a stopped command (after printing why).
+fn stop(ctx: &Ctx, f: &Fail) -> i32 {
+    match f {
+        Fail::Usage(m) => usage(ctx, m),
+        Fail::Error(e) => fail(ctx, e),
+        Fail::Bug(m) => internal(ctx, m),
+    }
+}
+
+/// A [`JsonError`] as the reason a command stops: the toolkit's own bug (the export's self-check) is exit 5, every problem with the input is
+/// an input error (exit 3) that names `name`.
+fn json_failure(name: &str, e: JsonError) -> Fail {
+    if e.is_bug() {
+        return Fail::Bug(e.to_string());
+    }
+    match e {
+        JsonError::Unreadable(inner) => Fail::Error(clientdata_error(inner)),
+        other => Fail::Error(Error::format(name, None, other.to_string())),
+    }
+}
+
 pub fn run(ctx: &Ctx, cmd: &Cmd, _job: &shaiya_core::Job) -> i32 {
-    let r = match cmd {
-        Cmd::Info(a) => describe(ctx, a, false),
-        Cmd::Validate(a) => describe(ctx, a, true),
-        Cmd::Compare(a) => compare(ctx, a),
+    let r: Res = match cmd {
+        Cmd::Info(a) => describe(ctx, a, false).map_err(Fail::from),
+        Cmd::Validate(a) => describe(ctx, a, true).map_err(Fail::from),
+        Cmd::Compare(a) => compare(ctx, a).map_err(Fail::from),
+        Cmd::Export(a) => export(ctx, a),
+        Cmd::Import(a) => import(ctx, a),
     };
     match r {
         Ok(code) => code,
-        Err(e) => fail(ctx, &e),
+        Err(f) => stop(ctx, &f),
     }
+}
+
+// ---- size caps --------------------------------------------------------------------------------------------------------------------
+
+/// True when a file of `len` bytes is over `cap`.
+fn too_large(len: u64, cap: u64) -> bool {
+    len > cap
+}
+
+/// The error for a file over the cap (exit 3). It names `path` when given; `describe` prints the file's name itself.
+fn cap_error(path: Option<&Path>) -> Error {
+    let why = std::io::Error::other(format!("larger than {} MiB: not read", MAX_MODEL_BYTES >> 20));
+    match path {
+        Some(p) => Error::io(p, why),
+        None => Error::from(why),
+    }
+}
+
+/// Reads a file on disk unless it is over `cap` (checked from the metadata, before any byte is read).
+fn read_capped(path: &Path, name: Option<&Path>, cap: u64) -> Result<Vec<u8>> {
+    let len = std::fs::metadata(path).map_err(|e| Error::io(path, e))?.len();
+    if too_large(len, cap) {
+        return Err(cap_error(name));
+    }
+    std::fs::read(path).map_err(|e| Error::io(path, e))
+}
+
+/// Looks up one entry of an archive by its exact path (not in the archive: exit 3) and refuses it when it is over `cap`, from the entry's length.
+fn check_entry(archive: &Archive, path: &str, named: bool, cap: u64) -> Result<()> {
+    let entry = archive.index().get(path).ok_or_else(|| Error::io(path, std::io::Error::new(std::io::ErrorKind::NotFound, "not in the archive")))?;
+    if too_large(u64::from(entry.length), cap) {
+        return Err(cap_error(named.then(|| Path::new(path))));
+    }
+    Ok(())
+}
+
+/// Reads one entry of an archive by its exact path unless it is over `cap`.
+fn read_entry_capped(archive: &Archive, path: &str, named: bool, cap: u64) -> Result<Vec<u8>> {
+    check_entry(archive, path, named, cap)?;
+    archive.read(path)
 }
 
 // ---- inputs -----------------------------------------------------------------------------------------------------------------------
@@ -93,8 +246,8 @@ struct Inputs {
 impl Inputs {
     fn read(&self, e: &Entry) -> Result<Vec<u8>> {
         match (&e.origin, &self.archive) {
-            (Origin::Disk(p), _) => std::fs::read(p).map_err(|x| Error::io(p, x)),
-            (Origin::Archive, Some(a)) => a.read(&e.name),
+            (Origin::Disk(p), _) => read_capped(p, None, MAX_MODEL_BYTES),
+            (Origin::Archive, Some(a)) => read_entry_capped(a, &e.name, false, MAX_MODEL_BYTES),
             (Origin::Archive, None) => Err(Error::Refused("no archive".to_string())),
         }
     }
@@ -572,44 +725,73 @@ fn compare(ctx: &Ctx, a: &CompareArgs) -> Result<i32> {
         }
     }
     let cand_path = resolve(ctx, &a.candidate)?;
-    let cand_bytes = std::fs::read(&cand_path).map_err(|e| Error::io(&cand_path, e))?;
+    let cand_bytes = read_capped(&cand_path, Some(&cand_path), MAX_MODEL_BYTES)?;
     let candidate = read_ani(&a.candidate, &cand_bytes)?;
-    let target_bytes = match &a.from {
-        Some(arch) => {
-            let archive = open_full(ctx, arch)?;
-            archive.index().get(&a.target).ok_or_else(|| Error::io(&a.target, std::io::Error::new(std::io::ErrorKind::NotFound, "not in the archive")))?;
-            archive.read(&a.target)?
-        }
-        None => {
-            let p = resolve(ctx, &a.target)?;
-            std::fs::read(&p).map_err(|e| Error::io(&p, e))?
-        }
-    };
+    let target_bytes = read_target(ctx, &a.target, a.from.as_deref())?;
     let target = read_ani(&a.target, &target_bytes)?;
 
-    let diffs = rig_check(&candidate, &target);
-    let issues = validate(&candidate);
-    let errors: Vec<&AniIssue> = issues.iter().filter(|i| i.severity == Severity::Error).collect();
-    let ok = passes(&candidate, &target);
-    let same_skel = same_skeleton(&diffs);
-    let same_first = !diffs.iter().any(|d| !d.is_skeleton());
+    let rig = RigResult::new(&candidate, &target);
     if ctx.json {
-        print_json(&json!({
-            "candidate": a.candidate,
-            "target": a.target,
-            "same_skeleton": same_skel,
-            "same_first_field": same_first,
-            "passes": ok,
-            "differences": diffs.iter().map(diff_json).collect::<Vec<_>>(),
-            "candidate_issues": issues_json(&issues),
-        }));
-        return Ok(i32::from(!ok));
+        print_json(&rig.json(&a.candidate, &a.target));
+        return Ok(i32::from(!rig.ok));
     }
     let mut w = out();
-    if same_skel {
-        outln!(w, "same skeleton as {}: {}, parents and reference matrices identical", a.target, plural(target.bones.len(), "bone", "bones"));
+    rig.print(&mut w, &a.target, &candidate, &target);
+    let _ = w.flush();
+    Ok(i32::from(!rig.ok))
+}
+
+/// TARGET of `compare` and `--like` of `import`: a file on disk, or with `from` its exact path in the archive (over the size cap: exit 3).
+fn read_target(ctx: &Ctx, target: &str, from: Option<&str>) -> Result<Vec<u8>> {
+    match from {
+        Some(arch) => {
+            let archive = open_full(ctx, arch)?;
+            read_entry_capped(&archive, target, true, MAX_MODEL_BYTES)
+        }
+        None => {
+            let p = resolve(ctx, target)?;
+            read_capped(&p, Some(&p), MAX_MODEL_BYTES)
+        }
+    }
+}
+
+/// What the rig check says about a candidate `.ANI` and the file it would replace: shared by `compare` and `import`, so both print the same lines.
+struct RigResult {
+    diffs: Vec<RigDiff>,
+    issues: Vec<AniIssue>,
+    ok: bool,
+}
+
+impl RigResult {
+    fn new(candidate: &Ani, target: &Ani) -> RigResult {
+        RigResult { diffs: rig_check(candidate, target), issues: validate(candidate), ok: passes(candidate, target) }
+    }
+
+    /// The keys of `compare`'s JSON (`import` adds its own).
+    fn json(&self, candidate: &str, target: &str) -> Value {
+        json!({
+            "candidate": candidate,
+            "target": target,
+            "same_skeleton": same_skeleton(&self.diffs),
+            "same_first_field": !self.diffs.iter().any(|d| !d.is_skeleton()),
+            "passes": self.ok,
+            "differences": self.diffs.iter().map(diff_json).collect::<Vec<_>>(),
+            "candidate_issues": issues_json(&self.issues),
+        })
+    }
+
+    /// The text of `compare`: the skeleton lines, the first-field line, the candidate's validation errors, and `passes` or `does not pass`.
+    fn print(&self, w: &mut impl Write, target_name: &str, candidate: &Ani, target: &Ani) {
+        print_rig_result(w, target_name, candidate, target, &self.diffs, &self.issues, self.ok);
+    }
+}
+
+fn print_rig_result(w: &mut impl Write, target_name: &str, candidate: &Ani, target: &Ani, diffs: &[RigDiff], issues: &[AniIssue], ok: bool) {
+    let errors: Vec<&AniIssue> = issues.iter().filter(|i| i.severity == Severity::Error).collect();
+    if same_skeleton(diffs) {
+        outln!(w, "same skeleton as {}: {}, parents and reference matrices identical", target_name, plural(target.bones.len(), "bone", "bones"));
     } else {
-        outln!(w, "the skeleton differs from {}:", a.target);
+        outln!(w, "the skeleton differs from {}:", target_name);
         let counts: Vec<&RigDiff> = diffs.iter().filter(|d| matches!(d, RigDiff::BoneCount { .. })).collect();
         let parents: Vec<&RigDiff> = diffs.iter().filter(|d| matches!(d, RigDiff::Parent { .. })).collect();
         let matrices: Vec<&RigDiff> = diffs.iter().filter(|d| matches!(d, RigDiff::Matrix { .. })).collect();
@@ -638,13 +820,239 @@ fn compare(ctx: &Ctx, a: &CompareArgs) -> Result<i32> {
         }
     }
     outln!(w, "{}", if ok { "passes" } else { "does not pass" });
-    let _ = w.flush();
-    Ok(i32::from(!ok))
+}
+
+// ---- export and import ------------------------------------------------------------------------------------------------------------
+
+const MODEL_NAMES: &str = ".ANI, .3DC, .VANI, .MANI, .3DO or .3DE";
+
+/// The checks every `-o` of `export` and `import` goes through, in this order: the folder exists (exit 3), `out` is not one of `inputs`
+/// (exit 4), `out` does not exist unless `--force` (exit 4), `out` is not inside a client folder (exit 4: a folder holding `data.sah`, or one of
+/// the saved client folders, above it or through a link).
+fn check_output(ctx: &Ctx, out: &Path, force: bool, inputs: &[&Path]) -> Result<()> {
+    let folder = match out.parent() {
+        Some(p) if !p.as_os_str().is_empty() => p.to_path_buf(),
+        _ => PathBuf::from("."),
+    };
+    if !folder.is_dir() {
+        return Err(Error::io(&folder, std::io::Error::new(std::io::ErrorKind::NotFound, "folder does not exist")));
+    }
+    if let Some(i) = inputs.iter().find(|i| same_file(i, out)) {
+        return Err(Error::Refused(format!("{} is the input {}: write the output to another file", out.display(), i.display())));
+    }
+    if out.exists() && !force {
+        return Err(Error::Refused(format!("{} exists; use --force to replace it", out.display())));
+    }
+    let saved: Vec<PathBuf> = crate::config::load_clients(ctx.data_dir.as_deref())?.into_iter().map(|c| c.path).collect();
+    if let Some(client) = client_folder_above(out, &saved) {
+        return Err(Error::Refused(format!(
+            "{} is inside the client folder {}: write it elsewhere and put it in with Replace or archive replace",
+            out.display(),
+            client.display()
+        )));
+    }
+    Ok(())
+}
+
+/// The check of `write_atomic_checked`: the temp file read back from disk must hold exactly `want`. A difference sets `bug` (exit 5).
+fn same_bytes_check<'a>(want: &'a [u8], bug: &'a Cell<bool>) -> impl Fn(&Path) -> Result<()> + 'a {
+    move |temp| {
+        let back = std::fs::read(temp).map_err(|e| Error::io(temp, e))?;
+        if back == want {
+            Ok(())
+        } else {
+            bug.set(true);
+            Err(Error::Refused("the file written did not read back the same".to_string()))
+        }
+    }
+}
+
+fn export(ctx: &Ctx, a: &ExportArgs) -> Res {
+    let Some(format) = ModelFormat::from_file_name(&a.input) else {
+        return Err(Error::format(&a.input, None, format!("not an {MODEL_NAMES} file")).into());
+    };
+    if !has_ext(&a.out.to_string_lossy(), &["json"]) {
+        return Err(Fail::Usage(format!("{}: the output of export must end in .json", a.out.display())));
+    }
+    // the size is checked before the file is read; the output is checked before anything is read or written
+    let (bytes, source) = match &a.from {
+        Some(arch) => {
+            let archive = open_full(ctx, arch)?;
+            check_entry(&archive, &a.input, true, MAX_MODEL_BYTES)?;
+            check_output(ctx, &a.out, a.force, &[])?;
+            (archive.read(&a.input)?, a.input.clone())
+        }
+        None => {
+            let p = resolve(ctx, &a.input)?;
+            let len = std::fs::metadata(&p).map_err(|e| Error::io(&p, e))?.len();
+            if too_large(len, MAX_MODEL_BYTES) {
+                return Err(cap_error(Some(&p)).into());
+            }
+            check_output(ctx, &a.out, a.force, &[&p])?;
+            let bytes = std::fs::read(&p).map_err(|e| Error::io(&p, e))?;
+            (bytes, file_name(&p))
+        }
+    };
+    let text = modeljson::export(format, &bytes, &source).map_err(|e| json_failure(&a.input, e))?;
+    let bug = Cell::new(false);
+    if let Err(e) = write_atomic_checked(&a.out, text.as_bytes(), &same_bytes_check(text.as_bytes(), &bug)) {
+        return Err(if bug.get() { Fail::Bug(e.to_string()) } else { e.into() });
+    }
+    if ctx.json {
+        print_json(&json!({ "input": a.input, "format": format.extension(), "schema": format.schema(), "out": a.out.display().to_string(), "bytes": text.len() }));
+    } else {
+        let mut w = out();
+        outln!(w, "wrote {}: {} as {}, {} bytes of JSON", a.out.display(), format.label(), format.schema(), num(text.len() as u64));
+        let _ = w.flush();
+    }
+    Ok(0)
+}
+
+fn import(ctx: &Ctx, a: &ImportArgs) -> Res {
+    let in_path = resolve(ctx, &a.input)?;
+    let len = std::fs::metadata(&in_path).map_err(|e| Error::io(&in_path, e))?.len();
+    if too_large(len, MAX_JSON_BYTES) {
+        return Err(Error::io(&in_path, std::io::Error::other(format!("larger than {} MiB: not read", MAX_JSON_BYTES >> 20))).into());
+    }
+    let json_bytes = std::fs::read(&in_path).map_err(|e| Error::io(&in_path, e))?;
+    let format = modeljson::format_of(&json_bytes).map_err(|e| json_failure(&a.input, e))?;
+    let out_text = a.out.to_string_lossy().into_owned();
+    if ModelFormat::from_file_name(&out_text) != Some(format) {
+        let asks = match ModelFormat::from_file_name(&out_text) {
+            Some(f) => f.label().to_string(),
+            None => a.out.extension().map_or_else(|| "no extension".to_string(), |e| format!(".{}", e.to_string_lossy())),
+        };
+        return Err(Error::format(&a.input, None, format!("holds {}, but {} asks for {asks}", format.schema(), a.out.display())).into());
+    }
+    let is_ani = format == ModelFormat::Ani;
+    match (&a.like, is_ani) {
+        (None, true) => return Err(Fail::Usage("--like is required for .ANI: the file it will replace".to_string())),
+        (Some(_), false) => return Err(Fail::Usage("--like is for .ANI only".to_string())),
+        (None, false) if a.from.is_some() => return Err(Fail::Usage("--from needs --like (it says where the --like file is)".to_string())),
+        _ => {}
+    }
+    // the --like file on disk is also protected from being the output
+    let like_path = match (&a.like, &a.from) {
+        (Some(l), None) => Some(resolve(ctx, l)?),
+        _ => None,
+    };
+    let mut protected: Vec<&Path> = vec![&in_path];
+    if let Some(l) = &like_path {
+        protected.push(l);
+    }
+    check_output(ctx, &a.out, a.force, &protected)?;
+
+    let (_, bytes) = modeljson::import(&json_bytes).map_err(|e| json_failure(&a.input, e))?;
+    let out_name = file_name(&a.out);
+    let mut rig = None;
+    if let (true, Some(like)) = (is_ani, &a.like) {
+        let target_bytes = match &like_path {
+            Some(p) => read_capped(p, Some(p), MAX_MODEL_BYTES)?,
+            None => read_target(ctx, like, a.from.as_deref())?,
+        };
+        let target = read_ani(like, &target_bytes)?;
+        let candidate = read_ani(&out_name, &bytes)?;
+        let result = RigResult::new(&candidate, &target);
+        if !ctx.json {
+            let mut w = out();
+            result.print(&mut w, like, &candidate, &target);
+            if !result.ok {
+                outln!(w, "nothing written");
+            }
+            let _ = w.flush();
+        } else if !result.ok {
+            let mut doc = result.json(&a.input, like);
+            doc["written"] = json!(false);
+            print_json(&doc);
+        }
+        if !result.ok {
+            return Ok(1);
+        }
+        rig = Some((result, target));
+    }
+    let bug = Cell::new(false);
+    let same = same_bytes_check(&bytes, &bug);
+    let check = |temp: &Path| -> Result<()> {
+        same(temp)?;
+        if let Some((_, target)) = &rig {
+            // the file on disk must read as an .ANI that passes again
+            let back = std::fs::read(temp).map_err(|e| Error::io(temp, e))?;
+            let ok = Ani::parse(&back, &out_name).is_ok_and(|c| passes(&c, target));
+            if !ok {
+                bug.set(true);
+                return Err(Error::Refused("the file written does not pass the rig check".to_string()));
+            }
+        }
+        Ok(())
+    };
+    if let Err(e) = write_atomic_checked(&a.out, &bytes, &check) {
+        return Err(if bug.get() { Fail::Bug(e.to_string()) } else { e.into() });
+    }
+    if ctx.json {
+        let mut doc = match &rig {
+            Some((r, _)) => r.json(&a.input, a.like.as_deref().unwrap_or("")),
+            None => json!({}),
+        };
+        doc["input"] = json!(a.input);
+        doc["format"] = json!(format.extension());
+        doc["out"] = json!(a.out.display().to_string());
+        doc["bytes"] = json!(bytes.len());
+        doc["written"] = json!(true);
+        print_json(&doc);
+    } else {
+        let mut w = out();
+        outln!(w, "wrote {}: {}, {} bytes", a.out.display(), format.label(), num(bytes.len() as u64));
+        let _ = w.flush();
+    }
+    Ok(0)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn ctx() -> Ctx {
+        Ctx { data_dir: None, json: false, quiet: true, verbose: 0, progress: crate::progress::Mode::Never }
+    }
+
+    #[test]
+    fn too_large_is_a_strict_comparison() {
+        assert!(!too_large(10, 10) && too_large(11, 10) && !too_large(0, 0));
+        assert_eq!(MAX_MODEL_BYTES, 128 << 20);
+        assert!(cap_error(None).to_string() == "larger than 128 MiB: not read", "{}", cap_error(None));
+    }
+
+    /// The cap is checked from the length before a byte is read: a small cap refuses a ten-byte file with the message `info` prints after FAILED.
+    #[test]
+    fn info_refuses_a_file_over_the_size_cap() {
+        let dir = std::env::temp_dir().join(format!("shaiya-anim-cap-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let f = dir.join("big.ani");
+        std::fs::write(&f, [0u8; 10]).unwrap();
+        assert_eq!(read_capped(&f, None, 10).unwrap().len(), 10);
+        let e = read_capped(&f, None, 9).unwrap_err();
+        assert_eq!(e.to_string(), "larger than 128 MiB: not read");
+        assert_eq!(crate::exit_code_for(e.kind()), 3);
+        let named = read_capped(&f, Some(&f), 9).unwrap_err().to_string();
+        assert!(named.ends_with("big.ani: larger than 128 MiB: not read"), "{named}");
+        assert!(read_capped(&dir.join("missing.ani"), None, 9).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The bug path (exit 5) cannot be provoked end to end: the mapper is called with the self-check error.
+    #[test]
+    fn a_self_check_error_is_a_bug_and_exits_5() {
+        let bug = json_failure("a.ani", JsonError::SelfCheck("x".to_string()));
+        assert!(matches!(bug, Fail::Bug(_)));
+        assert_eq!(stop(&ctx(), &bug), 5);
+        // a problem with the input is an input error (exit 3), also a refused value or a cap
+        for e in [JsonError::Schema("x".into()), JsonError::TooLarge("x".into()), JsonError::NotWritable("x".into()), JsonError::NotFinite { at: "k".into() }] {
+            let f = json_failure("a.json", e);
+            assert!(matches!(f, Fail::Error(_)));
+            assert_eq!(stop(&ctx(), &f), 3);
+        }
+        assert_eq!(stop(&ctx(), &Fail::Usage("x".into())), 2);
+    }
 
     /// A folder that cannot be listed is reported and the walk goes on. (A path that cannot be listed is simulated by a file where a folder is
     /// expected: the same `read_dir` error path as a permission failure, which cannot be made portably.)
