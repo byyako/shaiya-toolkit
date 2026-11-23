@@ -701,7 +701,6 @@ fn import_ani_with_a_changed_parent_matrix_bit_or_bone_count_exits_1_and_writes_
     assert!(names_in(&d).iter().all(|n| !n.ends_with(".shaiya-tmp")), "{:?}", names_in(&d));
 }
 
-
 #[test]
 fn import_ani_with_another_first_field_exits_1() {
     let w = world();
@@ -777,6 +776,43 @@ fn export_output_must_be_json_exits_2() {
     }
     // any letter case of the extension is accepted
     assert_eq!(code(&export(&w, &ani, &d.join("up.JSON"), &[])), 0);
+}
+
+/// A file of `len` bytes made with `set_len` (a sparse file: nothing is written), closed before it is used.
+fn sized_file(path: &Path, len: u64) {
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    let f = std::fs::File::create(path).unwrap();
+    f.set_len(len).unwrap();
+    drop(f);
+}
+
+#[test]
+fn import_refuses_a_json_over_256_mib() {
+    let w = world();
+    let d = w.tmp.path().join("big");
+    let json = d.join("huge.json");
+    sized_file(&json, (256 << 20) + 1);
+    let out = d.join("out.ANI");
+    let o = import(&w, &json, &out, &[]);
+    assert_eq!(code(&o), 3, "{}", err(&o));
+    assert!(err(&o).contains("larger than 256 MiB: not read"), "{}", err(&o));
+    assert!(!out.exists());
+}
+
+#[test]
+fn a_model_file_over_128_mib_is_not_read_by_info_or_export() {
+    let w = world();
+    let d = w.tmp.path().join("big");
+    let ani = d.join("huge.ani");
+    sized_file(&ani, (128 << 20) + 1);
+    let o = sh(&w.data, &["anim", "info", p(&ani)]);
+    assert_eq!(code(&o), 3, "{}{}", out(&o), err(&o));
+    assert!(out(&o).contains("FAILED") && out(&o).contains("larger than 128 MiB: not read"), "{}", out(&o));
+    let json = d.join("huge.json");
+    let o = export(&w, &ani, &json, &[]);
+    assert_eq!(code(&o), 3, "{}", err(&o));
+    assert!(err(&o).contains("larger than 128 MiB: not read"), "{}", err(&o));
+    assert!(!json.exists());
 }
 
 #[test]
@@ -1070,7 +1106,6 @@ impl Drop for RemoveDirOnDrop {
         let _ = std::fs::remove_dir_all(&self.0);
     }
 }
-
 
 /// Opt-in: through the binary, one file per format of the US client (the first by sorted path; a `.3DE` the reader refuses is skipped), plus a
 /// file with NaN matrices and a `.3DC` written with `bits:`. Export, import (an `.ANI` with `--like` the same archive path), bytes compared with

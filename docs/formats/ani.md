@@ -113,8 +113,8 @@ The toolkit's library can turn an `.ANI` into a JSON text (`shaiya-toolkit-ani-v
 - Key values must be finite: a NaN or infinity in a key is refused on export and on import, and so is a number too large for a 32-bit float.
 - Unknown keys, other columns, a bone out of order and a newer format are refused. Hex is read in either letter case.
 - The bytes made from a JSON are read back by the `.ANI` reader before they are returned; bytes that do not read back are refused.
-
 - `shaiya anim import` writes an `.ANI` only when it passes the same check as `shaiya anim compare` against the file given with `--like` (same skeleton, same first field (inferred: the start key; not checked in the game), no validation error); a file that does not pass is not written. Files made from a JSON are validated offline.
+
 ## Verified on
 
 US EP4.5 (patch 108), read only: all 3,509 `.ANI` files read to the last byte, write back byte for byte and have no validation error; 382 tracks (all rotation tracks) in 254 files start after key 0; 20 files hold NaN in reference matrices; the first field is -1 in 7 files, exactly those whose tracks start at key -1, and 0 in all others (inferred: the start key). The 16 character rigs have 1,192 files and 1,116 distinct skeletons (parents and reference matrices) between them; the lowest rig is 86 % distinct. Two animations that were replaced in that client pass the rig check against the stock files (2 files; compared with the original archive that sits beside the client).

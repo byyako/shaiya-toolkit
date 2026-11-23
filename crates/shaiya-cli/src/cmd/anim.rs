@@ -16,7 +16,7 @@ use shaiya_core::fs::{client_folder_above, same_file, write_atomic_checked};
 use shaiya_core::glob::{Filter, Pattern};
 use shaiya_core::{Error, Result};
 use std::cell::Cell;
-use std::io::Write;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
 #[derive(clap::Subcommand)]
@@ -192,28 +192,40 @@ fn too_large(len: u64, cap: u64) -> bool {
 }
 
 /// The error for a file over the cap (exit 3). It names `path` when given; `describe` prints the file's name itself.
-fn cap_error(path: Option<&Path>) -> Error {
-    let why = std::io::Error::other(format!("larger than {} MiB: not read", MAX_MODEL_BYTES >> 20));
+fn cap_error(path: Option<&Path>, cap: u64) -> Error {
+    let why = std::io::Error::other(format!("larger than {} MiB: not read", cap >> 20));
     match path {
         Some(p) => Error::io(p, why),
         None => Error::from(why),
     }
 }
 
-/// Reads a file on disk unless it is over `cap` (checked from the metadata, before any byte is read).
+/// Reads at most `cap` bytes from `r`: `Ok(None)` when it holds more (at most `cap + 1` bytes are ever read).
+fn read_bounded(r: impl Read, cap: u64) -> std::io::Result<Option<Vec<u8>>> {
+    let mut buf = Vec::new();
+    r.take(cap.saturating_add(1)).read_to_end(&mut buf)?;
+    Ok((!too_large(buf.len() as u64, cap)).then_some(buf))
+}
+
+/// Reads a file on disk unless it is over `cap`. The length from the metadata refuses a big file before a byte is read; the read itself
+/// is bounded too, so a file that grows or reports length 0 cannot get past the cap. `name` is shown in the error when given.
 fn read_capped(path: &Path, name: Option<&Path>, cap: u64) -> Result<Vec<u8>> {
-    let len = std::fs::metadata(path).map_err(|e| Error::io(path, e))?.len();
+    let f = std::fs::File::open(path).map_err(|e| Error::io(path, e))?;
+    let len = f.metadata().map_err(|e| Error::io(path, e))?.len();
     if too_large(len, cap) {
-        return Err(cap_error(name));
+        return Err(cap_error(name, cap));
     }
-    std::fs::read(path).map_err(|e| Error::io(path, e))
+    match read_bounded(f, cap).map_err(|e| Error::io(path, e))? {
+        Some(bytes) => Ok(bytes),
+        None => Err(cap_error(name, cap)),
+    }
 }
 
 /// Looks up one entry of an archive by its exact path (not in the archive: exit 3) and refuses it when it is over `cap`, from the entry's length.
 fn check_entry(archive: &Archive, path: &str, named: bool, cap: u64) -> Result<()> {
     let entry = archive.index().get(path).ok_or_else(|| Error::io(path, std::io::Error::new(std::io::ErrorKind::NotFound, "not in the archive")))?;
     if too_large(u64::from(entry.length), cap) {
-        return Err(cap_error(named.then(|| Path::new(path))));
+        return Err(cap_error(named.then(|| Path::new(path)), cap));
     }
     Ok(())
 }
@@ -886,10 +898,10 @@ fn export(ctx: &Ctx, a: &ExportArgs) -> Res {
             let p = resolve(ctx, &a.input)?;
             let len = std::fs::metadata(&p).map_err(|e| Error::io(&p, e))?.len();
             if too_large(len, MAX_MODEL_BYTES) {
-                return Err(cap_error(Some(&p)).into());
+                return Err(cap_error(Some(&p), MAX_MODEL_BYTES).into());
             }
             check_output(ctx, &a.out, a.force, &[&p])?;
-            let bytes = std::fs::read(&p).map_err(|e| Error::io(&p, e))?;
+            let bytes = read_capped(&p, Some(&p), MAX_MODEL_BYTES)?;
             (bytes, file_name(&p))
         }
     };
@@ -910,11 +922,7 @@ fn export(ctx: &Ctx, a: &ExportArgs) -> Res {
 
 fn import(ctx: &Ctx, a: &ImportArgs) -> Res {
     let in_path = resolve(ctx, &a.input)?;
-    let len = std::fs::metadata(&in_path).map_err(|e| Error::io(&in_path, e))?.len();
-    if too_large(len, MAX_JSON_BYTES) {
-        return Err(Error::io(&in_path, std::io::Error::other(format!("larger than {} MiB: not read", MAX_JSON_BYTES >> 20))).into());
-    }
-    let json_bytes = std::fs::read(&in_path).map_err(|e| Error::io(&in_path, e))?;
+    let json_bytes = read_capped(&in_path, Some(&in_path), MAX_JSON_BYTES)?;
     let format = modeljson::format_of(&json_bytes).map_err(|e| json_failure(&a.input, e))?;
     let out_text = a.out.to_string_lossy().into_owned();
     if ModelFormat::from_file_name(&out_text) != Some(format) {
@@ -1019,7 +1027,7 @@ mod tests {
     fn too_large_is_a_strict_comparison() {
         assert!(!too_large(10, 10) && too_large(11, 10) && !too_large(0, 0));
         assert_eq!(MAX_MODEL_BYTES, 128 << 20);
-        assert!(cap_error(None).to_string() == "larger than 128 MiB: not read", "{}", cap_error(None));
+        assert!(cap_error(None, MAX_MODEL_BYTES).to_string() == "larger than 128 MiB: not read", "{}", cap_error(None, MAX_MODEL_BYTES));
     }
 
     /// The cap is checked from the length before a byte is read: a small cap refuses a ten-byte file with the message `info` prints after FAILED.
@@ -1028,15 +1036,41 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("shaiya-anim-cap-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let f = dir.join("big.ani");
+        // the message prints the cap in MiB: a ten-byte test cap shows as 0
         std::fs::write(&f, [0u8; 10]).unwrap();
         assert_eq!(read_capped(&f, None, 10).unwrap().len(), 10);
         let e = read_capped(&f, None, 9).unwrap_err();
-        assert_eq!(e.to_string(), "larger than 128 MiB: not read");
+        assert_eq!(e.to_string(), "larger than 0 MiB: not read");
         assert_eq!(crate::exit_code_for(e.kind()), 3);
         let named = read_capped(&f, Some(&f), 9).unwrap_err().to_string();
-        assert!(named.ends_with("big.ani: larger than 128 MiB: not read"), "{named}");
+        assert!(named.ends_with("big.ani: larger than 0 MiB: not read"), "{named}");
         assert!(read_capped(&dir.join("missing.ani"), None, 9).is_err());
+        assert!(cap_error(None, MAX_JSON_BYTES).to_string() == "larger than 256 MiB: not read");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A reader that yields more than the cap is refused whatever the file said about its length, and no more than cap + 1 bytes are taken.
+    #[test]
+    fn read_bounded_stops_at_the_cap_plus_one() {
+        struct Endless(u64);
+        impl Read for Endless {
+            fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+                let n = (buf.len() as u64).min(self.0) as usize;
+                buf[..n].fill(7);
+                self.0 -= n as u64;
+                Ok(n)
+            }
+        }
+        // cap + 1 bytes are available: refused
+        assert!(read_bounded(Endless(11), 10).unwrap().is_none());
+        // far more than cap + 1 available: refused after reading cap + 1 only
+        let mut r = Endless(u64::MAX / 2);
+        let before = r.0;
+        assert!(read_bounded(&mut r, 10).unwrap().is_none());
+        assert_eq!(before - r.0, 11);
+        // exactly the cap and less are kept
+        assert_eq!(read_bounded(Endless(10), 10).unwrap().map(|v| v.len()), Some(10));
+        assert_eq!(read_bounded(Endless(0), 10).unwrap().map(|v| v.len()), Some(0));
     }
 
     /// The bug path (exit 5) cannot be provoked end to end: the mapper is called with the self-check error.

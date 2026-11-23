@@ -272,7 +272,19 @@ pub fn client_folder_above(path: &Path, saved: &[PathBuf]) -> Option<PathBuf> {
     }
     let mut saved_all: Vec<PathBuf> = saved.iter().map(|s| absolute(s)).collect();
     saved_all.extend(saved.iter().filter_map(|s| std::fs::canonicalize(s).ok()));
-    walks.into_iter().find(|d| saved_all.iter().any(|s| same_path_text(d, s)) || holds_data_sah(d))
+    walks.into_iter().find(|d| saved_all.iter().any(|s| same_path_text(d, s)) || holds_data_sah(d)).map(strip_verbatim)
+}
+
+/// Drops the verbatim prefix `canonicalize` adds on Windows (`\\?\C:\x` becomes `C:\x`, `\\?\UNC\h\s` becomes `\\h\s`), for display.
+fn strip_verbatim(p: PathBuf) -> PathBuf {
+    let text = p.to_string_lossy();
+    if let Some(rest) = text.strip_prefix(r"\\?\UNC\") {
+        PathBuf::from(format!(r"\\{rest}"))
+    } else if let Some(rest) = text.strip_prefix(r"\\?\") {
+        PathBuf::from(rest)
+    } else {
+        p
+    }
 }
 
 /// Removes this toolkit's `*.shaiya-tmp` files older than 24 h in `dir`.
@@ -295,6 +307,13 @@ pub fn cleanup_stale_temps(dir: &Path) {
 mod tests {
     use super::*;
     use crate::job::{Cancel, Silent};
+
+    #[test]
+    fn the_verbatim_prefix_is_dropped_for_display() {
+        assert_eq!(strip_verbatim(PathBuf::from(r"\\?\C:\a\b")), PathBuf::from(r"C:\a\b"));
+        assert_eq!(strip_verbatim(PathBuf::from(r"\\?\UNC\h\s\x")), PathBuf::from(r"\\h\s\x"));
+        assert_eq!(strip_verbatim(PathBuf::from("/a/b")), PathBuf::from("/a/b"));
+    }
 
     fn scratch(tag: &str) -> PathBuf {
         let d = std::env::temp_dir().join(format!("shaiya-core-fs-{tag}-{}", std::process::id()));
