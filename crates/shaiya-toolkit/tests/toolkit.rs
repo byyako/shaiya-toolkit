@@ -2914,3 +2914,96 @@ fn renaming_one_of_two_clients_on_a_folder_keeps_the_queue() {
     assert_eq!(w.h.app.app.queued_for(&a), 1);
     assert_eq!(w.h.app.app.current.as_ref().map(|c| c.name.as_str()), Some("EU test"));
 }
+
+// ------------------------------------------------------------------------------------------------ T11 W8: Export as JSON...
+
+fn export_done(w: &mut World) -> bool {
+    w.h.wait_until(WAIT, |h| !h.app.app.archive.is_exporting_json())
+}
+
+fn export_enabled(h: &Harness<ToolkitApp>) -> bool {
+    h.app.app.archive.commands().into_iter().find(|c| c.id == "archive-export-json").expect("the command is listed").enabled
+}
+
+#[test]
+fn exporting_an_ani_writes_json_that_imports_to_the_same_bytes() {
+    let mut w = ani_world("t11-w8-ani");
+    let out_dir = TempDir::new("t11-w8-ani-out");
+    let out = out_dir.path().join("x.json");
+    with_cx(&mut w.h, |app, cx| app.archive.select_path(ANI_PATH, cx));
+    assert!(preview_ready(&mut w.h));
+    assert!(export_enabled(&w.h), "one selected .ANI enables the command");
+    with_cx(&mut w.h, |app, cx| app.archive.export_json_to(&out, cx));
+    assert!(w.h.wait_until(WAIT, |h| h.app.app.archive.is_exporting_json() || out.exists()), "the export starts");
+    assert!(export_done(&mut w), "the export ends");
+    w.h.frames(2);
+    let json = std::fs::read(&out).expect("the JSON file is written");
+    let (format, bytes) = shaiya_clientdata::modeljson::import(&json).expect("the JSON imports");
+    assert_eq!(format, shaiya_clientdata::modeljson::ModelFormat::Ani);
+    assert_eq!(bytes, shaiya_testkit::anim::arm_ani(60), "the bytes are the archive entry's");
+    let text = String::from_utf8(json).unwrap();
+    assert!(text.contains(ANI_PATH) && !text.contains(&out_dir.path().display().to_string()), "the source is the archive path, no folder");
+    assert!(w.h.app.app.archive.status_line.starts_with("Exported huwm_117_test.ANI to "), "{}", w.h.app.app.archive.status_line);
+    assert!(w.h.app.shell.banner_details().is_none(), "no error was shown");
+    let leftovers: Vec<_> = std::fs::read_dir(out_dir.path()).unwrap().flatten().map(|e| e.file_name().to_string_lossy().into_owned()).collect();
+    assert_eq!(leftovers, vec!["x.json".to_string()], "no temporary file stays");
+}
+
+#[test]
+fn exporting_into_the_client_folder_is_refused() {
+    let mut w = ani_world("t11-w8-guard");
+    with_cx(&mut w.h, |app, cx| app.archive.select_path(ANI_PATH, cx));
+    assert!(preview_ready(&mut w.h));
+    let before = tree(w.client.path());
+    let inside = w.client_dir().join("x.json");
+    with_cx(&mut w.h, |app, cx| app.archive.export_json_to(&inside, cx));
+    assert!(export_done(&mut w));
+    w.h.frames(2);
+    assert!(!inside.exists(), "nothing was written");
+    assert_eq!(tree(w.client.path()), before, "the client folder is as it was");
+    let d = w.h.app.shell.banner_details().expect("the error is shown").to_string();
+    assert!(d.contains("Choose a folder outside the client:"), "{d}");
+}
+
+#[test]
+fn the_export_command_is_disabled_for_other_files_and_failed_previews() {
+    let bad = b"not an animation".to_vec();
+    let client = client_of("t11-w8-other", &[("tex/a.dds", b"DDS not really"), ("Character/Human/ANI/huwm_999_bad.ANI", &bad)]);
+    let mut w = world("t11-w8-other");
+    let dir = client.path().to_path_buf();
+    add_saved(&mut w, "Other", &dir);
+    open_saved(&mut w, "Other", &dir);
+    assert!(!export_enabled(&w.h), "nothing is selected");
+    with_cx(&mut w.h, |app, cx| app.archive.select_path("tex/a.dds", cx));
+    assert!(preview_ready(&mut w.h));
+    assert!(!export_enabled(&w.h), "a .dds row is not one of the six formats");
+    let out_dir = TempDir::new("t11-w8-other-out");
+    let none = out_dir.path().join("none.json");
+    with_cx(&mut w.h, |app, cx| app.archive.export_json_to(&none, cx));
+    assert!(!w.h.app.app.archive.is_exporting_json() && !none.exists(), "no task starts for a .dds row");
+    let bad_path = "Character/Human/ANI/huwm_999_bad.ANI";
+    with_cx(&mut w.h, |app, cx| app.archive.select_path(bad_path, cx));
+    assert!(preview_ready(&mut w.h));
+    assert!(export_enabled(&w.h), "an .ANI row enables the command even when its preview failed");
+    let out = out_dir.path().join("bad.json");
+    with_cx(&mut w.h, |app, cx| app.archive.export_json_to(&out, cx));
+    assert!(export_done(&mut w));
+    w.h.frames(2);
+    assert!(!out.exists(), "nothing was written");
+    let leftovers: Vec<_> = std::fs::read_dir(out_dir.path()).unwrap().flatten().collect();
+    assert!(leftovers.is_empty(), "no temporary file stays");
+    let want = shaiya_clientdata::modeljson::export(shaiya_clientdata::modeljson::ModelFormat::Ani, &bad, bad_path).unwrap_err().to_string();
+    let d = w.h.app.shell.banner_details().expect("the error is shown").to_string();
+    assert!(d.contains(&want), "the reader's message {want:?} is shown: {d}");
+}
+
+#[test]
+fn the_export_menu_entry_is_for_the_six_model_formats_in_any_letter_case() {
+    use shaiya_toolkit::export_json::is_model_path;
+    for p in ["a/b/x.ANI", "x.3dc", "d/x.VANI", "x.Mani", "x.3DO", "x.3de"] {
+        assert!(is_model_path(p), "{p}");
+    }
+    for p in ["a/x.dds", "a/ani", "x.ani.txt", "dir.ANI/file", "x.json"] {
+        assert!(!is_model_path(p), "{p}");
+    }
+}

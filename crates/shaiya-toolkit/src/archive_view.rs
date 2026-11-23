@@ -545,6 +545,7 @@ pub struct ArchiveView {
     pub check: Option<CheckPanel>,
     pub compare: Option<ComparePanel>,
     extract: Option<ExtractFlow>,
+    json_exports: crate::export_json::JsonExports,
     apply: ApplyFlow,
     /// The Changes / Writes / Undo / Game rows of the open confirmation (made once, when it was asked for, from the plan the write uses).
     confirm_rows: Rows,
@@ -633,6 +634,7 @@ impl ArchiveView {
             check: None,
             compare: None,
             extract: None,
+            json_exports: Default::default(),
             apply: ApplyFlow::Idle,
             confirm_rows: Vec::new(),
             discard_asked: false,
@@ -807,6 +809,9 @@ impl ArchiveView {
         self.poll_saved_new(cx);
         self.poll_preview(cx);
         self.poll_extract(cx);
+        if let Some(line) = self.json_exports.poll(cx) {
+            self.status_line = line;
+        }
         self.poll_check(cx);
         self.poll_compare(cx);
         self.poll_apply(cx);
@@ -1624,6 +1629,34 @@ impl ArchiveView {
         self.extract = Some(ExtractFlow::Running(h));
     }
 
+    /// The one selected file when it is one of the six model formats (what "Export as JSON..." works on).
+    fn export_json_row(&self) -> Option<usize> {
+        let l = self.loaded.as_ref().filter(|l| l.archive.is_some())?;
+        let mut it = self.selected.iter();
+        let (&i, None) = (it.next()?, it.next()) else { return None };
+        (self.selected_folder.is_none() && l.rows.get(i).is_some_and(|r| crate::export_json::is_model_path(&r.path))).then_some(i)
+    }
+
+    fn export_json_row_to(&mut self, row: usize, out: PathBuf, cx: &mut ToolkitCx<'_>) {
+        let Some(l) = &self.loaded else { return };
+        let (Some(a), Some(r)) = (l.archive.clone(), l.rows.get(row)) else { return };
+        let (entry, path) = (r.entry.clone(), r.path.clone());
+        let dir = l.client_dir.clone();
+        self.json_exports.start(a, entry, path, out, dir.as_deref(), cx);
+    }
+
+    /// Test hook: "Export as JSON..." for the selected file, writing to `path` without the save dialog.
+    #[doc(hidden)]
+    pub fn export_json_to(&mut self, path: &Path, cx: &mut ToolkitCx<'_>) {
+        if let Some(i) = self.export_json_row() {
+            self.export_json_row_to(i, path.to_path_buf(), cx);
+        }
+    }
+
+    pub fn is_exporting_json(&self) -> bool {
+        self.json_exports.is_running()
+    }
+
     pub fn is_extracting(&self) -> bool {
         matches!(self.extract, Some(ExtractFlow::Running(_)) | Some(ExtractFlow::Planning(..)))
     }
@@ -1846,6 +1879,7 @@ enum Act {
     Click { view: usize, ctrl: bool, shift: bool },
     Open(String),
     Extract { all: bool, flat: bool },
+    ExportJson(usize),
     AddFiles,
     QueueRemove,
     CopyPaths,
@@ -1897,6 +1931,7 @@ impl ArchiveView {
             c("archive-search", "Search the archive", Some(K::new(M::COMMAND, Key::F)), self.is_open()),
             c("archive-extract", "Extract selected files...", Some(K::new(M::COMMAND, Key::E)), open && (!self.selected.is_empty() || self.selected_folder.is_some())),
             c("archive-extract-all", "Extract all shown files...", Some(K::new(M::COMMAND | M::SHIFT, Key::E)), open),
+            c("archive-export-json", "Export as JSON...", None, self.export_json_row().is_some()),
             c("archive-add", "Add files to the archive...", Some(K::new(M::NONE, Key::Insert)), edit),
             c("archive-remove", "Queue removal of selected files", Some(K::new(M::NONE, Key::Delete)), edit && !self.selected.is_empty()),
             c("archive-apply", "Apply pending changes to the client...", Some(K::new(M::COMMAND, Key::Enter)), edit && !busy && writes && !self.pending.is_empty()),
@@ -1923,6 +1958,7 @@ impl ArchiveView {
             }
             "archive-extract" => Some(Act::Extract { all: false, flat: false }),
             "archive-extract-all" => Some(Act::Extract { all: true, flat: false }),
+            "archive-export-json" => self.export_json_row().map(Act::ExportJson),
             "archive-add" => Some(Act::AddFiles),
             "archive-remove" => Some(Act::QueueRemove),
             "archive-apply" => Some(Act::ApplyPending),
@@ -2217,7 +2253,11 @@ impl ArchiveView {
                                 ("Replace with file...", MenuChoice::Replace),
                                 ("Remove", MenuChoice::Remove),
                                 ("Decrypt to file...", MenuChoice::Decrypt),
+                                ("Export as JSON...", MenuChoice::ExportJson),
                             ] {
+                                if matches!(choice, MenuChoice::ExportJson) && !matches!(v, ViewRow::File(i) if crate::export_json::is_model_path(&l.rows[i].path)) {
+                                    continue;
+                                }
                                 if ui.button(label).clicked() {
                                     menu = Some((vi, choice));
                                     ui.close();
@@ -2271,6 +2311,11 @@ impl ArchiveView {
                 MenuChoice::Decrypt => {
                     if let ViewRow::File(i) = self.view[vi] {
                         acts.push(Act::DecryptTo(i));
+                    }
+                }
+                MenuChoice::ExportJson => {
+                    if let ViewRow::File(i) = self.view[vi] {
+                        acts.push(Act::ExportJson(i));
                     }
                 }
             }
@@ -2823,6 +2868,12 @@ impl ArchiveView {
                         self.begin_extract(dir, all, false, flat, cx);
                     }
                 }
+                Act::ExportJson(i) => {
+                    let name = self.loaded.as_ref().and_then(|l| l.rows.get(i)).map(|r| r.name().to_string());
+                    if let Some(out) = name.and_then(|n| cx.shell.save_file("export-json", &crate::export_json::default_name(&n), &[("JSON", &["json"])])) {
+                        self.export_json_row_to(i, out, cx);
+                    }
+                }
                 Act::AddFiles => {
                     let files = cx.shell.pick_files("add", &[("All files", &["*"])]);
                     if !files.is_empty() {
@@ -2934,6 +2985,7 @@ enum MenuChoice {
     Replace,
     Remove,
     Decrypt,
+    ExportJson,
 }
 
 /// What the Archive tab asks the app frame to do on its behalf.
