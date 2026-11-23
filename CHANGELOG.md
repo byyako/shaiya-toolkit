@@ -10,6 +10,11 @@ All notable changes are listed here, newest first. The format follows [Keep a Ch
 - The `.ANI` preview scans each candidate `.3DC` once per opened archive (the answers are dropped when the archive is loaded again; a failed or cancelled read is not remembered; the chosen meshes are read again for every preview) and skips a candidate over 32 MiB.
 - The "Replace with file..." question about an `.ani` with a different skeleton is titled "The skeleton differs from the file it replaces"; otherwise (an SData finding or an unfinished check also asks) it keeps "This file looks broken". The Add dialog keeps its title "Some files look broken".
 
+### Fixed
+
+- While "Apply to several test clients" runs, the other actions that write to a client are greyed out with the hover text "Applying patches to several clients; wait until it ends": Apply to client, Save as new archive, Discard and Compact in the Archive tab, Apply, Roll back, Undo last change and Prune in Apply & history, Clean up, Put back, Compact and Prune in Client health, "Use another archive pair...", and switching the client. Queueing changes stays available.
+- Removing or renaming one of two saved clients that share a folder keeps the folder's queued changes and asks nothing; the other client (the first remaining one in the list) owns the queue, and a renamed client keeps it under the new name. Removing or renaming the last client on a folder still asks first and drops them.
+
 ### Documentation
 
 - Opt-in tests can be made to fail when their variable is missing: set `SHAIYA_OPTIN_REQUIRE` to a list of variable names (the svmap crates still only skip). `SHAIYA_EXPECT_CHANGED_ANI` sets the number of changed `.ANI` files the two opt-in comparisons expect; without it no count is asserted.

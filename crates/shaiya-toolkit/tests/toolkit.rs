@@ -2749,3 +2749,168 @@ fn selecting_a_mani_shows_the_labelled_fields() {
         assert!(t.contains(want), "{want}: {t}");
     }
 }
+
+// ------------------------------------------------------------------------------------------------ T11 W7: multi-apply and same-folder clients
+
+fn palette_enabled(h: &Harness<ToolkitApp>, id: &str) -> bool {
+    <ToolkitApp as shaiya_ui::ToolApp>::commands(&h.app.app).into_iter().find(|c| c.id == id).unwrap_or_else(|| panic!("no command {id}")).enabled
+}
+
+fn owners(h: &Harness<ToolkitApp>) -> Vec<(String, usize)> {
+    h.app.app.queued_clients().into_iter().map(|(n, _, c)| (n, c)).collect()
+}
+
+#[test]
+fn a_running_multi_apply_disables_the_other_writes() {
+    let mut w = open_world("t11-multi-lock");
+    let a = w.client_dir();
+    add_saved(&mut w, "US twin", &a);
+    let b = client_of("t11-multi-lock-b", &[("b.txt", b"b file")]);
+    add_saved(&mut w, "EU test", b.path());
+    let src = TempDir::new("t11-multi-lock-src");
+    queue_one(&mut w, &src.path().join("q.txt"), "queued/one.txt");
+    let ids = ["archive-apply", "archive-save-new", "archive-discard", "archive-compact"];
+    // off: every write of the lists is on
+    let app = &w.h.app.app;
+    assert!(app.archive.write_actions_enabled() && app.apply.write_actions_enabled() && app.health.write_actions_enabled() && app.clients.write_actions_enabled() && app.client_switch_enabled());
+    for id in ids {
+        assert!(palette_enabled(&w.h, id), "{id} is on");
+    }
+    // on: all of them are off, whatever tab shows them
+    w.h.app.app.multi.set_running_for_tests(true);
+    w.h.frames(2);
+    let app = &w.h.app.app;
+    assert!(app.multi.is_running());
+    assert!(!app.archive.write_actions_enabled(), "Archive tab: Apply, Discard, Compact, Save as new archive");
+    assert!(!app.apply.write_actions_enabled(), "Apply tab: apply, roll back, prune");
+    assert!(!app.health.write_actions_enabled(), "Health tab: Clean up, Put back, Compact, Prune");
+    assert!(!app.clients.write_actions_enabled(), "Use another archive pair");
+    assert!(!app.client_switch_enabled(), "the client picker, Open and Open recent");
+    for id in ids {
+        assert!(!palette_enabled(&w.h, id), "{id} is off");
+    }
+    assert_eq!(w.h.app.app.undo_state(), Err(shaiya_toolkit::multi_lock::MULTI_RUNNING_HOVER.to_string()), "Undo last change and Roll back too");
+    // a key or palette entry that reaches an off action does nothing
+    with_cx(&mut w.h, |app, cx| shaiya_ui::ToolApp::run_command(app, "archive-discard", cx));
+    w.h.frames(2);
+    assert!(!w.h.text().contains("Discard 1 pending change"), "no question: {}", w.h.text());
+    with_cx(&mut w.h, |app, cx| app.archive.request_apply(cx));
+    with_cx(&mut w.h, |app, _| app.archive.request_compact());
+    w.h.frames(2);
+    assert!(!w.h.app.app.archive.is_applying(), "no apply or compact starts");
+    // switching clients does nothing
+    with_cx(&mut w.h, |app, cx| app.select_client("EU test", cx));
+    w.h.frames(3);
+    assert_eq!(w.h.app.app.current.as_ref().map(|c| c.name.as_str()), Some("US test"));
+    assert_eq!(w.h.app.app.archive.pending.len(), 1, "the queue is untouched");
+    let other_sah = b.path().join("data.sah");
+    with_cx(&mut w.h, |app, cx| app.open_archive_file(other_sah, cx));
+    w.h.frames(3);
+    assert_eq!(w.h.app.app.archive.client_dir(), Some(a.as_path()), "Open and Open recent do not switch either");
+    // Prune asks nothing, and queueing changes stays available
+    let cur = w.h.app.app.current.clone();
+    w.h.app.app.apply.request_prune(cur.as_ref());
+    assert!(!w.h.app.app.apply.is_busy(), "no Prune confirmation while it runs");
+    queue_one(&mut w, &src.path().join("q2.txt"), "queued/two.txt");
+    assert_eq!(w.h.app.app.archive.pending.len(), 2, "queueing is not part of the lock");
+    // off again: everything is on and the switch works
+    w.h.app.app.multi.set_running_for_tests(false);
+    w.h.frames(2);
+    w.h.app.app.apply.request_prune(cur.as_ref());
+    assert!(w.h.app.app.apply.is_busy(), "the same call asks again once it ended");    let app = &w.h.app.app;
+    assert!(app.archive.write_actions_enabled() && app.apply.write_actions_enabled() && app.health.write_actions_enabled() && app.clients.write_actions_enabled() && app.client_switch_enabled());
+    for id in ids {
+        assert!(palette_enabled(&w.h, id), "{id} is on again");
+    }
+    open_saved(&mut w, "EU test", b.path());
+}
+
+/// The picker line of a saved client.
+fn picker_line(w: &mut World, name: &str) -> String {
+    let c = w.h.app.shell.shared().clients.iter().find(|c| c.name == name).cloned().expect("saved client");
+    with_cx(&mut w.h, |app, cx| app.picker_label_of(&c, true, cx))
+}
+
+#[test]
+fn removing_one_of_two_clients_on_a_folder_keeps_the_queue() {
+    // the open client is removed
+    let mut w = open_world("t11-remove-two");
+    let a = w.client_dir();
+    add_saved(&mut w, "US twin", &a);
+    let src = TempDir::new("t11-remove-two-src");
+    queue_one(&mut w, &src.path().join("q.txt"), "queued/one.txt");
+    with_cx(&mut w.h, |app, cx| app.clients.begin_remove("US test", cx));
+    w.h.frames(3);
+    assert!(!w.h.text().contains("Drop them and remove"), "no question: {}", w.h.text());
+    assert!(!w.h.app.shell.shared().clients.iter().any(|c| c.name == "US test"), "removed at once");
+    assert_eq!(w.h.app.app.archive.pending.len(), 1, "the queue is kept");
+    assert_eq!(w.h.app.app.queued_for(&a), 1);
+    assert_eq!(w.h.app.app.current.as_ref().map(|c| (c.name.as_str(), c.dir.clone())), Some(("US twin", a.clone())), "the open client is the one that stays");
+    assert_eq!(owners(&w.h), vec![("US twin".to_string(), 1)]);
+    let line = picker_line(&mut w, "US twin");
+    assert!(line.ends_with("1 queued"), "{line}");
+    // the queue is stashed while another folder is open: its owner name follows
+    let mut w = open_world("t11-remove-two-stash");
+    let a = w.client_dir();
+    add_saved(&mut w, "Zed twin", &a);
+    add_saved(&mut w, "US twin", &a);
+    let b = client_of("t11-remove-two-stash-b", &[("b.txt", b"b file")]);
+    add_saved(&mut w, "EU test", b.path());
+    let src = TempDir::new("t11-remove-two-stash-src");
+    queue_one(&mut w, &src.path().join("q.txt"), "queued/one.txt");
+    open_saved(&mut w, "EU test", b.path());
+    w.h.frames(2);
+    assert_eq!(owners(&w.h), vec![("US test".to_string(), 1)]);
+    with_cx(&mut w.h, |app, cx| app.clients.begin_remove("US test", cx));
+    w.h.frames(3);
+    assert!(!w.h.text().contains("Drop them and remove"), "no question: {}", w.h.text());
+    assert_eq!(w.h.app.app.queued_for(&a), 1, "the stashed queue is kept");
+    assert_eq!(owners(&w.h), vec![("Zed twin".to_string(), 1)], "the first remaining client on the folder, by the list's order, owns it");
+    assert_eq!(w.h.app.app.current.as_ref().map(|c| c.name.as_str()), Some("EU test"), "the open client is not touched");
+    let line = picker_line(&mut w, "US twin");
+    assert!(line.ends_with("1 queued"), "{line}");
+    // back on the folder the queue is there
+    open_saved(&mut w, "US twin", &a);
+    assert_eq!(w.h.app.app.archive.pending.len(), 1);
+    // the last client on a folder still asks
+    with_cx(&mut w.h, |app, cx| app.clients.begin_remove("Zed twin", cx));
+    w.h.frames(2);
+    with_cx(&mut w.h, |app, cx| app.clients.begin_remove("US twin", cx));
+    w.h.frames(2);
+    assert!(w.h.text().contains("Drop them and remove"), "{}", w.h.text());
+}
+
+#[test]
+fn renaming_one_of_two_clients_on_a_folder_keeps_the_queue() {
+    let mut w = open_world("t11-rename-two");
+    let a = w.client_dir();
+    add_saved(&mut w, "US twin", &a);
+    let src = TempDir::new("t11-rename-two-src");
+    queue_one(&mut w, &src.path().join("q.txt"), "queued/one.txt");
+    // the owner is the open client: its name follows
+    with_cx(&mut w.h, |app, cx| assert!(app.clients.begin_rename("US test", "US renamed", cx)));
+    w.h.frames(3);
+    assert!(!w.h.text().contains("Drop them and rename"), "no question: {}", w.h.text());
+    assert!(w.h.app.shell.shared().clients.iter().any(|c| c.name == "US renamed") && !w.h.app.shell.shared().clients.iter().any(|c| c.name == "US test"));
+    assert_eq!(w.h.app.app.archive.pending.len(), 1, "the queue is kept");
+    assert_eq!(owners(&w.h), vec![("US renamed".to_string(), 1)], "owned by the new name");
+    assert_eq!(w.h.app.app.current.as_ref().map(|c| c.name.as_str()), Some("US renamed"));
+    // the owner was the other client: nothing changes
+    with_cx(&mut w.h, |app, cx| assert!(app.clients.begin_rename("US twin", "Twin two", cx)));
+    w.h.frames(3);
+    assert!(!w.h.text().contains("Drop them and rename"));
+    assert_eq!(owners(&w.h), vec![("US renamed".to_string(), 1)]);
+    assert_eq!(w.h.app.app.queued_for(&a), 1);
+    // a stashed queue: its entry's name follows the rename
+    let b = client_of("t11-rename-two-b", &[("b.txt", b"b file")]);
+    add_saved(&mut w, "EU test", b.path());
+    open_saved(&mut w, "EU test", b.path());
+    w.h.frames(2);
+    assert_eq!(owners(&w.h), vec![("US renamed".to_string(), 1)]);
+    with_cx(&mut w.h, |app, cx| assert!(app.clients.begin_rename("US renamed", "US again", cx)));
+    w.h.frames(3);
+    assert!(!w.h.text().contains("Drop them and rename"));
+    assert_eq!(owners(&w.h), vec![("US again".to_string(), 1)]);
+    assert_eq!(w.h.app.app.queued_for(&a), 1);
+    assert_eq!(w.h.app.app.current.as_ref().map(|c| c.name.as_str()), Some("EU test"));
+}

@@ -123,6 +123,8 @@ pub struct MultiApply {
     patches: Vec<(PathBuf, bool)>,
     clients: Vec<(String, PathBuf, bool)>,
     run: Option<Run>,
+    /// Set only by [`MultiApply::set_running_for_tests`].
+    forced_running: bool,
     /// How the last run ended.
     pub last: Option<Outcome>,
 }
@@ -165,7 +167,13 @@ impl MultiApply {
     }
 
     pub fn is_running(&self) -> bool {
-        self.run.is_some()
+        self.run.is_some() || self.forced_running
+    }
+
+    /// Test hook: makes [`MultiApply::is_running`] true without a task, so a test can look at the buttons that are off meanwhile.
+    #[doc(hidden)]
+    pub fn set_running_for_tests(&mut self, on: bool) {
+        self.forced_running = on;
     }
 
     /// Picks the patches and clients in the dialog by name (tests): `Some(true)` for the clients.

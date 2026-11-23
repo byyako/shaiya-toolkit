@@ -11,6 +11,7 @@ pub mod health;
 pub mod inspect;
 pub mod keys;
 pub mod multi_apply;
+pub mod multi_lock;
 pub mod patch_builder;
 pub mod preview;
 pub mod preview_models;
@@ -184,6 +185,10 @@ impl ToolkitApp {
 
     /// Opens a saved client by name (a missing folder is reported, not opened). The queue of the client that was active stays with it.
     pub fn select_client(&mut self, name: &str, cx: &mut ToolkitCx<'_>) {
+        if !self.client_switch_enabled() {
+            cx.shell.status(multi_lock::MULTI_RUNNING_HOVER);
+            return;
+        }
         if self.archive.is_applying() {
             cx.shell.status("Wait for the change in the Archive tab to finish first");
             return;
@@ -247,6 +252,27 @@ impl ToolkitApp {
         self.queues.retain(|d, _| !clients::same_folder(d, dir));
     }
 
+    /// A saved client was removed or renamed while another one stays on the same folder: the folder's queue is kept, and where its owner
+    /// name was `old_name` it becomes `new_name`. The open client's queue is in `archive.pending` and is named by `self.current`; a stashed
+    /// queue carries its name in `queues`.
+    pub fn set_queue_owner(&mut self, dir: &Path, old_name: &str, new_name: &str) {
+        if let Some(c) = &mut self.current {
+            if clients::same_folder(&c.dir, dir) && c.name.eq_ignore_ascii_case(old_name) {
+                c.name = new_name.to_string();
+            }
+        }
+        for (d, (name, _)) in self.queues.iter_mut() {
+            if clients::same_folder(d, dir) && name.eq_ignore_ascii_case(old_name) {
+                *name = new_name.to_string();
+            }
+        }
+    }
+
+    /// False while "Apply to several test clients" runs: the client picker, Open and Open recent do not change the open client then.
+    pub fn client_switch_enabled(&self) -> bool {
+        !self.multi.is_running()
+    }
+
     fn open_client_dir(&mut self, name: &str, dir: PathBuf, cx: &mut ToolkitCx<'_>) {
         self.stash_queue();
         let (check_version, current_version) = clients::version_numbers(&dir);
@@ -262,6 +288,10 @@ impl ToolkitApp {
 
     /// Opens any archive file read only (its own folder's changes are not offered). The active client's queue stays with that client.
     pub fn open_archive_file(&mut self, path: PathBuf, cx: &mut ToolkitCx<'_>) {
+        if !self.client_switch_enabled() {
+            cx.shell.status(multi_lock::MULTI_RUNNING_HOVER);
+            return;
+        }
         if self.archive.is_applying() {
             cx.shell.status("Wait for the change in the Archive tab to finish first");
             return;
@@ -443,7 +473,9 @@ impl ToolkitApp {
             None => {}
             Some(0) => {
                 self.folder_prompt = None;
-                if self.archive.is_applying() {
+                if !self.client_switch_enabled() {
+                    cx.shell.status(multi_lock::MULTI_RUNNING_HOVER);
+                } else if self.archive.is_applying() {
                     cx.shell.status("Wait for the change in the Archive tab to finish first");
                 } else {
                     let name = dir.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| "client".into());
@@ -482,6 +514,7 @@ impl ToolkitApp {
         let clients: Vec<shaiya_ui::Client> = cx.shell.shared().clients.clone();
         let current = self.current.as_ref().map(|c| c.name.clone());
         let undo = self.undo_state();
+        let switch_ok = self.client_switch_enabled();
         let shown = match (&current, self.archive.source_name()) {
             (Some(n), _) => n.clone(),
             (None, Some(f)) => f,
@@ -494,7 +527,7 @@ impl ToolkitApp {
                     let found = has_sah(Path::new(&c.path));
                     let label = self.picker_label_of(c, found, cx);
                     let text = if found { RichText::new(label) } else { RichText::new(label).color(pal.weak) };
-                    if ui.add_enabled(found, egui::Button::selectable(current.as_deref() == Some(c.name.as_str()), text)).clicked() {
+                    if multi_lock::lock_hover(ui.add_enabled(found && switch_ok, egui::Button::selectable(current.as_deref() == Some(c.name.as_str()), text)), !switch_ok).clicked() {
                         act = Some(A::Select(c.name.clone()));
                         ui.close();
                     }
@@ -506,7 +539,7 @@ impl ToolkitApp {
                     act = Some(A::Add);
                     ui.close();
                 }
-                if ui.button("Open other archive...").clicked() {
+                if multi_lock::lock_hover(ui.add_enabled(switch_ok, egui::Button::new("Open other archive...")), !switch_ok).clicked() {
                     act = Some(A::Other);
                     ui.close();
                 }
@@ -641,6 +674,12 @@ impl ToolApp for ToolkitApp {
         }
         self.was_focused = focused;
         self.refresh_ini();
+        // while "Apply to several test clients" runs, the other write actions are off (see `multi_lock`)
+        let multi = self.multi.is_running();
+        self.archive.set_multi_running(multi);
+        self.apply.set_multi_running(multi);
+        self.health.set_multi_running(multi);
+        self.clients.multi_running = multi;
         self.toolbar(ui, cx);
         ui.separator();
         self.tab_keys(&ctx, cx);
@@ -676,6 +715,7 @@ impl ToolApp for ToolkitApp {
         for a in actions {
             match a {
                 ClientsAction::DropQueue(d) => self.drop_queue_of(&d),
+                ClientsAction::QueueOwner { dir, old_name, new_name } => self.set_queue_owner(&dir, &old_name, &new_name),
                 ClientsAction::Open(n) => self.select_client(&n, cx),
                 ClientsAction::Health(n) => self.open_health(Some(&n), cx),
                 ClientsAction::Reload(dir) => {

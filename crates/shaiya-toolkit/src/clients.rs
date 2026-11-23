@@ -4,6 +4,7 @@
 
 use crate::archive_view::ArchiveView;
 use crate::explain::{self, Rows};
+use crate::multi_lock::lock_hover;
 use crate::ToolkitSettings;
 use egui::RichText;
 use shaiya_archive::client::{read_version_ini, ClientFiles};
@@ -178,6 +179,11 @@ struct EditClient {
 /// The hover text of "Use another archive pair..." while the client's folder has queued changes.
 pub const SWAP_BLOCKED_HOVER: &str = "Apply or discard this client's queued changes first";
 
+/// The names of the other saved clients (not `name`) whose folder is `dir`, in the saved list's order.
+fn other_clients_on(list: &[Client], name: &str, dir: &Path) -> Vec<String> {
+    list.iter().filter(|c| !c.name.eq_ignore_ascii_case(name) && same_folder(Path::new(&c.path), dir)).map(|c| c.name.clone()).collect()
+}
+
 /// The queued changes of the folder `dir`, whichever saved client (or opened folder) they belong to.
 pub(crate) fn queued_in(queued: &[(String, PathBuf, usize)], dir: &Path) -> usize {
     queued.iter().find(|(_, d, _)| same_folder(d, dir)).map(|(_, _, c)| *c).unwrap_or(0)
@@ -249,6 +255,9 @@ pub enum ClientsAction {
     Reload(PathBuf),
     /// A client was removed from the list or renamed: drop the queued changes of its folder.
     DropQueue(PathBuf),
+    /// A client was removed or renamed while another saved client stays on its folder: the queue of that folder is kept and, where its
+    /// owner name was `old_name` (the open client's name or the stashed queue's name), the owner becomes `new_name`.
+    QueueOwner { dir: PathBuf, old_name: String, new_name: String },
 }
 
 pub struct ClientsUi {
@@ -263,11 +272,15 @@ pub struct ClientsUi {
     drop_ask: Option<DropAsk>,
     /// The Changes / Writes / Undo / Game rows of the open swap confirmation (made when the swap was asked for).
     swap_rows: Rows,
+    /// True while "Apply to several test clients" runs (set by the app every frame): "Use another archive pair..." is off.
+    pub multi_running: bool,
+    /// Actions made outside a frame of the dialogs (a removal or rename that needed no question); handed out by the next `ui`.
+    later: Vec<ClientsAction>,
 }
 
 impl Default for ClientsUi {
     fn default() -> Self {
-        ClientsUi { add: None, manage: false, statuses: Vec::new(), edit: None, swap: SwapFlow::Idle, queued: Vec::new(), drop_ask: None, swap_rows: Vec::new() }
+        ClientsUi { add: None, manage: false, statuses: Vec::new(), edit: None, swap: SwapFlow::Idle, queued: Vec::new(), drop_ask: None, swap_rows: Vec::new(), multi_running: false, later: Vec::new() }
     }
 }
 
@@ -295,7 +308,15 @@ impl ClientsUi {
         self.ask_swap(client.to_string(), dir, other);
     }
 
+    /// False while a multi-client apply runs: "Use another archive pair..." is off then.
+    pub fn write_actions_enabled(&self) -> bool {
+        !self.multi_running
+    }
+
     fn ask_swap(&mut self, client: String, dir: PathBuf, other: PathBuf) {
+        if !self.write_actions_enabled() {
+            return;
+        }
         self.swap_rows = match ClientFiles::locate(&dir) {
             Ok(files) => explain::swap_rows(&files, &other),
             Err(_) => Vec::new(),
@@ -375,6 +396,7 @@ impl ClientsUi {
             let shown: Vec<String> = clients.iter().map(|c| cx.shell.folder_text(&c.name, Path::new(&c.path))).collect();
             let queued = self.queued.clone();
             let queued_of = move |dir: &str| queued_in(&queued, Path::new(dir));
+            let multi_locked = !self.write_actions_enabled();
             egui::Window::new("Manage client folders").open(&mut open).default_width(720.0).show(ctx, |ui| {
                 if clients.is_empty() {
                     ui.label("No client folders yet. Use Add client folder... in the toolbar.");
@@ -417,7 +439,8 @@ impl ClientsUi {
                             if ui.button("Edit note...").clicked() {
                                 edit = Some((c.name.clone(), EditKind::Note));
                             }
-                            if ui.add_enabled(st.found && queued_of(&c.path) == 0, egui::Button::new("Use another archive pair...")).on_hover_text(if queued_of(&c.path) > 0 { SWAP_BLOCKED_HOVER } else { "Swap in another data.sah/data.saf; the current pair is kept" }).clicked() {
+                            let swap_btn = ui.add_enabled(st.found && queued_of(&c.path) == 0 && !multi_locked, egui::Button::new("Use another archive pair...")).on_hover_text(if queued_of(&c.path) > 0 { SWAP_BLOCKED_HOVER } else { "Swap in another data.sah/data.saf; the current pair is kept" });
+                            if lock_hover(swap_btn, multi_locked).clicked() {
                                 swap_for = Some((c.name.clone(), PathBuf::from(&c.path)));
                             }
                             if ui.button("Remove from list").on_hover_text("The files are not touched").clicked() {
@@ -430,7 +453,7 @@ impl ClientsUi {
                 if let SwapFlow::Done { client, dir, kept } = &self.swap {
                     ui.separator();
                     ui.label(format!("{client}: the previous pair is kept as {}", kept.display()));
-                    if ui.button("Swap back").clicked() {
+                    if lock_hover(ui.add_enabled(!multi_locked, egui::Button::new("Swap back")), multi_locked).clicked() {
                         swap_for = Some((client.clone(), kept.clone()));
                         let _ = dir;
                     }
@@ -507,6 +530,7 @@ impl ClientsUi {
         }
         self.poll_drop_ask(cx, &mut out);
         self.poll_swap(cx, archive, &mut out);
+        out.append(&mut self.later);
         out
     }
 
@@ -523,29 +547,43 @@ impl ClientsUi {
         (dir, n)
     }
 
-    /// Remove from the list: at once, or after the question when the client has queued changes.
+    /// Remove from the list: at once, or after the question when the client has queued changes and no other saved client stays on its
+    /// folder. With another saved client on the folder the queue is kept and that client (the first by the list's order) owns it.
     pub fn begin_remove(&mut self, name: &str, cx: &mut ToolkitCx<'_>) {
         let (dir, q) = self.queued_of(name, cx);
-        if q > 0 {
+        let heirs = other_clients_on(cx.shell.shared().clients.as_slice(), name, &dir);
+        if q > 0 && heirs.is_empty() {
             self.drop_ask = Some(DropAsk { name: name.to_string(), dir, queued: q, rename_to: None });
         } else {
-            if let Err(e) = remove_client(cx.shell, name) {
-                cx.shell.error("Cannot change the client list", &e);
+            match remove_client(cx.shell, name) {
+                Ok(()) => {
+                    if q > 0 {
+                        self.later.push(ClientsAction::QueueOwner { dir, old_name: name.to_string(), new_name: heirs[0].clone() });
+                    }
+                }
+                Err(e) => cx.shell.error("Cannot change the client list", &e),
             }
             self.refresh(cx.shell);
         }
     }
 
-    /// Rename: at once, or after the question when the client has queued changes. False when the new name was refused.
+    /// Rename: at once, or after the question when the client has queued changes and no other saved client stays on its folder (then the
+    /// queue is kept; its owner name follows the rename where it was the old name). False when the new name was refused.
     pub fn begin_rename(&mut self, name: &str, new_name: &str, cx: &mut ToolkitCx<'_>) -> bool {
         let (dir, q) = self.queued_of(name, cx);
-        if q > 0 && new_name != name {
+        let shared = !other_clients_on(cx.shell.shared().clients.as_slice(), name, &dir).is_empty();
+        if q > 0 && new_name != name && !shared {
             self.drop_ask = Some(DropAsk { name: name.to_string(), dir, queued: q, rename_to: Some(new_name.to_string()) });
             return true;
         }
         let r = rename_client(cx.shell, name, new_name);
-        if let Err(e) = &r {
-            cx.shell.error("Cannot change the client list", e);
+        match &r {
+            Ok(()) => {
+                if q > 0 && new_name != name {
+                    self.later.push(ClientsAction::QueueOwner { dir, old_name: name.to_string(), new_name: new_name.to_string() });
+                }
+            }
+            Err(e) => cx.shell.error("Cannot change the client list", e),
         }
         self.refresh(cx.shell);
         r.is_ok()

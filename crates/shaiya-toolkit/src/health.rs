@@ -4,6 +4,7 @@
 
 use crate::archive_view::ArchiveView;
 use crate::explain::{self, Rows};
+use crate::multi_lock::lock_hover;
 use crate::ToolkitSettings;
 use egui::RichText;
 use shaiya_archive::cleanup::{self, CleanReport, FolderInfo, Manifest, Plan, PutBackReport};
@@ -64,11 +65,13 @@ pub struct HealthView {
     queued: Vec<HealthAction>,
     /// The last thing a clean-up or Put back did (or why it did not).
     pub last: Option<String>,
+    /// True while "Apply to several test clients" runs (set by the app every frame): Clean up, Put back, Compact and Prune are off.
+    multi_running: bool,
 }
 
 impl Default for HealthView {
     fn default() -> Self {
-        HealthView { open: false, client: None, load: Load::Idle, selected: BTreeSet::new(), flow: Flow::Idle, rows: Vec::new(), queued: Vec::new(), last: None }
+        HealthView { open: false, client: None, load: Load::Idle, selected: BTreeSet::new(), flow: Flow::Idle, rows: Vec::new(), queued: Vec::new(), last: None, multi_running: false }
     }
 }
 
@@ -108,6 +111,16 @@ impl HealthView {
         !matches!(self.flow, Flow::Idle)
     }
 
+    /// The app tells the window every frame whether "Apply to several test clients" runs.
+    pub fn set_multi_running(&mut self, on: bool) {
+        self.multi_running = on;
+    }
+
+    /// False while a multi-client apply runs: Clean up, Put back, Compact and Prune are off then (the buttons and their requests).
+    pub fn write_actions_enabled(&self) -> bool {
+        !self.multi_running
+    }
+
     /// Ticks or unticks one leftover (the checkbox calls this).
     pub fn set_selected(&mut self, id: &str, on: bool) {
         if on {
@@ -121,7 +134,7 @@ impl HealthView {
     pub fn request_clean(&mut self) {
         let Load::Ready(h) = &self.load else { return };
         let Some((name, dir)) = self.client.clone() else { return };
-        if self.is_busy() {
+        if self.is_busy() || !self.write_actions_enabled() {
             return;
         }
         let ids: Vec<String> = self.selected.iter().cloned().collect();
@@ -136,7 +149,7 @@ impl HealthView {
     /// "Put back...": the confirmation for one cleanup folder.
     pub fn request_put_back(&mut self, folder: &str) {
         let Some((name, dir)) = self.client.clone() else { return };
-        if self.is_busy() {
+        if self.is_busy() || !self.write_actions_enabled() {
             return;
         }
         let path = dir.join(shaiya_archive::journal::DEFAULT_DIR).join(folder);
@@ -182,6 +195,7 @@ impl HealthView {
         let pal = cx.shell.pal();
         let clients = cx.shell.shared().clients.clone();
         let busy = self.is_busy();
+        let locked = !self.write_actions_enabled();
         let mut open = self.open;
         let mut pick: Option<(String, PathBuf)> = None;
         let (mut refresh, mut clean, mut compact, mut prune) = (false, false, false, false);
@@ -223,7 +237,7 @@ impl HealthView {
                         Some(d) => {
                             ui.horizontal(|ui| {
                                 ui.label(format!("data.saf: {} on disk, {} in use, {} dead space.", human_size(d.saf_bytes), human_size(d.live_bytes), human_size(d.dead_bytes)));
-                                if ui.add_enabled(!busy && d.dead_bytes > 0, egui::Button::new("Compact...")).on_hover_text("Rewrite data.saf without the dead space. It makes no journal, so earlier changes can no longer be rolled back").clicked() {
+                                if lock_hover(ui.add_enabled(!busy && !locked && d.dead_bytes > 0, egui::Button::new("Compact...")).on_hover_text("Rewrite data.saf without the dead space. It makes no journal, so earlier changes can no longer be rolled back"), locked).clicked() {
                                     compact = true;
                                 }
                             });
@@ -234,7 +248,7 @@ impl HealthView {
                     }
                     ui.horizontal(|ui| {
                         ui.label(format!("Journals: {} ({}).", h.journals.count, human_size(h.journals.bytes)));
-                        if ui.add_enabled(!busy && h.journals.count > 0, egui::Button::new("Prune...")).on_hover_text("Delete the oldest journals; they ask first").clicked() {
+                        if lock_hover(ui.add_enabled(!busy && !locked && h.journals.count > 0, egui::Button::new("Prune...")).on_hover_text("Delete the oldest journals; they ask first"), locked).clicked() {
                             prune = true;
                         }
                     });
@@ -262,7 +276,7 @@ impl HealthView {
                     }
                     let ticked = h.leftovers.iter().filter(|l| self.selected.contains(&l.id)).count();
                     ui.horizontal(|ui| {
-                        if ui.add_enabled(!busy && ticked > 0, egui::Button::new("Clean up...")).on_hover_text("Moves the ticked files into a cleanup folder; none of them is deleted").clicked() {
+                        if lock_hover(ui.add_enabled(!busy && !locked && ticked > 0, egui::Button::new("Clean up...")).on_hover_text("Moves the ticked files into a cleanup folder; none of them is deleted"), locked).clicked() {
                             clean = true;
                         }
                         ui.label(RichText::new(format!("{ticked} ticked")).color(pal.weak));
@@ -273,7 +287,7 @@ impl HealthView {
                         for f in &h.cleanups {
                             ui.horizontal(|ui| {
                                 ui.label(folder_line(f));
-                                if ui.add_enabled(!busy && f.to_put_back > 0, egui::Button::new("Put back...")).clicked() {
+                                if lock_hover(ui.add_enabled(!busy && !locked && f.to_put_back > 0, egui::Button::new("Put back...")), locked).clicked() {
                                     put_back = Some(f.name.clone());
                                 }
                             });
@@ -312,14 +326,14 @@ impl HealthView {
 
     /// The "Compact..." link.
     pub fn ask_compact(&mut self) {
-        if let Some((_, d)) = &self.client {
+        if let (Some((_, d)), true) = (&self.client, self.write_actions_enabled()) {
             self.queued.push(HealthAction::Compact(d.clone()));
         }
     }
 
     /// The "Prune..." link.
     pub fn ask_prune(&mut self) {
-        if let Some((_, d)) = &self.client {
+        if let (Some((_, d)), true) = (&self.client, self.write_actions_enabled()) {
             self.queued.push(HealthAction::Prune(d.clone()));
         }
     }

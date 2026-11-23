@@ -4,6 +4,7 @@
 use crate::explain::{self, Rows};
 use crate::anim_view::{self, AnimPlayer};
 use crate::preview::{self, MeshChoice, PreviewData};
+use crate::multi_lock::lock_hover;
 use crate::ToolkitSettings;
 use egui::{Color32, RichText};
 use shaiya_archive::check::{check_archive, CheckOptions, CheckReport, Severity};
@@ -548,6 +549,8 @@ pub struct ArchiveView {
     /// The Changes / Writes / Undo / Game rows of the open confirmation (made once, when it was asked for, from the plan the write uses).
     confirm_rows: Rows,
     discard_asked: bool,
+    /// True while "Apply to several test clients" runs (set by the app every frame): the other write actions are off.
+    multi_running: bool,
     reload_asked: bool,
     saved_new: Option<TaskHandle<EditReport>>,
     want_search_focus: bool,
@@ -633,6 +636,7 @@ impl ArchiveView {
             apply: ApplyFlow::Idle,
             confirm_rows: Vec::new(),
             discard_asked: false,
+            multi_running: false,
             reload_asked: false,
             saved_new: None,
             want_search_focus: false,
@@ -1291,7 +1295,7 @@ impl ArchiveView {
 
     /// "Apply to client…": the confirmation, then the exclusive apply.
     pub fn request_apply(&mut self, cx: &mut ToolkitCx<'_>) {
-        if self.pending.is_empty() || self.client_dir().is_none() || !matches!(self.apply, ApplyFlow::Idle) {
+        if self.pending.is_empty() || self.client_dir().is_none() || !matches!(self.apply, ApplyFlow::Idle) || !self.write_actions_enabled() {
             return;
         }
         if !self.queue_is_ours() {
@@ -1306,7 +1310,7 @@ impl ArchiveView {
     }
 
     pub fn request_compact(&mut self) {
-        if self.client_dir().is_none() || !matches!(self.apply, ApplyFlow::Idle) {
+        if self.client_dir().is_none() || !matches!(self.apply, ApplyFlow::Idle) || !self.write_actions_enabled() {
             return;
         }
         self.confirm_rows = self.compact_rows_for();
@@ -1315,6 +1319,17 @@ impl ArchiveView {
 
     pub fn is_applying(&self) -> bool {
         !matches!(self.apply, ApplyFlow::Idle)
+    }
+
+    /// The app tells the tab every frame whether "Apply to several test clients" runs.
+    pub fn set_multi_running(&mut self, on: bool) {
+        self.multi_running = on;
+    }
+
+    /// False while a multi-client apply runs: Apply to client, Discard, Compact and Save as new archive (buttons, palette entries and
+    /// keys) are off then. Queueing, Extract and the other tabs are not part of this.
+    pub fn write_actions_enabled(&self) -> bool {
+        !self.multi_running
     }
 
     /// "Save as new archive…": `write_new` of the loaded archive plus the queue.
@@ -1876,6 +1891,7 @@ impl ArchiveView {
         let open = self.loaded.as_ref().is_some_and(|l| l.archive.is_some());
         let edit = open && self.client_dir().is_some();
         let busy = self.is_applying();
+        let writes = self.write_actions_enabled();
         let c = |id: &'static str, label: &str, shortcut: Option<K>, enabled: bool| Command { id, label: label.to_string(), shortcut, enabled };
         vec![
             c("archive-search", "Search the archive", Some(K::new(M::COMMAND, Key::F)), self.is_open()),
@@ -1883,13 +1899,13 @@ impl ArchiveView {
             c("archive-extract-all", "Extract all shown files...", Some(K::new(M::COMMAND | M::SHIFT, Key::E)), open),
             c("archive-add", "Add files to the archive...", Some(K::new(M::NONE, Key::Insert)), edit),
             c("archive-remove", "Queue removal of selected files", Some(K::new(M::NONE, Key::Delete)), edit && !self.selected.is_empty()),
-            c("archive-apply", "Apply pending changes to the client...", Some(K::new(M::COMMAND, Key::Enter)), edit && !busy && !self.pending.is_empty()),
-            c("archive-save-new", "Save as new archive...", None, open && !self.pending.is_empty()),
+            c("archive-apply", "Apply pending changes to the client...", Some(K::new(M::COMMAND, Key::Enter)), edit && !busy && writes && !self.pending.is_empty()),
+            c("archive-save-new", "Save as new archive...", None, open && writes && !self.pending.is_empty()),
             c("archive-make-patch", "Make patch from pending changes", None, !self.pending.is_empty()),
-            c("archive-discard", "Discard pending changes", None, !self.pending.is_empty()),
+            c("archive-discard", "Discard pending changes", None, writes && !self.pending.is_empty()),
             c("archive-check", "Check the archive", None, open),
             c("archive-compare", "Compare two clients or archives...", None, true),
-            c("archive-compact", "Compact data.saf...", None, edit && !busy),
+            c("archive-compact", "Compact data.saf...", None, edit && !busy && writes),
             c("archive-reload", "Reload the archive", Some(K::new(M::NONE, Key::F5)), self.source.is_some()),
             c("archive-copy-paths", "Copy selected paths", Some(K::new(M::COMMAND, Key::C)), !self.selected.is_empty()),
             c("archive-up", "Parent folder", Some(K::new(M::NONE, Key::Backspace)), self.is_open()),
@@ -1979,7 +1995,7 @@ impl ArchiveView {
                 if ui.button("Compare...").on_hover_text("Compare any two saved clients or archive files: OLD on the left, NEW on the right").clicked() {
                     acts.push(Act::Compare);
                 }
-                if ui.add_enabled(can_edit && !self.is_applying(), egui::Button::new("Compact...")).clicked() {
+                if lock_hover(ui.add_enabled(can_edit && !self.is_applying() && self.write_actions_enabled(), egui::Button::new("Compact...")), !self.write_actions_enabled()).clicked() {
                     acts.push(Act::Compact);
                 }
             });
@@ -2036,16 +2052,17 @@ impl ArchiveView {
                 });
                 ui.horizontal(|ui| {
                     let busy = self.is_applying();
-                    if ui.add_enabled(can_edit && !busy, egui::Button::new("Apply to client...")).clicked() {
+                    let writes = self.write_actions_enabled();
+                    if lock_hover(ui.add_enabled(can_edit && !busy && writes, egui::Button::new("Apply to client...")), !writes).clicked() {
                         acts.push(Act::ApplyPending);
                     }
-                    if ui.add_enabled(has_saf, egui::Button::new("Save as new archive...")).clicked() {
+                    if lock_hover(ui.add_enabled(has_saf && writes, egui::Button::new("Save as new archive...")), !writes).clicked() {
                         acts.push(Act::SaveNew);
                     }
                     if ui.button("Make patch...").clicked() {
                         acts.push(Act::MakePatch);
                     }
-                    if ui.button("Discard").clicked() {
+                    if lock_hover(ui.add_enabled(writes, egui::Button::new("Discard")), !writes).clicked() {
                         acts.push(Act::Discard);
                     }
                 });
@@ -2726,6 +2743,11 @@ impl ArchiveView {
 
     fn run_acts(&mut self, acts: Vec<Act>, cx: &mut ToolkitCx<'_>, requests: &mut Vec<TabRequest>) {
         for a in acts {
+            // keys and palette entries reach the same acts as the buttons: they are off while a multi-client apply runs
+            if !self.write_actions_enabled() && matches!(a, Act::ApplyPending | Act::SaveNew | Act::Discard | Act::Compact) {
+                cx.shell.status(crate::multi_lock::MULTI_RUNNING_HOVER);
+                continue;
+            }
             match a {
                 Act::Folder(p) => self.enter_folder(&p),
                 Act::Up => self.parent_folder(),

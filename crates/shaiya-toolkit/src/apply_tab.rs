@@ -5,6 +5,7 @@ use crate::archive_view::ArchiveView;
 use crate::clients::ClientInfo;
 use crate::explain::{self, Rows};
 use crate::keys::KeyForm;
+use crate::multi_lock::{lock_hover, MULTI_RUNNING_HOVER};
 use crate::ToolkitSettings;
 use egui::RichText;
 use shaiya_archive::client::{self, ClientFiles};
@@ -107,6 +108,8 @@ pub struct ApplyTab {
     pub keep: usize,
     /// Set by the "Apply to several test clients..." button; the app takes it and opens that dialog.
     pub want_multi: bool,
+    /// True while "Apply to several test clients" runs (set by the app every frame): apply, roll back and prune are off.
+    multi_running: bool,
     pub changed_counter: u64,
     /// The Changes / Writes / Undo / Game rows of the open confirmation, made once when it was asked for, from the dry-run plan the Apply tab shows (the write itself, `apply_with`, plans again when it runs).
     confirm_rows: Rows,
@@ -137,6 +140,7 @@ impl ApplyTab {
             result: Vec::new(),
             keep: 10,
             want_multi: false,
+            multi_running: false,
             changed_counter: 0,
             confirm_rows: Vec::new(),
         }
@@ -176,6 +180,16 @@ impl ApplyTab {
 
     pub fn is_busy(&self) -> bool {
         !matches!(self.flow, Flow::Idle)
+    }
+
+    /// The app tells the tab every frame whether "Apply to several test clients" runs.
+    pub fn set_multi_running(&mut self, on: bool) {
+        self.multi_running = on;
+    }
+
+    /// False while a multi-client apply runs: Apply, Roll back (also Undo last change) and Prune are off then.
+    pub fn write_actions_enabled(&self) -> bool {
+        !self.multi_running
     }
 
     // ---------------------------------------------------------------------------------------- settings
@@ -298,6 +312,9 @@ impl ApplyTab {
         if self.is_busy() {
             return Some("Another change is in progress".into());
         }
+        if !self.write_actions_enabled() {
+            return Some(MULTI_RUNNING_HOVER.into());
+        }
         if self.patches.iter().any(|r| matches!(r.verify, Verify::Running(_))) {
             return Some("The patches are being checked".into());
         }
@@ -373,6 +390,9 @@ impl ApplyTab {
         if self.is_busy() {
             return Err("Wait for the running task to finish.".to_string());
         }
+        if !self.write_actions_enabled() {
+            return Err(MULTI_RUNNING_HOVER.to_string());
+        }
         match self.history.iter().rev().find(|(j, _)| j.state == State::Applied) {
             None => Err("No change made by the toolkit to this client can be undone yet.".to_string()),
             Some((j, Rollback::Possible)) => Ok(j),
@@ -411,7 +431,7 @@ impl ApplyTab {
 
     pub fn request_prune(&mut self, client: Option<&ClientInfo>) {
         if let Some(c) = client {
-            if !self.is_busy() {
+            if !self.is_busy() && self.write_actions_enabled() {
                 let all: Vec<Journal> = self.history.iter().map(|(j, _)| j.clone()).collect();
                 self.confirm_rows = explain::prune_rows(&all, self.keep);
                 self.flow = Flow::PruneConfirm(c.dir.clone(), self.keep);
@@ -784,11 +804,12 @@ impl ApplyTab {
             ui.separator();
             ui.horizontal(|ui| {
                 ui.heading("History");
-                if ui.add_enabled(client.is_some() && self.newest_rollback().is_some() && !self.is_busy(), egui::Button::new("Roll back...")).on_hover_text("Undo the newest change the toolkit made").clicked() {
+                let locked = !self.write_actions_enabled();
+                if lock_hover(ui.add_enabled(client.is_some() && self.newest_rollback().is_some() && !self.is_busy() && !locked, egui::Button::new("Roll back...")).on_hover_text("Undo the newest change the toolkit made"), locked).clicked() {
                     rollback = true;
                 }
                 ui.add(egui::DragValue::new(&mut self.keep).range(0..=1000).prefix("keep "));
-                if ui.add_enabled(client.is_some() && !self.history.is_empty() && !self.is_busy(), egui::Button::new("Prune...")).clicked() {
+                if lock_hover(ui.add_enabled(client.is_some() && !self.history.is_empty() && !self.is_busy() && !locked, egui::Button::new("Prune...")), locked).clicked() {
                     prune = true;
                 }
             });
