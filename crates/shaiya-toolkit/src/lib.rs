@@ -68,6 +68,11 @@ pub struct ToolkitSettings {
     pub show_shadowed: bool,
     pub text_encoding: String,
     pub extract_keep_times: bool,
+    /// Preview toggles that stay as the user set them: Loop and Bones of an animation, Fit (off = 1:1) and alpha of a picture.
+    pub preview_loop: bool,
+    pub preview_bones: bool,
+    pub preview_fit: bool,
+    pub preview_alpha: bool,
     /// Per client name: signature settings.
     pub keys: BTreeMap<String, KeySettings>,
 }
@@ -83,6 +88,10 @@ impl Default for ToolkitSettings {
             show_shadowed: false,
             text_encoding: String::new(),
             extract_keep_times: true,
+            preview_loop: true,
+            preview_bones: true,
+            preview_fit: true,
+            preview_alpha: true,
             keys: BTreeMap::new(),
         }
     }

@@ -6,6 +6,7 @@ All notable changes are listed here, newest first. The format follows [Keep a Ch
 
 ### Shaiya Toolkit
 
+- Archive tab: the preview pane keeps the width you drag it to when another file is selected (it shrank to its content before) and the next start opens at that width (the saved width was the inner one and lost the frame margins at every start); Loop and Bones of the animation preview and Fit and alpha of the picture preview are remembered too. An older settings file without these entries loads as before.
 - The `.ANI` preview says when bones cannot be posed ("N bones cannot be posed (a reference matrix holds NaN or infinity, or cannot be inverted) and are not drawn").
 - The `.ANI` preview scans each candidate `.3DC` once per opened archive (the answers are dropped when the archive is loaded again; a failed or cancelled read is not remembered; the chosen meshes are read again for every preview) and skips a candidate over 32 MiB.
 - The "Replace with file..." question about an `.ani` with a different skeleton is titled "The skeleton differs from the file it replaces"; otherwise (an SData finding or an unfinished check also asks) it keeps "This file looks broken". The Add dialog keeps its title "Some files look broken".

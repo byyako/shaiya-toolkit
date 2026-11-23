@@ -3072,3 +3072,154 @@ fn the_export_is_off_while_only_the_index_is_open() {
     with_cx(&mut w.h, |app, cx| app.archive.export_json_to(&out, cx));
     assert!(!w.h.app.app.archive.is_exporting_json() && !out.exists());
 }
+
+// ------------------------------------------------------------------------------------------------ T11 W10: view state
+
+/// Drags the left edge of the right-hand preview panel from `from` to `to` (screen x), one frame per step.
+fn drag_preview_edge(h: &mut Harness<ToolkitApp>, from: f32, to: f32) {
+    use egui::{Event, PointerButton};
+    let y = 400.0;
+    let btn = |pos, pressed| Event::PointerButton { pos, button: PointerButton::Primary, pressed, modifiers: Modifiers::NONE };
+    let p = |x: f32| egui::pos2(x, y);
+    h.frame(vec![Event::PointerMoved(p(from))]);
+    h.frame(vec![btn(p(from), true)]);
+    for i in 1..=4 {
+        let x = from + (to - from) * i as f32 / 4.0;
+        h.frame(vec![Event::PointerMoved(p(x))]);
+    }
+    h.frame(vec![btn(p(to), false)]);
+    h.frames(3);
+}
+
+/// The `settings.json` of the tool under a data folder.
+fn settings_file_under(dir: &std::path::Path) -> PathBuf {
+    fn walk(d: &std::path::Path, out: &mut Option<PathBuf>) {
+        for e in std::fs::read_dir(d).into_iter().flatten().flatten() {
+            let p = e.path();
+            if p.is_dir() {
+                walk(&p, out);
+            } else if p.file_name().is_some_and(|n| n == "settings.json") {
+                *out = Some(p);
+            }
+        }
+    }
+    let mut found = None;
+    walk(dir, &mut found);
+    found.expect("the tool wrote its settings.json")
+}
+
+#[test]
+fn a_dragged_preview_width_survives_selecting_another_file() {
+    let mut w = open_world("t11-w10-width");
+    with_cx(&mut w.h, |app, cx| app.archive.select_path("Item/3DO/a.txt", cx));
+    assert!(preview_ready(&mut w.h));
+    w.h.frames(3);
+    let before = w.h.app.tool_settings.preview_width;
+    assert!((before - 360.0).abs() < 1.0, "the pane starts at its saved width, not at its content: {before}");
+    // the saved width is the panel's outer width, so its left edge is that far from the right edge of the window
+    let edge = w.h.size.x - before;
+    drag_preview_edge(&mut w.h, edge, edge - 120.0);
+    let dragged = w.h.app.tool_settings.preview_width;
+    assert!(dragged > before + 80.0, "the drag widened the pane: {before} -> {dragged}");
+    for path in ["Item/3DO/b.txt", "interface/a.tga", "x/blob.bin", "Item/Item.SData", "top.txt"] {
+        with_cx(&mut w.h, |app, cx| app.archive.select_path(path, cx));
+        assert!(preview_ready(&mut w.h), "{path}");
+        w.h.frames(3);
+        let now = w.h.app.tool_settings.preview_width;
+        assert!((now - dragged).abs() < 1.0, "{path}: width {dragged} became {now}");
+    }
+    // and with no file selected at all
+    w.h.app.app.archive.preview.row = None;
+    w.h.frames(3);
+    assert!((w.h.app.tool_settings.preview_width - dragged).abs() < 1.0, "an empty pane keeps its width");
+}
+
+#[test]
+fn the_pane_width_and_the_preview_toggles_come_back_after_a_restart() {
+    let mut w = ani_world("t11-w10-restart");
+    with_cx(&mut w.h, |app, cx| app.archive.select_path(ANI_PATH, cx));
+    assert!(preview_ready(&mut w.h));
+    w.h.frames(3);
+    let edge = w.h.size.x - w.h.app.tool_settings.preview_width;
+    drag_preview_edge(&mut w.h, edge, edge - 100.0);
+    let width = w.h.app.tool_settings.preview_width;
+    assert!(width > 400.0, "{width}");
+    {
+        let p = &mut w.h.app.app.archive.preview.player;
+        p.looping = false;
+        p.show_bones = false;
+    }
+    w.h.frames(3);
+    assert!(!w.h.app.tool_settings.preview_loop && !w.h.app.tool_settings.preview_bones, "the drawn toggles are stored");
+    w.h.app.flush_settings(true);
+    let text = std::fs::read_to_string(settings_file_under(&w.data_path)).unwrap();
+    let h2 = Harness::<ToolkitApp>::new(shaiya_ui::ShellOptions { data_dir: Some(w.data_path.clone()), ..Default::default() });
+    let s = &h2.app.tool_settings;
+    assert!((s.preview_width - width).abs() < 1.0, "{} vs {width}
+{text}", s.preview_width);
+    assert!(!s.preview_loop && !s.preview_bones && s.preview_fit && s.preview_alpha);
+}
+
+#[test]
+fn the_animation_toggles_stay_when_another_animation_or_file_is_selected() {
+    let mut w = ani_world("t11-w10-toggles");
+    with_cx(&mut w.h, |app, cx| app.archive.select_path(ANI_PATH, cx));
+    assert!(preview_ready(&mut w.h));
+    w.h.frames(3);
+    assert!(w.h.app.app.archive.preview.player.looping && w.h.app.app.archive.preview.player.show_bones, "both start on");
+    w.h.app.app.archive.preview.player.show_bones = false;
+    w.h.app.app.archive.preview.player.looping = false;
+    w.h.frames(2);
+    with_cx(&mut w.h, |app, cx| app.archive.select_path("Character/Human/3DC/huwm_torso001.3DC", cx));
+    assert!(preview_ready(&mut w.h));
+    w.h.frames(2);
+    with_cx(&mut w.h, |app, cx| app.archive.select_path(ANI_PATH, cx));
+    assert!(preview_ready(&mut w.h));
+    w.h.frames(3);
+    let p = &w.h.app.app.archive.preview.player;
+    assert!(!p.looping && !p.show_bones, "Loop and Bones are still off for the next animation");
+}
+
+#[test]
+fn an_old_settings_file_without_the_preview_fields_still_loads() {
+    let old = r#"{"tab":"archive","last_client":"US test","tree_width":210.0,"preview_width":400.0,"columns":[100.0],"show_shadowed":true,"text_encoding":"UTF-8","extract_keep_times":false,"keys":{}}"#;
+    let s: ToolkitSettings = serde_json::from_str(old).unwrap();
+    assert_eq!((s.preview_width, s.tree_width, s.show_shadowed, s.extract_keep_times), (400.0, 210.0, true, false), "the old fields are read");
+    assert!(s.preview_loop && s.preview_bones && s.preview_fit && s.preview_alpha, "the new ones take their defaults");
+    // the same through a data folder
+    let data = TempDir::new("t11-w10-old");
+    let h = Harness::<ToolkitApp>::new(shaiya_ui::ShellOptions { data_dir: Some(data.path().to_path_buf()), ..Default::default() });
+    drop(h);
+    let mut h = Harness::<ToolkitApp>::new(shaiya_ui::ShellOptions { data_dir: Some(data.path().to_path_buf()), ..Default::default() });
+    h.frames(2);
+    h.app.flush_settings(true);
+    let file = settings_file_under(data.path());
+    std::fs::write(&file, format!(r#"{{"shell":{{}},"tool":{old}}}"#)).unwrap();
+    let h = Harness::<ToolkitApp>::new(shaiya_ui::ShellOptions { data_dir: Some(data.path().to_path_buf()), ..Default::default() });
+    assert_eq!(h.app.tool_settings.preview_width, 400.0);
+    assert!(h.app.tool_settings.preview_loop && h.app.tool_settings.preview_fit);
+}
+
+#[test]
+fn the_preview_settings_round_trip() {
+    let s = ToolkitSettings { preview_width: 512.5, preview_loop: false, preview_bones: false, preview_fit: false, preview_alpha: false, ..Default::default() };
+    let back: ToolkitSettings = serde_json::from_str(&serde_json::to_string(&s).unwrap()).unwrap();
+    assert_eq!(back, s);
+}
+
+#[test]
+fn fit_and_alpha_of_the_picture_preview_stay_when_another_picture_is_selected() {
+    let mut w = open_world("t11-w10-fit");
+    with_cx(&mut w.h, |app, cx| app.archive.select_path("interface/a.tga", cx));
+    assert!(preview_ready(&mut w.h));
+    w.h.frames(3);
+    assert!(w.h.app.app.archive.preview.fit && w.h.app.app.archive.preview.alpha, "both start on");
+    w.h.app.app.archive.preview.fit = false;
+    w.h.app.app.archive.preview.alpha = false;
+    w.h.frames(2);
+    with_cx(&mut w.h, |app, cx| app.archive.select_path("interface/b.bmp", cx));
+    assert!(preview_ready(&mut w.h));
+    w.h.frames(3);
+    assert!(!w.h.app.app.archive.preview.fit && !w.h.app.app.archive.preview.alpha);
+    assert!(!w.h.app.tool_settings.preview_fit && !w.h.app.tool_settings.preview_alpha);
+}

@@ -1492,8 +1492,10 @@ impl ArchiveView {
         self.preview.handle = None;
         if self.preview.row != Some(row) {
             self.preview.anim_mesh = MeshChoice::Default;
-            self.preview.player = AnimPlayer::default();
+            self.preview.player = AnimPlayer { looping: cx.settings.preview_loop, show_bones: cx.settings.preview_bones, ..AnimPlayer::default() };
         }
+        self.preview.fit = cx.settings.preview_fit;
+        self.preview.alpha = cx.settings.preview_alpha;
         self.preview.row = Some(row);
         self.preview.data = None;
         self.preview.error = None;
@@ -2115,17 +2117,22 @@ impl ArchiveView {
         }
         let tree_w = cx.settings.tree_width.clamp(120.0, 600.0);
         let prev_w = cx.settings.preview_width.clamp(200.0, 800.0);
-        egui::Panel::left("toolkit-tree").resizable(true).default_size(tree_w).show(ui, |ui| {
-            cx.settings.tree_width = ui.available_width();
+        // A side panel of this egui is only as wide as its content (it does not keep the width it was dragged to), and `default_size` is the
+        // OUTER width. So the content fills the width it was given (`set_min_width`), and the saved width is the panel's outer width, which
+        // is what the next start passes to `default_size` (the inner width lost the frame margins at every start).
+        let tree = egui::Panel::left("toolkit-tree").resizable(true).default_size(tree_w).show(ui, |ui| {
+            ui.set_min_width(ui.available_width());
             egui::ScrollArea::both().auto_shrink([false, false]).show(ui, |ui| {
                 let l = self.loaded.as_ref().expect("checked");
                 draw_tree(ui, l, 0, &self.folder, &mut acts);
             });
         });
-        egui::Panel::right("toolkit-preview").resizable(true).default_size(prev_w).show(ui, |ui| {
-            cx.settings.preview_width = ui.available_width();
+        let preview = egui::Panel::right("toolkit-preview").resizable(true).default_size(prev_w).show(ui, |ui| {
+            ui.set_min_width(ui.available_width());
             self.draw_preview(ui, cx, &mut acts);
         });
+        remember_width(&mut cx.settings.tree_width, tree.response.rect.width());
+        remember_width(&mut cx.settings.preview_width, preview.response.rect.width());
         egui::CentralPanel::default().show(ui, |ui| self.draw_table(ui, cx, &mut acts));
         self.draw_dialogs(ui, cx, &mut requests);
         self.handle_keys(ui, &mut acts);
@@ -2363,6 +2370,8 @@ impl ArchiveView {
                 }
                 let tex = self.preview.texture_name.as_ref().and_then(|name| self.textures.iter().find(|(n, _)| n == name)).map(|(_, t)| t);
                 picture_view(ui, &mut self.preview.fit, Some(&mut self.preview.alpha), tex);
+                cx.settings.preview_alpha = self.preview.alpha;
+                cx.settings.preview_fit = self.preview.fit;
             }
             Some(PreviewData::Map { header, height_range, note, width, height, downscaled, rgba }) => {
                 ui.label(header);
@@ -2378,12 +2387,15 @@ impl ArchiveView {
                 if !rgba.is_empty() {
                     let tex = self.preview.texture_name.as_ref().and_then(|name| self.textures.iter().find(|(n, _)| n == name)).map(|(_, t)| t);
                     picture_view(ui, &mut self.preview.fit, None, tex);
+                    cx.settings.preview_fit = self.preview.fit;
                 }
             }
             Some(data @ PreviewData::Anim { .. }) => {
                 if anim_view::draw(ui, &pal, &mut self.preview.player, data, &mut self.preview.anim_tex, &mut self.preview.anim_mesh) {
                     acts.push(Act::Open("anim-mesh".into()));
                 }
+                cx.settings.preview_loop = self.preview.player.looping;
+                cx.settings.preview_bones = self.preview.player.show_bones;
             }
             Some(data @ PreviewData::Fields { .. }) => anim_view::draw_fields(ui, &pal, data),
             Some(PreviewData::Model { header, missing, see_through, invisible, notes, rgba, .. }) => {
@@ -2405,6 +2417,7 @@ impl ArchiveView {
                 } else {
                     let tex = self.preview.texture_name.as_ref().and_then(|name| self.textures.iter().find(|(n, _)| n == name)).map(|(_, t)| t);
                     picture_view(ui, &mut self.preview.fit, None, tex);
+                    cx.settings.preview_fit = self.preview.fit;
                 }
             }
             Some(PreviewData::Text { bytes, total, truncated, guess }) => {
@@ -3013,6 +3026,13 @@ fn hex_view(ui: &mut egui::Ui, bytes: &[u8], base: u64) {
             ui.add(egui::Label::new(RichText::new(preview::hex_row(bytes, base, r)).monospace().size(11.0)).selectable(true));
         }
     });
+}
+
+/// Stores a panel width, ignoring sub-pixel jitter so a steady layout does not rewrite the setting every frame.
+pub(crate) fn remember_width(slot: &mut f32, width: f32) {
+    if width.is_finite() && (*slot - width).abs() >= 0.5 {
+        *slot = width;
+    }
 }
 
 fn draw_tree(ui: &mut egui::Ui, l: &Loaded, node: usize, current: &str, acts: &mut Vec<Act>) {
