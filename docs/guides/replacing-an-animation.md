@@ -1,6 +1,6 @@
 # Replacing an animation
 
-For people who have made an animation of their own (in another tool) and want to put it in place of an existing `.ANI` file of a client. The toolkit does not make animations; it can turn an `.ANI` into JSON and back so you can edit its key values, and checks the result against the file it replaces. It finds the file to replace, checks your file against it, puts it in with the usual backup and journal, and lets you look at the result. You need a client folder of your own and a saved name for it (`shaiya clients add`, see [mod files](mod-files.md)); work on a copy while learning, and close the game before any step that changes the client.
+For people who have made an animation of their own (in another tool), or want to change the keys of an existing one (no other tool is needed for that), and want to put it in place of an existing `.ANI` file of a client. The toolkit does not make animations; it can turn an `.ANI` into JSON and back so you can edit its key values, and checks the result against the file it replaces. It finds the file to replace, checks your file against it, puts it in with the usual backup and journal, and lets you look at the result. You need a client folder of your own and a saved name for it (`shaiya clients add`, see [mod files](mod-files.md)); work on a copy while learning, and close the game before any step that changes the client.
 
 Everything the toolkit says about animations is **validated offline**: the checks, the preview and the playback were run on test data and on the files of one client, never judged in the game, apart from the single sentence in [what was seen in the game](#what-was-seen-in-the-game). The format is in [formats/ani.md](../formats/ani.md).
 
@@ -26,7 +26,7 @@ An `.ANI` file holds, for each bone of a skeleton, a reference matrix and the ke
 - the same **order and parents** of the bones,
 - the same **reference matrices**, bit for bit (64 bytes per bone). On US EP4.5 almost every file of a rig has its own, so copy them from the exact file you replace, not from another file of the same rig.
 
-Keys (the motion) may change as you like. Separately, the toolkit also asks for the same first field as the file it replaces (inferred to be the start key; not checked in the game). It is not part of the skeleton rule, and the toolkit reports it on its own line.
+Keys (the motion) may change, within the checks of section 4b (keys increase within each track, the end key is not below the last key, values are finite). Separately, the toolkit also asks for the same first field as the file it replaces (inferred to be the start key; not checked in the game). It is not part of the skeleton rule, and the toolkit reports it on its own line.
 
 ## 4. Edit keys as JSON
 
@@ -35,22 +35,22 @@ If your motion needs only different keys, you can edit them as text instead of m
 **a. Export the exact file you replace.**
 
 ```
-shaiya anim export "Character/Human/ANI/huwm_117_emoti002.ANI" --from "@us" -o huwm_117_emoti002.json
+shaiya anim export "Character/Human/ANI/huwm_117_emoti002.ANI" --from "@mymod" -o huwm_117_emoti002.json
 ```
 
 `-o` must end in `.json`, and an existing file is replaced only with `--force`. The JSON names the file by its archive path (or, for a file on disk, by its file name only), never by a folder of your computer. Export refuses a file that does not read to its last byte, and an `.ANI` with a NaN or infinite key value (exit 3).
 
-**b. What to edit.** Each bone has `rotation_keys` (one `[key, x, y, z, w]` per line, `x y z w` a unit quaternion) and `translation_keys` (`[key, x, y, z]`), and the file has an `end_key`. Keys are in units of 1/30 second and must strictly increase within each track; `end_key` must not be below the last key; every value must be finite (a number too large for a 32-bit float is refused). A key order or end key mistake is a validation error, so the file does not pass and is not written. A rotation that is not a unit quaternion only gets a warning (`quat-not-unit`, more than 0.001 from length 1).
+**b. What to edit.** Each bone has `rotation_keys` (one `[key, x, y, z, w]` per line, `x y z w` a unit quaternion) and `translation_keys` (`[key, x, y, z]`), and the file has an `end_key`. Keys are in units of 1/30 second and must strictly increase within each track; `end_key` must not be below the last key; every value must be finite (a number too large for a 32-bit float is refused). A key order or end key mistake is a validation error, so the file does not pass and is not written (exit 1). A rotation that is not a unit quaternion only gets a warning (`quat-not-unit`, more than 0.001 from length 1).
 
-**c. What not to edit.** The number and order of the bones, `parent`, `matrix_hex` and `first_field` (inferred to be the start key; not checked in the game) must stay as exported: they are the skeleton and the first field of section 3, and import refuses a change (see d). Each bone's `index` must equal its position, and an unknown key or other `columns` are refused.
+**c. What not to edit.** The number and order of the bones, `parent`, `matrix_hex` and `first_field` (inferred to be the start key; not checked in the game) must stay as exported: they are the skeleton and the first field of section 3, and import refuses a change (exit 1, see d). Each bone's `index` must equal its position, and an unknown key or other `columns` are refused (exit 3, like a refused value).
 
 **d. Import it, checked against the file it replaces.**
 
 ```
-shaiya anim import huwm_117_emoti002.json --like "Character/Human/ANI/huwm_117_emoti002.ANI" --from "@us" -o my_emote.ANI
+shaiya anim import huwm_117_emoti002.json --like "Character/Human/ANI/huwm_117_emoti002.ANI" --from "@mymod" -o my_emote.ANI
 ```
 
-`--like` is required for an `.ANI`: it names the file you are replacing (with `--from`, a path in the archive). The import runs the same check as `anim compare` (section 5) and prints the same lines. Exit 0 means the file passed and was written; exit 1 means the differences are printed, `nothing written` follows and no file is made. The `-o` file must end in `.ANI`, and it is refused inside a client folder.
+`--like` is required for an `.ANI`: it names the file you are replacing (with `--from`, a path in the archive). The import runs the same check as `anim compare` (section 5) and prints the same lines. Exit 0 means the file passed and was written; exit 1 means the validation errors or differences are printed (with `--json`, only `written: false`), `nothing written` follows and no file is made. A refused value, index, unknown key or `columns` exits 3, a missing `--like` exits 2, and an `-o` inside a client folder or one that already exists exits 4 (see [shaiya anim](../tools/shaiya.md#shaiya-anim)). The `-o` file must end in `.ANI`.
 
 **e. Then** check it with `anim compare` and `anim validate` (section 5) and put it in (section 6). The file is validated offline like every file in this guide.
 

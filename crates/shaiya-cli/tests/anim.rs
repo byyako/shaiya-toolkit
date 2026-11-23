@@ -715,6 +715,23 @@ fn import_ani_with_another_first_field_exits_1() {
 }
 
 #[test]
+fn import_ani_with_two_keys_swapped_exits_1_and_writes_nothing() {
+    let w = world();
+    let (d, ani, json) = arm_work(&w);
+    let edited = d.join("swap.json");
+    // bone 1: the keys 0 and 30 of the rotation track trade places, so they no longer increase
+    edit_json(&json, &edited, |v| {
+        v["bones"][1]["rotation_keys"][0][0] = serde_json::json!(30);
+        v["bones"][1]["rotation_keys"][1][0] = serde_json::json!(0);
+    });
+    let new = d.join("swap.ani");
+    let o = import(&w, &edited, &new, &["--like", p(&ani)]);
+    assert_eq!(code(&o), 1, "{}{}", out(&o), err(&o));
+    assert!(out(&o).contains("does not pass") && out(&o).contains("nothing written"), "{}", out(&o));
+    assert!(!new.exists());
+}
+
+#[test]
 fn import_ani_with_an_edited_key_passes_and_writes_the_edit() {
     let w = world();
     let (d, ani, json) = arm_work(&w);
