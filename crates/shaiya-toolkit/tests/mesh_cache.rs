@@ -83,6 +83,57 @@ fn mesh_candidates_are_parsed_once_per_archive() {
         }
     }
     assert_eq!(cache.len(), 2);
+    // the second preview scans no candidate again: the same archive with every candidate overwritten by zeros of the same length (same
+    // offsets and lengths) still offers both meshes, because the answers come from the cache
+    let zeroed = TempDir::new("w6-once-zeroed");
+    let z = open(
+        &zeroed,
+        &[(ANI, arm_ani(60)), (MESH, vec![0; arm_mesh_3dc().len()]), ("Character/Human/3DC/huwm_hand001.3DC", vec![0; arm_mesh_3dc().len()])],
+    );
+    match anim_preview(&z, &data, ANI, &MeshChoice::Default, &cache, &Job::silent()).unwrap() {
+        PreviewData::Anim { mesh_choices, .. } => assert_eq!(mesh_choices.len(), 4, "both candidates are offered from the cache, none scanned again"),
+        other => panic!("{other:?}"),
+    }
+    // without the cache the zeroed candidates are not offered
+    match anim_preview(&z, &data, ANI, &MeshChoice::Default, &MeshInfoCache::default(), &Job::silent()).unwrap() {
+        PreviewData::Anim { mesh_choices, .. } => assert_eq!(mesh_choices.len(), 1),
+        other => panic!("{other:?}"),
+    }
+}
+
+#[test]
+fn a_failed_or_cancelled_read_is_not_remembered() {
+    let d = TempDir::new("w6-cancel");
+    let a = open(&d, &[(ANI, arm_ani(60)), (MESH, arm_mesh_3dc()), ("Character/Human/3DC/huwm_hand001.3DC", arm_mesh_3dc())]);
+    let cache = MeshInfoCache::default();
+    // a read that gives nothing the first time and the bytes the second: the second call offers the mesh
+    let calls = std::cell::Cell::new(0usize);
+    let (none, _) = mesh_candidates(a.index(), ANI, 3, &cache, &mut |p| {
+        calls.set(calls.get() + 1);
+        if calls.get() == 1 {
+            return None;
+        }
+        a.index().get(p).and_then(|e| a.read_entry(e).ok())
+    });
+    // the first candidate (name order) failed to read, the other was read and parsed
+    assert_eq!(none.len(), 1);
+    assert_eq!(cache.len(), 1, "the failed read was not cached");
+    let (both, _) = mesh_candidates(a.index(), ANI, 3, &cache, &mut |p| a.index().get(p).and_then(|e| a.read_entry(e).ok()));
+    assert_eq!(both.len(), 2, "the mesh whose first read failed is offered on the second call");
+    assert_eq!(cache.len(), 2);
+    // cancelling mid-scan (every read after the first gives nothing) leaves later candidates unscanned, not marked unreadable
+    let cache = MeshInfoCache::default();
+    let n = std::cell::Cell::new(0usize);
+    let _ = mesh_candidates(a.index(), ANI, 3, &cache, &mut |p| {
+        n.set(n.get() + 1);
+        if n.get() > 1 {
+            return None;
+        }
+        a.index().get(p).and_then(|e| a.read_entry(e).ok())
+    });
+    assert_eq!(cache.len(), 1, "only the candidate that was read is remembered");
+    let (all, _) = mesh_candidates(a.index(), ANI, 3, &cache, &mut |p| a.index().get(p).and_then(|e| a.read_entry(e).ok()));
+    assert_eq!(all.len(), 2);
 }
 
 #[test]
@@ -123,7 +174,7 @@ fn a_changed_entry_is_read_again() {
 }
 
 #[test]
-fn a_candidate_over_the_size_cap_is_not_read_or_offered() {
+fn a_candidate_over_the_size_cap_is_never_read() {
     let d = TempDir::new("w6-cap");
     let big = vec![0u8; MESH_CANDIDATE_LIMIT as usize + 1];
     let a = open(&d, &[(ANI, arm_ani(60)), (MESH, arm_mesh_3dc()), ("Character/Human/3DC/huwm_big001.3DC", big)]);
@@ -133,6 +184,7 @@ fn a_candidate_over_the_size_cap_is_not_read_or_offered() {
         a.index().get(p).and_then(|e| a.read_entry(e).ok())
     });
     assert_eq!(all, vec![MESH.to_string()]);
+    // this proves only that the oversized entry is not read (zeros would not parse as a mesh in any case)
     assert_eq!(asked, vec![MESH.to_string()], "the large entry is never read");
 }
 
@@ -147,5 +199,6 @@ fn the_replace_question_names_a_skeleton_difference() {
     assert_eq!(findings_title(&[finding(code::ANIM_RIG_DIFFERS), finding(code::ANIM_FIRST_FIELD_DIFFERS)]), "The skeleton differs from the file it replaces");
     assert_eq!(findings_title(&[finding(code::ANIM_RIG_DIFFERS), finding(code::SDATA_CRC_BAD)]), "This file looks broken");
     assert_eq!(findings_title(&[finding(code::SDATA_CRC_BAD)]), "This file looks broken");
+    assert_eq!(findings_title(&[finding(code::ANIM_RIG_DIFFERS), finding(code::CHECK_INCOMPLETE)]), "This file looks broken");
     assert_eq!(findings_title(&[]), "This file looks broken");
 }

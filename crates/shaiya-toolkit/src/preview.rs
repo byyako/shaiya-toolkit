@@ -271,7 +271,9 @@ pub fn mesh_candidates(index: &shaiya_archive::Index, ani_path: &str, bone_count
         if let Some(known) = cache.get(&key, entry.offset, entry.length) {
             return known;
         }
-        let info = read(p).and_then(|b| shaiya_clientdata::C3dc::parse(&b, p).ok()).map(|c| MeshInfo::of(&c));
+        // A read that gave nothing (cancelled job, I/O error) says nothing about the file: remember only what parsing decided.
+        let bytes = read(p)?;
+        let info = shaiya_clientdata::C3dc::parse(&bytes, p).ok().map(|c| MeshInfo::of(&c));
         cache.put(key, entry.offset, entry.length, info);
         info
     })
@@ -280,7 +282,7 @@ pub fn mesh_candidates(index: &shaiya_archive::Index, ani_path: &str, bone_count
 /// Candidate `.3DC` files over this many bytes are neither read nor offered (the largest of the matrix client is about 300 KB).
 pub const MESH_CANDIDATE_LIMIT: u64 = 32 << 20;
 
-/// What was learned about each candidate `.3DC` of one opened archive, so a file is parsed at most once per archive: lower-cased archive
+/// What was learned about each candidate `.3DC` of one opened archive, so the candidate scan parses each file once per archive (a chosen mesh is read again for every preview; a read that failed or was cancelled is not remembered): lower-cased archive
 /// path to (entry offset, entry length, the answer). An entry whose offset or length differs from the index is read again. A new cache
 /// is made whenever an archive is loaded or reloaded, so applied changes are never served stale.
 #[derive(Clone, Debug, Default)]
