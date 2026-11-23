@@ -36,7 +36,7 @@ US, RU, FR, CN, Phoenix, KR episode 8 and Fawkes v68. What works on which client
 | [guides/mod-files.md](guides/mod-files.md) | Modders: browse, extract, edit, add with a backup, make a patch, roll back |
 | [guides/make-a-patch.md](guides/make-a-patch.md) | Operators: build, sign, test on a copy, publish `psNNNN.patch` |
 | [guides/sdata-files.md](guides/sdata-files.md) | Decrypt and encrypt SData around an editor, `--like`, unencrypted clients |
-| [guides/replacing-an-animation.md](guides/replacing-an-animation.md) | Put your own `.ANI` in place of an existing one: find the target, the skeleton rule, `anim compare`, put it in, look at it, undo |
+| [guides/replacing-an-animation.md](guides/replacing-an-animation.md) | Put your own `.ANI` in place of an existing one: find the target, the skeleton rule, edit keys as JSON, `anim compare`, put it in, look at it, undo |
 | [guides/undo-and-recovery.md](guides/undo-and-recovery.md) | Journals, rollback, what blocks it, the pending marker, swap back |
 | [guides/client-health.md](guides/client-health.md) | What Health reports about a client folder, the leftovers, moving them aside and putting them back |
 | [version-matrix.md](version-matrix.md) | What parses on which client |
