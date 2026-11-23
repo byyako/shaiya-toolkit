@@ -1,6 +1,6 @@
 //! `.ANI` as JSON: schema `shaiya-toolkit-ani-v1`.
 
-use super::types::{hex_encode, hex_exact, F32};
+use super::types::{hex_encode, hex_exact, KeyF32, Obj, F32};
 use super::{json_error, JsonError, ModelFormat};
 use crate::anim::{track_fits, Ani, AniBone, RotKey, TransKey, KEY_LIMIT};
 use serde::de::IgnoredAny;
@@ -95,8 +95,8 @@ struct BoneIn {
     index: u64,
     parent: i32,
     matrix_hex: String,
-    rotation_keys: Vec<(i32, F32, F32, F32, F32)>,
-    translation_keys: Vec<(i32, F32, F32, F32)>,
+    rotation_keys: Vec<(i32, KeyF32, KeyF32, KeyF32, KeyF32)>,
+    translation_keys: Vec<(i32, KeyF32, KeyF32, KeyF32)>,
 }
 
 #[derive(Deserialize)]
@@ -114,7 +114,7 @@ struct AniIn {
     columns: Option<ColumnsIn>,
     first_field: i32,
     end_key: i32,
-    bones: Vec<BoneIn>,
+    bones: Vec<Obj<BoneIn>>,
 }
 
 fn same(found: &[String], want: &[&str]) -> bool {
@@ -122,7 +122,7 @@ fn same(found: &[String], want: &[&str]) -> bool {
 }
 
 pub(super) fn import(json: &[u8], model_cap: u64) -> Result<Vec<u8>, JsonError> {
-    let input: AniIn = serde_json::from_slice(json).map_err(json_error)?;
+    let Obj(input): Obj<AniIn> = serde_json::from_slice(json).map_err(json_error)?;
     if let Some(c) = &input.columns {
         if !same(&c.rotation_keys, &ROTATION_COLUMNS) {
             return Err(JsonError::Schema(format!("columns.rotation_keys must be {ROTATION_COLUMNS:?}, found {:?}", c.rotation_keys)));
@@ -136,7 +136,7 @@ pub(super) fn import(json: &[u8], model_cap: u64) -> Result<Vec<u8>, JsonError> 
     }
     let mut size: u64 = 10;
     let too_big = || JsonError::TooLarge("the animation is larger than the size limit".into());
-    for (i, b) in input.bones.iter().enumerate() {
+    for (i, Obj(b)) in input.bones.iter().enumerate() {
         if b.index != i as u64 {
             return Err(JsonError::Schema(format!("bone {i} has index {}: bones are listed in order 0, 1, 2, ...", b.index)));
         }
@@ -152,7 +152,7 @@ pub(super) fn import(json: &[u8], model_cap: u64) -> Result<Vec<u8>, JsonError> 
     super::check_model_len(size, model_cap)?;
 
     let mut bones = Vec::with_capacity(input.bones.len());
-    for (i, b) in input.bones.iter().enumerate() {
+    for (i, Obj(b)) in input.bones.iter().enumerate() {
         let raw: [u8; 64] = hex_exact(&b.matrix_hex, &format!("bones[{i}].matrix_hex"))?;
         let mut matrix = [0f32; 16];
         for (i4, m) in matrix.iter_mut().enumerate() {
@@ -315,8 +315,49 @@ mod tests {
     #[test]
     fn a_number_too_large_for_f32_is_refused_by_the_import() {
         let text = arm_json().replacen("0.70710677", "1e39", 1);
-        let e = import(text.as_bytes()).unwrap_err();
-        assert!(matches!(e, JsonError::NotFinite { .. }), "{e}");
+        match import(text.as_bytes()).unwrap_err() {
+            JsonError::NotFinite { at } => assert_eq!(at, "bones[1].rotation_keys[1]"),
+            e => panic!("{e}"),
+        }
+        let text = arm_json().replacen("[0, 0.0, 0.0, 0.0, 1.0]", "[0, 0.0, 0.0, -1e39, 1.0]", 1);
+        match import(text.as_bytes()).unwrap_err() {
+            JsonError::NotFinite { at } => assert_eq!(at, "bones[1].rotation_keys[0]"),
+            e => panic!("{e}"),
+        }
+    }
+
+    #[test]
+    fn a_positional_array_is_refused_for_the_file_and_for_a_bone() {
+        // the whole file as an array of its values
+        let e = import(br#"["shaiya-toolkit-ani-v1", null, null, null, 0, 0, []]"#).unwrap_err();
+        assert!(matches!(e, JsonError::Json { .. }), "{e}");
+        let e = super::super::format_of(br#"["shaiya-toolkit-ani-v1"]"#).unwrap_err();
+        assert!(matches!(e, JsonError::Json { .. }), "{e}");
+        // one bone as an array
+        let matrix = "0000803f000000000000000000000000000000000000803f000000000000000000000000000000000000803f000000000000000000000000000000000000803f";
+        let object = format!("{{\n      \"index\": 0,\n      \"parent\": -1,\n      \"matrix_hex\": \"{matrix}\",\n      \"rotation_keys\": [],\n      \"translation_keys\": []\n    }}");
+        let text = arm_json();
+        assert!(text.contains(&object), "the golden text of bone 0 changed");
+        let positional = text.replacen(&object, &format!("[0, -1, \"{matrix}\", [], []]"), 1);
+        let e = import(positional.as_bytes()).unwrap_err();
+        assert!(matches!(e, JsonError::Json { .. }), "{e}");
+        // the object form still reads
+        assert!(import(text.as_bytes()).is_ok());
+    }
+
+    fn bones_json(count: usize) -> String {
+        let bone = r#"{"index":0,"parent":-1,"matrix_hex":"","rotation_keys":[],"translation_keys":[]}"#;
+        let list = vec![bone; count].join(",");
+        format!(r#"{{"format":"shaiya-toolkit-ani-v1","first_field":0,"end_key":0,"bones":[{list}]}}"#)
+    }
+
+    #[test]
+    fn more_than_65535_bones_are_refused_before_anything_is_built() {
+        let e = import(bones_json(65_536).as_bytes()).unwrap_err();
+        assert!(matches!(e, JsonError::TooLarge(_)) && e.to_string().contains("65536 bones"), "{e}");
+        // at the limit the count is accepted and the next check (the bone index) speaks instead
+        let e = import(bones_json(65_535).as_bytes()).unwrap_err();
+        assert!(matches!(e, JsonError::Schema(_)) && e.to_string().contains("bone 1 has index 0"), "{e}");
     }
 
     #[test]

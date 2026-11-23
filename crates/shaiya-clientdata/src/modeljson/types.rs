@@ -33,10 +33,13 @@ impl Serialize for F32 {
     }
 }
 
-/// The text of the error that [`F32`] gives for a number that does not fit; the importer turns it into `JsonError::NotFinite`.
+/// The text of the error that [`F32`] gives for a number that does not fit.
 pub(crate) const OUT_OF_RANGE: &str = "out of the 32-bit float range";
 
-struct F32Visitor;
+struct F32Visitor {
+    /// A number too large for 32 bits reads as infinity instead of failing (see [`KeyF32`]).
+    overflow_as_infinity: bool,
+}
 
 impl<'de> Visitor<'de> for F32Visitor {
     type Value = F32;
@@ -48,6 +51,9 @@ impl<'de> Visitor<'de> for F32Visitor {
     fn visit_f64<E: de::Error>(self, v: f64) -> Result<F32, E> {
         let f = v as f32;
         if v.is_finite() && f.is_infinite() {
+            if self.overflow_as_infinity {
+                return Ok(F32(f));
+            }
             return Err(E::custom(OUT_OF_RANGE));
         }
         Ok(F32(f))
@@ -72,7 +78,43 @@ impl<'de> Visitor<'de> for F32Visitor {
 
 impl<'de> Deserialize<'de> for F32 {
     fn deserialize<D: Deserializer<'de>>(d: D) -> Result<F32, D::Error> {
-        d.deserialize_any(F32Visitor)
+        d.deserialize_any(F32Visitor { overflow_as_infinity: false })
+    }
+}
+
+/// A float that is read like [`F32`], except that a number too large for 32 bits reads as infinity (never wrapped or clamped). For a value
+/// the caller refuses when it is not finite: the caller's check then names the field (`bones[3].rotation_keys[5]`), where a failure inside
+/// the parser can only give a line and column. Written like an [`F32`].
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct KeyF32(pub f32);
+
+impl<'de> Deserialize<'de> for KeyF32 {
+    fn deserialize<D: Deserializer<'de>>(d: D) -> Result<KeyF32, D::Error> {
+        d.deserialize_any(F32Visitor { overflow_as_infinity: true }).map(|f| KeyF32(f.0))
+    }
+}
+
+/// A value that must be written as a JSON object: the positional (array) form that serde accepts for a struct is refused, so every field is
+/// named and the documented schema is the only one.
+pub(crate) struct Obj<T>(pub T);
+
+struct ObjVisitor<T>(std::marker::PhantomData<T>);
+
+impl<'de, T: Deserialize<'de>> Visitor<'de> for ObjVisitor<T> {
+    type Value = Obj<T>;
+
+    fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("an object with named keys")
+    }
+
+    fn visit_map<A: de::MapAccess<'de>>(self, map: A) -> Result<Obj<T>, A::Error> {
+        T::deserialize(de::value::MapAccessDeserializer::new(map)).map(Obj)
+    }
+}
+
+impl<'de, T: Deserialize<'de>> Deserialize<'de> for Obj<T> {
+    fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Obj<T>, D::Error> {
+        d.deserialize_map(ObjVisitor(std::marker::PhantomData))
     }
 }
 

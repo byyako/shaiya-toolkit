@@ -1,5 +1,6 @@
 //! `cargo xtask guard`: no game files in the repository. Fails when a tracked file is over 1 MiB (except `Cargo.lock`), has a game-file
-//! extension, starts with `SAH`, the SEED signature or `MZ` (outside `xtask/`), or lives in a `fixtures` folder without a README entry.
+//! extension, starts with `SAH`, the SEED signature or `MZ` (outside `xtask/`), lives in a `fixtures` folder without a README entry,
+//! or is a `.json` file that starts like a model exported to JSON (a `"format": "shaiya-toolkit-<ext>-v<n>"` key: the exported JSON of a game file must not be committed).
 
 use crate::meta::root;
 use std::collections::BTreeSet;
@@ -13,15 +14,16 @@ const SEED_SIGNATURE: &[u8] = b"0001CBCEBC5B2784D3FC9A2A9DB84D1C3FEB6E99";
 
 const MODEL_EXTENSIONS: [&str; 6] = ["ani", "3dc", "vani", "mani", "3do", "3de"];
 
-/// True when the head of a file is the start of a model exported to JSON (`"format": "shaiya-toolkit-<ext>-v..."`).
+/// True when the head of a file is the start of a model exported to JSON: a `"format"` key (whitespace allowed before and after the
+/// colon) whose value is `"shaiya-toolkit-<ext>-v<digit>..."`.
 fn looks_like_model_json(head: &[u8]) -> bool {
     let text = String::from_utf8_lossy(head);
-    const MARK: &str = "\"shaiya-toolkit-";
-    text.contains("\"format\":")
-        && text.match_indices(MARK).any(|(at, _)| {
-            let rest = &text[at + MARK.len()..];
-            MODEL_EXTENSIONS.iter().any(|e| rest.strip_prefix(e).is_some_and(|r| r.starts_with("-v")))
-        })
+    text.match_indices("\"format\"").any(|(at, key)| {
+        let rest = text[at + key.len()..].trim_start();
+        let Some(rest) = rest.strip_prefix(':') else { return false };
+        let Some(rest) = rest.trim_start().strip_prefix("\"shaiya-toolkit-") else { return false };
+        MODEL_EXTENSIONS.iter().any(|e| rest.strip_prefix(e).and_then(|r| r.strip_prefix("-v")).is_some_and(|r| r.starts_with(|c: char| c.is_ascii_digit())))
+    })
 }
 
 /// Problems with one file, from what is known about it. `head` is its first bytes.
@@ -154,6 +156,13 @@ mod tests {
   \"size\": 134", &none).is_empty());
         assert!(check_file("a.json", 100, b"{\"format\": \"other\"}", &none).is_empty());
         assert!(check_file("a.json", 100, b"{\"format\": \"shaiya-toolkit-future-v1\"}", &none).is_empty());
+        // whitespace around the colon does not get past it; a name that only starts like a format does not trip it
+        assert_eq!(check_file("a.json", 100, b"{\"format\" : \"shaiya-toolkit-ani-v1\"}", &none).len(), 1);
+        assert_eq!(check_file("a.json", 100, b"{\"format\"
+:
+\"shaiya-toolkit-3do-v12\"}", &none).len(), 1);
+        assert!(check_file("a.json", 100, b"{\"format\": \"shaiya-toolkit-ani-viewer\"}", &none).is_empty());
+        assert!(check_file("a.json", 100, b"{\"other\": \"shaiya-toolkit-ani-v1\"}", &none).is_empty());
     }
 
     #[test]

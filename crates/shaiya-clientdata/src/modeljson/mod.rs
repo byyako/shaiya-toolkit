@@ -82,7 +82,8 @@ pub const MAX_JSON_BYTES: u64 = 256 << 20;
 pub enum JsonError {
     /// The model file does not read (the reader's message).
     Unreadable(Error),
-    /// A key value that must be finite is not, or a number is too large for a 32-bit float (`at` names the place).
+    /// A key value that must be finite is not, or a number is too large for a 32-bit float (`at` names the field, as in
+    /// `bones[3].rotation_keys[5]`).
     NotFinite { at: String },
     /// Malformed JSON, a wrong type, a missing or unknown key.
     Json { line: usize, column: usize, message: String },
@@ -123,15 +124,13 @@ impl From<Error> for JsonError {
     }
 }
 
-/// Turns a `serde_json` error into a [`JsonError`]; a number that does not fit a 32-bit float becomes `NotFinite`.
+/// Turns a `serde_json` error into a [`JsonError`]. A number too large for a 32-bit float where the parser refuses it (a plain [`types::F32`])
+/// is a `Json` error with its line and column; the `.ANI` keys name their field instead (see [`types::KeyF32`]).
 pub(crate) fn json_error(e: serde_json::Error) -> JsonError {
     let (line, column) = (e.line(), e.column());
     let mut message = e.to_string();
     if let Some(at) = message.rfind(" at line ") {
         message.truncate(at);
-    }
-    if message.contains(types::OUT_OF_RANGE) {
-        return JsonError::NotFinite { at: format!("line {line}, column {column}") };
     }
     JsonError::Json { line, column, message }
 }
@@ -204,15 +203,17 @@ pub fn format_of(json: &[u8]) -> Result<ModelFormat, JsonError> {
 }
 
 fn format_of_unchecked(json: &[u8]) -> Result<ModelFormat, JsonError> {
-    let probe: FormatOnly = serde_json::from_slice(json).map_err(json_error)?;
+    let types::Obj(probe): types::Obj<FormatOnly> = serde_json::from_slice(json).map_err(json_error)?;
     let name = probe.format;
     if let Some(f) = ModelFormat::ALL.into_iter().find(|f| f.schema() == name) {
         return Ok(f);
     }
     for f in ModelFormat::ALL {
         let stem = f.schema().trim_end_matches("v1");
-        if let Some(version) = name.strip_prefix(stem).filter(|v| v.starts_with('v') && v.len() > 1) {
-            return Err(JsonError::Schema(format!("made by a newer toolkit ({version}); this toolkit reads v1")));
+        // `-v2`, `-v10`, ...: a version number above 1. `-v0`, `-v1x` and the like are not a version and are reported as unknown.
+        let newer = name.strip_prefix(stem).and_then(|v| v.strip_prefix('v')).filter(|d| !d.is_empty() && d.bytes().all(|b| b.is_ascii_digit()) && d.parse::<u64>().is_ok_and(|n| n > 1));
+        if let Some(digits) = newer {
+            return Err(JsonError::Schema(format!("made by a newer toolkit (v{digits}); this toolkit reads v1")));
         }
     }
     Err(JsonError::Schema(format!("not a toolkit model JSON (format \"{name}\")")))
@@ -230,8 +231,14 @@ pub(crate) fn export_capped(format: ModelFormat, bytes: &[u8], source: &str, mod
         ModelFormat::Ani => ani::export(bytes, source, json_cap)?,
         other => return Err(JsonError::Schema(format!("the JSON form of {} files is not available in this build", other.label()))),
     };
-    match import_capped(text.as_bytes(), MAX_MODEL_BYTES, json_cap) {
-        Ok((f, back)) if f == format && back == bytes => Ok(text),
+    self_check(format, bytes, import_capped(text.as_bytes(), MAX_MODEL_BYTES, json_cap))?;
+    Ok(text)
+}
+
+/// The export's self-check: what the import gave back for the exported text must be `(format, bytes)` exactly, else the toolkit has a bug.
+fn self_check(format: ModelFormat, bytes: &[u8], read_back: Result<(ModelFormat, Vec<u8>), JsonError>) -> Result<(), JsonError> {
+    match read_back {
+        Ok((f, back)) if f == format && back == bytes => Ok(()),
         Ok((f, back)) => {
             let at = bytes.iter().zip(&back).position(|(a, b)| a != b).unwrap_or(bytes.len().min(back.len()));
             Err(JsonError::SelfCheck(format!("format {f:?}, {} bytes read back for {}; first difference at byte {at}", back.len(), bytes.len())))
@@ -309,5 +316,30 @@ mod tests {
         assert!(matches!(none, JsonError::Json { .. }), "{none}");
         assert!(matches!(import(b"not json"), Err(JsonError::Json { .. })));
         assert_eq!(format_of(br#"{"format": "shaiya-toolkit-3do-v1", "x": [1, 2]}"#).unwrap(), ModelFormat::Mesh3do);
+        for newer in ["v2", "v10", "v007"] {
+            let e = format_of(format!(r#"{{"format": "shaiya-toolkit-3dc-{newer}"}}"#).as_bytes()).unwrap_err();
+            assert!(e.to_string().contains(&format!("newer toolkit ({newer})")), "{newer}: {e}");
+        }
+        for odd in ["v0", "v1x", "v", "vx", "v01", "v-1", "viewer"] {
+            let e = format_of(format!(r#"{{"format": "shaiya-toolkit-ani-{odd}"}}"#).as_bytes()).unwrap_err();
+            assert!(e.to_string().contains("not a toolkit model JSON"), "{odd}: {e}");
+        }
+    }
+
+    #[test]
+    fn a_self_check_mismatch_is_a_bug_of_the_toolkit() {
+        let ok = self_check(ModelFormat::Ani, b"abc", Ok((ModelFormat::Ani, b"abc".to_vec())));
+        assert!(ok.is_ok());
+        let different = self_check(ModelFormat::Ani, b"abc", Ok((ModelFormat::Ani, b"abd".to_vec()))).unwrap_err();
+        assert!(matches!(different, JsonError::SelfCheck(_)) && different.is_bug(), "{different}");
+        assert!(different.to_string().contains("first difference at byte 2"), "{different}");
+        let shorter = self_check(ModelFormat::Ani, b"abc", Ok((ModelFormat::Ani, b"ab".to_vec()))).unwrap_err();
+        assert!(shorter.is_bug() && shorter.to_string().contains("first difference at byte 2"), "{shorter}");
+        let other_format = self_check(ModelFormat::Ani, b"abc", Ok((ModelFormat::C3dc, b"abc".to_vec()))).unwrap_err();
+        assert!(other_format.is_bug(), "{other_format}");
+        let failed = self_check(ModelFormat::Ani, b"abc", Err(JsonError::Schema("x".into()))).unwrap_err();
+        assert!(failed.is_bug() && failed.to_string().starts_with("the export did not read back to the same bytes"), "{failed}");
+        // problems with the input are not bugs
+        assert!(!JsonError::Schema("x".into()).is_bug() && !JsonError::NotFinite { at: "a".into() }.is_bug());
     }
 }

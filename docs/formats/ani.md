@@ -108,7 +108,7 @@ The toolkit's library can turn an `.ANI` into a JSON text (`shaiya-toolkit-ani-v
 | `bones[i].rotation_keys` | `[key, x, y, z, w]` per key |
 | `bones[i].translation_keys` | `[key, x, y, z]` per key |
 
-- One key is written on its own line. A float is written in its shortest form (`0.1`); a float that has no such number, NaN or infinity is written as the string `"bits:XXXXXXXX"` (the 32 bits in hex). Both forms are read back.
+- Each animation key (`[key, x, y, z, w]`) is written on one line. A float is written in its shortest form (`0.1`); a float that has no such number, NaN or infinity is written as the string `"bits:XXXXXXXX"` (the 32 bits in hex). Both forms are read back.
 - The reference matrices are hex, kept bit for bit (20 stock files hold NaN there).
 - Key values must be finite: a NaN or infinity in a key is refused on export and on import, and so is a number too large for a 32-bit float.
 - Unknown keys, other columns, a bone out of order and a newer format are refused. Hex is read in either letter case.
