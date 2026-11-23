@@ -4,11 +4,16 @@
 //!
 //! Schema `v1` of each format is documented on its format page; the layout of the text is in [`fmt`]; floats are JSON numbers in their
 //! shortest form when that reads back to the same bits, otherwise `"bits:XXXXXXXX"` (see [`types`]). Byte strings and bit-exact matrices
-//! are hex in file order. Unknown keys are refused. This module covers `.ANI`; the other formats follow in the same shape.
+//! are hex in file order. Unknown keys are refused. All six formats (`.ANI`, `.3DC`, `.VANI`, `.MANI`, `.3DO`, `.3DE`) are covered.
 
 mod ani;
+mod c3dc;
 mod fmt;
+mod mani;
+mod mesh3do;
+mod mesh3de;
 mod types;
+mod vani;
 
 use crate::error::Error;
 use serde::Deserialize;
@@ -229,7 +234,11 @@ pub(crate) fn export_capped(format: ModelFormat, bytes: &[u8], source: &str, mod
     check_model_len(bytes.len() as u64, model_cap)?;
     let text = match format {
         ModelFormat::Ani => ani::export(bytes, source, json_cap)?,
-        other => return Err(JsonError::Schema(format!("the JSON form of {} files is not available in this build", other.label()))),
+        ModelFormat::C3dc => c3dc::export(bytes, source, json_cap)?,
+        ModelFormat::Vani => vani::export(bytes, source, json_cap)?,
+        ModelFormat::Mani => mani::export(bytes, source, json_cap)?,
+        ModelFormat::Mesh3do => mesh3do::export(bytes, source, json_cap)?,
+        ModelFormat::Mesh3de => mesh3de::export(bytes, source, json_cap)?,
     };
     self_check(format, bytes, import_capped(text.as_bytes(), MAX_MODEL_BYTES, json_cap))?;
     Ok(text)
@@ -257,7 +266,11 @@ pub(crate) fn import_capped(json: &[u8], model_cap: u64, json_cap: u64) -> Resul
     let format = format_of_unchecked(json)?;
     let bytes = match format {
         ModelFormat::Ani => ani::import(json, model_cap)?,
-        other => return Err(JsonError::Schema(format!("the JSON form of {} files is not available in this build", other.label()))),
+        ModelFormat::C3dc => c3dc::import(json, model_cap)?,
+        ModelFormat::Vani => vani::import(json, model_cap)?,
+        ModelFormat::Mani => mani::import(json, model_cap)?,
+        ModelFormat::Mesh3do => mesh3do::import(json, model_cap)?,
+        ModelFormat::Mesh3de => mesh3de::import(json, model_cap)?,
     };
     Ok((format, bytes))
 }

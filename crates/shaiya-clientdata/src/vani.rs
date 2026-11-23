@@ -63,10 +63,10 @@ pub struct Vani {
 
 const VERTEX: usize = 36;
 const FACE: usize = 6;
-const ITEM_LIMIT: usize = 4096;
-const STEP_LIMIT: usize = 1 << 16;
-const COUNT_LIMIT: usize = 1 << 24;
-const TEXTURE_LIMIT: usize = 1 << 20;
+pub(crate) const ITEM_LIMIT: usize = 4096;
+pub(crate) const STEP_LIMIT: usize = 1 << 16;
+pub(crate) const COUNT_LIMIT: usize = 1 << 24;
+pub(crate) const TEXTURE_LIMIT: usize = 1 << 20;
 
 fn faces(r: &mut Cur, what: &str) -> Result<Vec<[u16; 3]>> {
     let n = r.count(FACE, COUNT_LIMIT, what)?;

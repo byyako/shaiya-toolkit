@@ -11,6 +11,7 @@ All notable changes are listed here, newest first. The format follows [Keep a Ch
 ### Libraries
 
 - `shaiya-clientdata`: the new `modeljson` module turns an `.ANI` into a documented JSON text (`shaiya-toolkit-ani-v1`) and back; floats are numbers in their shortest form or `"bits:XXXXXXXX"`, reference matrices are hex, unknown keys and other columns are refused, key values must be finite. On US EP4.5, all 3,509 `.ANI` files export and import back byte for byte (validated offline); the eight other matrix clients are index only. `Ani::try_to_bytes` now also reads its bytes back and refuses a track longer than the reader accepts.
+- `shaiya-clientdata`: `modeljson` also covers `.3DC`, `.VANI`, `.MANI`, `.3DO` and `.3DE` (`shaiya-toolkit-3dc-v1`, `-vani-v1`, `-mani-v1`, `-3do-v1`, `-3de-v1`): an unedited file comes back byte for byte (US EP4.5: 2,431 `.3DC`, 66 `.VANI`, 23 `.MANI`, 271 `.3DO` and 467 of 469 `.3DE`; validated offline), NaN and infinity in a vertex are written as `"bits:XXXXXXXX"`, the 2 `.3DE` the reader refuses are not exported, and bytes made from a JSON are read back by the format's reader before they are returned. New `Mani::from_values`.
 
 ## [0.4.0] - 2026-11-22
 

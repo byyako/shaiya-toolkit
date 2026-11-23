@@ -70,9 +70,9 @@ pub struct Mesh3de {
 const VERTEX: usize = 24;
 const FRAME_VERTEX: usize = 20;
 const FACE: usize = 6;
-const COUNT_LIMIT: usize = 1 << 24;
-const FRAME_LIMIT: usize = 1 << 16;
-const TEXTURE_LIMIT: usize = 1 << 20;
+pub(crate) const COUNT_LIMIT: usize = 1 << 24;
+pub(crate) const FRAME_LIMIT: usize = 1 << 16;
+pub(crate) const TEXTURE_LIMIT: usize = 1 << 20;
 
 /// The refusal text for a file that neither layout reads.
 pub const NOT_THE_LAYOUT: &str = "does not follow the .3DE layout the toolkit reads";

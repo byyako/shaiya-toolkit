@@ -45,9 +45,9 @@ pub struct Mesh3do {
 const VERTEX: usize = 32;
 const FRAME_VERTEX: usize = 24;
 const FACE: usize = 6;
-const COUNT_LIMIT: usize = 1 << 24;
-const FRAME_LIMIT: usize = 1 << 16;
-const TEXTURE_LIMIT: usize = 1 << 20;
+pub(crate) const COUNT_LIMIT: usize = 1 << 24;
+pub(crate) const FRAME_LIMIT: usize = 1 << 16;
+pub(crate) const TEXTURE_LIMIT: usize = 1 << 20;
 
 impl Mesh3do {
     /// Reads a whole `.3DO`; the file must end exactly after the last frame.

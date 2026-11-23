@@ -41,16 +41,21 @@ Client ids: `us-108` (US patch level 108), and the eight test clients `ru-ep3`, 
 | `modeljson::export` then `import` gives every `.ANI` back byte for byte | OK 3,509 | n/a | n/a | n/a | n/a | n/a | n/a | n/a | n/a |
 | `.3DC` files the index lists (index only: the number is the visible `.3DC` files of the index; no contents were read on the eight test clients) | OK 2,431 | OK 2,635 | OK 3,049 | OK 3,164 | OK 3,126 | OK 4,988 | OK 4,220 | OK 6,534 | OK 2,317 |
 | `C3dc::parse` reads every `.3DC` to the last byte with exactly one layout and `to_bytes` gives it back byte for byte | OK 2,431 | n/a | n/a | n/a | n/a | n/a | n/a | n/a | n/a |
+| `modeljson::export` then `import` gives every `.3DC` back byte for byte | OK 2,431 | n/a | n/a | n/a | n/a | n/a | n/a | n/a | n/a |
 | Animation preview: `.ANI` files that have at least one compatible `.3DC` mesh (found by name and bone count; validated offline) | OK 3,365 | n/a | n/a | n/a | n/a | n/a | n/a | n/a | n/a |
 | `.VANI` files the index lists (index only: the number is the visible `.VANI` files of the index; no contents were read on the eight test clients) | OK 66 | OK 103 | OK 116 | OK 116 | OK 116 | OK 129 | OK 129 | OK 141 | OK 74 |
 | `Vani::parse` reads every `.VANI` to the last byte and `to_bytes` gives it back byte for byte | OK 66 | n/a | n/a | n/a | n/a | n/a | n/a | n/a | n/a |
+| `modeljson::export` then `import` gives every `.VANI` back byte for byte | OK 66 | n/a | n/a | n/a | n/a | n/a | n/a | n/a | n/a |
 | `.MANI` files the index lists (index only: the number is the visible `.MANI` files of the index; no contents were read on the eight test clients) | OK 23 | OK 39 | OK 39 | OK 39 | OK 39 | OK 54 | OK 48 | OK 64 | OK 35 |
 | every `.MANI` the index lists is 108 bytes (index only: the length each index gives; the number is the files of that length) | OK 23 | OK 39 | OK 39 | OK 39 | OK 39 | OK 54 | OK 48 | OK 64 | OK 35 |
 | `Mani::parse` reads every `.MANI` (108 bytes) and `to_bytes` gives it back byte for byte | OK 23 | n/a | n/a | n/a | n/a | n/a | n/a | n/a | n/a |
+| `modeljson::export` then `import` gives every `.MANI` back byte for byte | OK 23 | n/a | n/a | n/a | n/a | n/a | n/a | n/a | n/a |
 | `.3DO` files the index lists (index only: the number is the visible `.3DO` files of the index; no contents were read on the eight test clients) | OK 271 | OK 300 | OK 414 | OK 415 | OK 415 | OK 461 | OK 442 | OK 514 | OK 298 |
 | `Mesh3do::parse` reads every `.3DO` to the last byte and `to_bytes` gives it back byte for byte | OK 271 | n/a | n/a | n/a | n/a | n/a | n/a | n/a | n/a |
+| `modeljson::export` then `import` gives every `.3DO` back byte for byte | OK 271 | n/a | n/a | n/a | n/a | n/a | n/a | n/a | n/a |
 | `.3DE` files the index lists (index only: the number is the visible `.3DE` files of the index; no contents were read on the eight test clients) | OK 469 | OK 640 | OK 718 | OK 756 | OK 708 | OK 892 | OK 925 | OK 1,344 | OK 611 |
 | `Mesh3de::parse` reads a `.3DE` with exactly one of its two layouts and `to_bytes` gives it back byte for byte; any other file is refused with the reason (the number is the files that read) | OK 467 of 469 (2 refused, named on the format page) | n/a | n/a | n/a | n/a | n/a | n/a | n/a | n/a |
+| `modeljson::export` then `import` gives every `.3DE` the reader reads back byte for byte; the files it refuses stay refused (the number is the files that came back) | OK 467 of 469 (2 refused, named on the format page) | n/a | n/a | n/a | n/a | n/a | n/a | n/a | n/a |
 
 Reading the table:
 
@@ -80,6 +85,7 @@ Reading the table:
 - The `.MANI` rows: the first counts the `.MANI` files each client's index lists; the second says that every one of them has a length of 108 bytes in the index (the length is read from the index, never from file contents, so it holds for all nine clients); the third reads every `.MANI` on `us-108` (US EP4.5) and is `n/a` on the eight test clients (index only). The meanings of the fields are inferred and were not checked in the game. See [mani.md](formats/mani.md).
 - The `.3DO` rows work the same way as the `.ANI` rows: the first counts the `.3DO` files each client's index lists (no contents read); the second reads every `.3DO` on `us-108` (US EP4.5) to the last byte and is `n/a` on the eight test clients (no `data.saf` in the test set; index only). Only one file of `us-108` has frames. Whether a later episode's `.3DO` files read is not checked. See [3do.md](formats/3do.md).
 - The `.3DE` rows: the first counts the `.3DE` files each client's index lists (no contents read). The second reads every `.3DE` on `us-108` (US EP4.5) with exactly one of its two layouts: 467 of the 469 files read and write back byte for byte, and the other 2 (`004.3de` and `Deathknight007.3DE`) follow neither layout and are refused with the reason, never half-read; the cell is `OK` because nothing else failed. It is `n/a` on the eight test clients (index only). Whether a later episode's `.3DE` files read is not checked. See [3de.md](formats/3de.md).
+- The JSON rows (`.ANI`, `.3DC`, `.VANI`, `.MANI`, `.3DO`, `.3DE`) read every file of that kind on `us-108` (US EP4.5), export it with `modeljson::export` and import the text with `modeljson::import`; the cell is `OK` when every file comes back byte for byte (validated offline). They are `n/a` on the eight test clients (no `data.saf` in the test set; index only). For `.3DE` the 2 files the reader refuses must be refused by the export too. See the format pages.
 
 ## SVMap Editor and `shaiya svmap`
 

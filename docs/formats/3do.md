@@ -31,6 +31,26 @@ The toolkit keeps floats exactly as stored (NaN bits included) and the texture n
 
 In Shaiya Toolkit's Archive tab a `.3DO` shows its mesh in plain grey with the wire, under "3DO mesh: N vertices, N triangles" (a texture the file names is not looked up, and the note says so). A file with frames (US EP4.5: only `Item/3DO/arrow.3DO`) plays them at its frame rate, shown as "N frames at N per second (inferred from the file; not checked in the game)", with Play/Pause, a slider and Loop; a rate that is not positive plays at 30 frames per second and says so. A file that does not read to the last byte shows its error and the bytes as hex, also when the bytes look like text. `shaiya anim info` prints one line per file (vertices, triangles, frames, rate as inferred); `--json` has the same as keys. `shaiya anim validate` and `compare` read `.ANI` files only. Validated offline on US EP4.5 files.
 
+## JSON (export and import)
+
+The toolkit's library can turn a `.3DO` into a JSON text (`shaiya-toolkit-3do-v1`) and that text back into the file. An unedited file comes back byte for byte (US EP4.5: all 271 `.3DO` files; validated offline; the eight other matrix clients have their index only and were not read). The JSON goes in through the same Replace and `archive replace` paths as any file: nothing is written into a client folder.
+
+| Key | Content |
+|---|---|
+| `format` | `shaiya-toolkit-3do-v1`; any other name is refused, and a newer version (`-v2`) is refused as "made by a newer toolkit" |
+| `source` | label only (ignored on import) |
+| `inferred` | label: `frame_rate` is frames per second, which is inferred (ignored on import) |
+| `columns` | `vertices`: `x, y, z, nx, ny, nz, u, v`; `frame_vertices`: `x, y, z, nx, ny, nz`; may be left out, but when present they must equal these lists |
+| `texture_hex` | the texture name as stored, as hex |
+| `vertices` | `[x, y, z, nx, ny, nz, u, v]` per vertex |
+| `faces` | `[a, b, c]` per triangle |
+| `frame_rate` | integer (inferred) |
+| `frames` | `{"key": n, "vertices": [[x, y, z, nx, ny, nz], ...]}` per frame; each frame must hold one record per vertex |
+
+- Each vertex, frame record and triangle is written on one line. Floats are written as for `.3DC`: the shortest number, or `"bits:XXXXXXXX"`.
+- A frame with a missing or extra vertex, counts over the reader's limits, unknown keys, other columns and a newer format are refused. Hex is read in either letter case.
+- The bytes made from a JSON are read back by the `.3DO` reader before they are returned.
+
 ## Verified on
 
 US EP4.5 (patch 108), read only: all 271 `.3DO` files read to the last byte and write back byte for byte. Three of them name a texture; the others have an empty texture name. Only one file has frames: `Item/3DO/arrow.3DO`, with `frame_rate` 20 and 11 frames; the other 270 have 0 frames. The opt-in test `every_3do_of_the_us_client_reads_and_writes_back` measures these numbers.

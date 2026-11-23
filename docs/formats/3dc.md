@@ -62,6 +62,26 @@ On US EP4.5, each of the 16 character rigs posed with its first `<rig>_000_` ani
 
 No program writes a `.3DC` file. Selecting a `.3DC` in the Archive tab shows its first mesh at rest, in plain grey with the wire, under a header: "Skinned mesh: N vertices, N triangles, N bones", "Cloak mesh without bones: N vertices, N triangles", or, for the layout with a second mesh, the same with "a second mesh follows (N vertices); the picture shows the first". A weak line says "shown in the mesh's own rest pose, plain grey (the mesh file names no texture)", or "(textures are not looked up for skinned meshes)" for a mesh that does name one. A `.3DC` is never shown as text, even when its bytes look like text: a file that does not read to the last byte (or that two layouts read) shows the reader's error and the bytes as hex.
 
+## JSON (export and import)
+
+The toolkit's library can turn a `.3DC` into a JSON text (`shaiya-toolkit-3dc-v1`) and that text back into the file. An unedited file comes back byte for byte (US EP4.5: all 2,431 `.3DC` files; validated offline; the eight other matrix clients have their index only and were not read). The JSON goes in through the same Replace and `archive replace` paths as any file: nothing is written into a client folder.
+
+| Key | Content |
+|---|---|
+| `format` | `shaiya-toolkit-3dc-v1`; any other name is refused, and a newer version (`-v2`) is refused as "made by a newer toolkit" |
+| `source` | label only (ignored on import) |
+| `columns` | `vertices`: `x, y, z, weight, bone1, bone2, pad, nx, ny, nz, u, v`; may be left out, but when present it must equal this list |
+| `layout` | `skinned`, `skinned-with-second-mesh` or `cloak` |
+| `meshes` | one object per mesh: 1, or 2 for `skinned-with-second-mesh` |
+| `meshes[i].texture_hex` | the texture name as stored (the NUL and anything after it included), as hex |
+| `meshes[i].bones_hex` | the mesh's own matrices, 128 hex digits each, in file order; must be `[]` for a `cloak` |
+| `meshes[i].vertices` | `[x, y, z, weight, bone1, bone2, pad, nx, ny, nz, u, v]` per vertex; `pad` is kept as stored |
+| `meshes[i].faces` | `[a, b, c]` per triangle |
+
+- Each vertex and each triangle is written on one line. A float is written in its shortest form (`0.1`); a float that has no such number, NaN or infinity is written as the string `"bits:XXXXXXXX"` (the 32 bits in hex). Both forms are read back. On US EP4.5, 6 of the 2,431 files hold NaN or infinity in vertex fields and are written with `bits:`.
+- Unknown keys, other columns, a layout that does not fit the number of meshes, bones in a cloak, and a newer format are refused. Hex is read in either letter case.
+- The bytes made from a JSON are read back by the `.3DC` reader before they are returned; a mesh that would read back with another layout (or not at all) is refused.
+
 ## Verified on
 
 US EP4.5 (patch 108), read only: all 2,431 `.3DC` files read to the last byte and write back byte for byte, 2,382 with the skinned layout, 1 with a second mesh and 48 as cloaks, none ambiguous; every vertex bone index of a skinned mesh is below the bone count of its own mesh; the `pad` field is non-zero in some vertices; the matrices of the torso part of each of the 16 character rigs are not the inverse of the reference matrices of that rig's first `.ANI` (the opt-in tests print the counts).

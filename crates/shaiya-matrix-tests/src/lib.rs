@@ -81,19 +81,24 @@ pub enum Cap {
     AniJson,
     C3dcIndexCount,
     C3dcRoundTrip,
+    C3dcJson,
     AniPreview,
     VaniIndexCount,
     VaniRoundTrip,
+    VaniJson,
     ManiIndexCount,
     ManiIndexSize,
     ManiRoundTrip,
+    ManiJson,
     C3doIndexCount,
     C3doRoundTrip,
+    C3doJson,
     C3deIndexCount,
     C3deRead,
+    C3deJson,
 }
 
-pub const CAPS: [Cap; 44] = [
+pub const CAPS: [Cap; 49] = [
     Cap::IndexParse,
     Cap::ToBytesIdentical,
     Cap::InspectSah,
@@ -128,16 +133,21 @@ pub const CAPS: [Cap; 44] = [
     Cap::AniJson,
     Cap::C3dcIndexCount,
     Cap::C3dcRoundTrip,
+    Cap::C3dcJson,
     Cap::AniPreview,
     Cap::VaniIndexCount,
     Cap::VaniRoundTrip,
+    Cap::VaniJson,
     Cap::ManiIndexCount,
     Cap::ManiIndexSize,
     Cap::ManiRoundTrip,
+    Cap::ManiJson,
     Cap::C3doIndexCount,
     Cap::C3doRoundTrip,
+    Cap::C3doJson,
     Cap::C3deIndexCount,
     Cap::C3deRead,
+    Cap::C3deJson,
 ];
 
 /// The archive and patch capabilities, which need a readable `data.sah` (they all fail with it).
@@ -188,16 +198,21 @@ impl Cap {
             Cap::AniJson => "`modeljson::export` then `import` gives every `.ANI` back byte for byte",
             Cap::C3dcIndexCount => "`.3DC` files the index lists (index only)",
             Cap::C3dcRoundTrip => "`C3dc::parse` reads every `.3DC` to the last byte with exactly one layout and `to_bytes` gives it back byte for byte",
+            Cap::C3dcJson => "`modeljson::export` then `import` gives every `.3DC` back byte for byte",
             Cap::AniPreview => "animation preview: `.ANI` files with at least one compatible `.3DC` (validated offline; by names and bone counts, `meshpick`)",
             Cap::VaniIndexCount => "`.VANI` files the index lists (index only)",
             Cap::VaniRoundTrip => "`Vani::parse` reads every `.VANI` to the last byte and `to_bytes` gives it back byte for byte",
+            Cap::VaniJson => "`modeljson::export` then `import` gives every `.VANI` back byte for byte",
             Cap::ManiIndexCount => "`.MANI` files the index lists (index only)",
             Cap::ManiIndexSize => "every `.MANI` the index lists is 108 bytes (index only)",
             Cap::ManiRoundTrip => "`Mani::parse` reads every `.MANI` (108 bytes) and `to_bytes` gives it back byte for byte",
+            Cap::ManiJson => "`modeljson::export` then `import` gives every `.MANI` back byte for byte",
             Cap::C3doIndexCount => "`.3DO` files the index lists (index only)",
             Cap::C3doRoundTrip => "`Mesh3do::parse` reads every `.3DO` to the last byte and `to_bytes` gives it back byte for byte",
+            Cap::C3doJson => "`modeljson::export` then `import` gives every `.3DO` back byte for byte",
             Cap::C3deIndexCount => "`.3DE` files the index lists (index only)",
             Cap::C3deRead => "`Mesh3de::parse` reads a `.3DE` with exactly one of its two layouts and `to_bytes` gives it back byte for byte; any other file is refused with the reason (the number is the files that read)",
+            Cap::C3deJson => "`modeljson::export` then `import` gives every `.3DE` the reader reads back byte for byte; the files it refuses stay refused (the number is the files that came back)",
         }
     }
 }
@@ -213,7 +228,7 @@ use Cell::{Fails as F, FitOnly as FO, NotAvailable as NA, Ok as O, Plain as P};
 ///
 /// Note: the 9 EP8 `DB*Data` binary-header files of kr-ep8 and fawkes-v68 do not survive `seed::unwrap` + CRC
 /// (the SEED rows of those two clients may need `Fails` once a run shows it); a run that disagrees must be reported, not forced to pass.
-pub const EXPECTED: [[Cell; 9]; 44] = [
+pub const EXPECTED: [[Cell; 9]; 49] = [
     /* IndexParse       */ [O, O, O, O, O, O, O, O, O],
     /* ToBytesIdentical */ [O, O, O, O, O, O, O, O, O],
     /* InspectSah       */ [O, O, O, O, O, O, O, O, O],
@@ -248,16 +263,21 @@ pub const EXPECTED: [[Cell; 9]; 44] = [
     /* AniJson                */ [O, NA, NA, NA, NA, NA, NA, NA, NA],
     /* C3dcIndexCount         */ [O, O, O, O, O, O, O, O, O],
     /* C3dcRoundTrip          */ [O, NA, NA, NA, NA, NA, NA, NA, NA],
+    /* C3dcJson               */ [O, NA, NA, NA, NA, NA, NA, NA, NA],
     /* AniPreview             */ [O, NA, NA, NA, NA, NA, NA, NA, NA],
     /* VaniIndexCount         */ [O, O, O, O, O, O, O, O, O],
     /* VaniRoundTrip          */ [O, NA, NA, NA, NA, NA, NA, NA, NA],
+    /* VaniJson               */ [O, NA, NA, NA, NA, NA, NA, NA, NA],
     /* ManiIndexCount         */ [O, O, O, O, O, O, O, O, O],
     /* ManiIndexSize          */ [O, O, O, O, O, O, O, O, O],
     /* ManiRoundTrip          */ [O, NA, NA, NA, NA, NA, NA, NA, NA],
+    /* ManiJson               */ [O, NA, NA, NA, NA, NA, NA, NA, NA],
     /* C3doIndexCount         */ [O, O, O, O, O, O, O, O, O],
     /* C3doRoundTrip          */ [O, NA, NA, NA, NA, NA, NA, NA, NA],
+    /* C3doJson               */ [O, NA, NA, NA, NA, NA, NA, NA, NA],
     /* C3deIndexCount         */ [O, O, O, O, O, O, O, O, O],
     /* C3deRead               */ [O, NA, NA, NA, NA, NA, NA, NA, NA],
+    /* C3deJson               */ [O, NA, NA, NA, NA, NA, NA, NA, NA],
 ];
 
 /// The numbers the T1 rows assert (the "OK 19,939" style cells of docs/version-matrix.md), in `CLIENTS` order; `None` = a plain "OK" cell.
@@ -269,11 +289,12 @@ pub const EXPECTED: [[Cell; 9]; 44] = [
 /// a `FIT-ONLY` cell is a layout that reads the file but was not read from that client's loader. `SdataAutoPicks`: SData files that exactly one layout reads (the rest are raw).
 /// `AniIndexCount`: `.ANI` files the index lists (every client; index only). `AniRoundTrip`: `.ANI` files that read to the last byte, write back byte for byte and have no validation error (only where `data.saf` is present).
 /// `AniJson`: `.ANI` files that `modeljson::export` turns into JSON and `modeljson::import` turns back into the same bytes (only where `data.saf` is present).
+/// `C3dcJson`/`VaniJson`/`ManiJson`/`C3doJson`: the `.3DC`/`.VANI`/`.MANI`/`.3DO` files that `modeljson::export` turns into JSON and `modeljson::import` turns back into the same bytes (only where `data.saf` is present). `C3deJson`: the `.3DE` files the reader reads that come back the same (467 on `us-108`); the cell is `OK` when the files the reader refuses are refused by the export too.
 /// `C3dcIndexCount`: `.3DC` files the index lists (every client; index only). `C3dcRoundTrip`: `.3DC` files that read to the last byte with exactly one layout and write back byte for byte (only where `data.saf` is present).
 /// `AniPreview`: `.ANI` files of the US client that have at least one compatible `.3DC` (by name and bone count); `n/a` without a `data.saf`.
 /// `VaniIndexCount`/`ManiIndexCount`: `.VANI`/`.MANI` files the index lists (every client; index only). `ManiIndexSize`: `.MANI` files the index lists with a length of 108 bytes (index only; the cell is `OK` only when it is every one). `VaniRoundTrip`/`ManiRoundTrip`: files that read to the last byte and write back byte for byte (only where `data.saf` is present).
 /// `C3doIndexCount`/`C3deIndexCount`: `.3DO`/`.3DE` files the index lists (every client; index only). `C3doRoundTrip`: `.3DO` files that read to the last byte and write back byte for byte. `C3deRead`: `.3DE` files that read with exactly one of the two layouts and write back byte for byte (only where `data.saf` is present); the cell is `OK` when every other file is refused with the reason, so on `us-108` 467 of the 469 listed files are counted and the 2 refused are named in the facts.
-pub const NUMBERS: [(Cap, [Option<u64>; 9]); 31] = [
+pub const NUMBERS: [(Cap, [Option<u64>; 9]); 36] = [
     (Cap::ArchiveVisibleCount, [Some(19_939), Some(21_523), Some(23_533), Some(24_745), Some(24_599), Some(30_340), Some(34_418), Some(48_118), Some(20_418)]),
     (Cap::ArchiveCheckIndex, [Some(0), Some(0), Some(0), Some(0), Some(0), Some(0), Some(1), Some(1), Some(0)]),
     (Cap::ArchiveFreeList, [Some(0), Some(0), Some(507), Some(500), Some(500), Some(0), Some(0), Some(630), Some(500)]),
@@ -295,16 +316,21 @@ pub const NUMBERS: [(Cap, [Option<u64>; 9]); 31] = [
     (Cap::AniJson, [Some(3_509), None, None, None, None, None, None, None, None]),
     (Cap::C3dcIndexCount, [Some(2_431), Some(2_635), Some(3_049), Some(3_164), Some(3_126), Some(4_988), Some(4_220), Some(6_534), Some(2_317)]),
     (Cap::C3dcRoundTrip, [Some(2_431), None, None, None, None, None, None, None, None]),
+    (Cap::C3dcJson, [Some(2_431), None, None, None, None, None, None, None, None]),
     (Cap::AniPreview, [Some(3_365), None, None, None, None, None, None, None, None]),
     (Cap::VaniIndexCount, [Some(66), Some(103), Some(116), Some(116), Some(116), Some(129), Some(129), Some(141), Some(74)]),
     (Cap::VaniRoundTrip, [Some(66), None, None, None, None, None, None, None, None]),
+    (Cap::VaniJson, [Some(66), None, None, None, None, None, None, None, None]),
     (Cap::ManiIndexCount, [Some(23), Some(39), Some(39), Some(39), Some(39), Some(54), Some(48), Some(64), Some(35)]),
     (Cap::ManiIndexSize, [Some(23), Some(39), Some(39), Some(39), Some(39), Some(54), Some(48), Some(64), Some(35)]),
     (Cap::ManiRoundTrip, [Some(23), None, None, None, None, None, None, None, None]),
+    (Cap::ManiJson, [Some(23), None, None, None, None, None, None, None, None]),
     (Cap::C3doIndexCount, [Some(271), Some(300), Some(414), Some(415), Some(415), Some(461), Some(442), Some(514), Some(298)]),
     (Cap::C3doRoundTrip, [Some(271), None, None, None, None, None, None, None, None]),
+    (Cap::C3doJson, [Some(271), None, None, None, None, None, None, None, None]),
     (Cap::C3deIndexCount, [Some(469), Some(640), Some(718), Some(756), Some(708), Some(892), Some(925), Some(1_344), Some(611)]),
     (Cap::C3deRead, [Some(467), None, None, None, None, None, None, None, None]),
+    (Cap::C3deJson, [Some(467), None, None, None, None, None, None, None, None]),
 ];
 
 pub fn expected_number(client: &str, cap: Cap) -> Option<u64> {
@@ -322,7 +348,7 @@ pub fn expected(client: &str, cap: Cap) -> Option<Cell> {
 #[derive(Clone, Debug)]
 pub struct Observed {
     pub client: String,
-    pub cells: [Cell; 44],
+    pub cells: [Cell; 49],
     /// Measured numbers of the T1 rows (see [`NUMBERS`]).
     pub numbers: Vec<(Cap, u64)>,
     /// Counts and other facts printed with the table (not asserted).
@@ -388,7 +414,7 @@ fn by_name<'a>(files: &'a [(String, Vec<u8>)], tail: &str) -> Option<&'a (String
 
 /// Measures one client folder.
 pub fn observe(client: &str, dir: &Path) -> Observed {
-    let mut o = Observed { client: client.to_string(), cells: [NA; 44], numbers: Vec::new(), facts: Vec::new(), sah_files: None, sah_millis: None, sdata_files: 0, sdata_bytes: 0, notes: Vec::new(), unlisted: Vec::new() };
+    let mut o = Observed { client: client.to_string(), cells: [NA; 49], numbers: Vec::new(), facts: Vec::new(), sah_files: None, sah_millis: None, sdata_files: 0, sdata_bytes: 0, notes: Vec::new(), unlisted: Vec::new() };
     let set = |o: &mut Observed, cap: Cap, c: Cell| o.cells[CAPS.iter().position(|x| *x == cap).expect("cap")] = c;
 
     // the index

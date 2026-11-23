@@ -58,9 +58,9 @@ pub struct C3dc {
 
 const VERTEX: usize = 40;
 const FACE: usize = 6;
-const BONE_LIMIT: usize = 4096;
-const COUNT_LIMIT: usize = 1 << 24;
-const TEXTURE_LIMIT: usize = 1 << 20;
+pub(crate) const BONE_LIMIT: usize = 4096;
+pub(crate) const COUNT_LIMIT: usize = 1 << 24;
+pub(crate) const TEXTURE_LIMIT: usize = 1 << 20;
 
 fn read_mesh(r: &mut Cur, with_bones: bool) -> Result<C3dcMesh> {
     let texture = r.raw_str_i32("texture name")?.to_vec();

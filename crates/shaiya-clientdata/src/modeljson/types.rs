@@ -118,6 +118,77 @@ impl<'de, T: Deserialize<'de>> Deserialize<'de> for Obj<T> {
     }
 }
 
+/// For a key whose value may be `null` but that must be present (`Option` fields are otherwise optional in serde): use as
+/// `#[serde(deserialize_with = "required")]`.
+pub(crate) fn required<'de, D: Deserializer<'de>, T: Deserialize<'de>>(d: D) -> Result<Option<T>, D::Error> {
+    Option::<T>::deserialize(d)
+}
+
+/// A triangle: three `u16` indices, written on one line.
+pub(crate) type Face = [u16; 3];
+
+/// `Ok` when the `columns` list of a JSON equals the documented one exactly (a reordered or renamed column is never read silently).
+pub(crate) fn check_columns(found: &[String], want: &[&str], path: &str) -> Result<(), JsonError> {
+    if found.len() == want.len() && found.iter().zip(want).all(|(a, b)| a == b) {
+        return Ok(());
+    }
+    Err(JsonError::Schema(format!("{path} must be {want:?}, found {found:?}")))
+}
+
+/// `Ok` when `n` entries are within the reader's limit `max`.
+pub(crate) fn check_limit(n: usize, max: usize, path: &str) -> Result<(), JsonError> {
+    if n > max {
+        return Err(JsonError::TooLarge(format!("{path}: {n} entries is over the limit of {max}")));
+    }
+    Ok(())
+}
+
+/// The encoded size of a model, summed with checked arithmetic (an overflow counts as too large).
+pub(crate) struct Size(Option<u64>);
+
+impl Size {
+    pub fn new(start: u64) -> Self {
+        Size(Some(start))
+    }
+
+    pub fn add(&mut self, n: u64) {
+        self.0 = self.0.and_then(|s| s.checked_add(n));
+    }
+
+    /// Adds `count * each` bytes.
+    pub fn add_mul(&mut self, count: usize, each: u64) {
+        let n = (count as u64).checked_mul(each);
+        self.0 = self.0.zip(n).and_then(|(s, n)| s.checked_add(n));
+    }
+
+    /// The total, refused when it overflowed or is over the model cap.
+    pub fn finish(self, model_cap: u64) -> Result<u64, JsonError> {
+        let total = self.0.ok_or_else(|| JsonError::TooLarge("the model is larger than the size limit".into()))?;
+        super::check_model_len(total, model_cap)?;
+        Ok(total)
+    }
+}
+
+/// The 16 floats of a matrix as 64 bytes in file order (kept bit for bit).
+pub(crate) fn matrix_bytes(m: &[f32; 16]) -> Vec<u8> {
+    m.iter().flat_map(|f| f.to_bits().to_le_bytes()).collect()
+}
+
+/// The matrix of 64 stored bytes.
+pub(crate) fn matrix_from_bytes(raw: &[u8; 64]) -> [f32; 16] {
+    let mut m = [0f32; 16];
+    for (i, c) in m.iter_mut().enumerate() {
+        *c = f32::from_bits(u32::from_le_bytes([raw[4 * i], raw[4 * i + 1], raw[4 * i + 2], raw[4 * i + 3]]));
+    }
+    m
+}
+
+/// A texture name from its hex: the length is checked against `limit` before the bytes are decoded.
+pub(crate) fn texture_from_hex(text: &str, limit: usize, path: &str) -> Result<Vec<u8>, JsonError> {
+    check_limit(text.len() / 2, limit, path)?;
+    hex_decode(text, path)
+}
+
 /// Lower-case hex of `bytes`, in file order.
 pub(crate) fn hex_encode(bytes: &[u8]) -> String {
     const DIGITS: &[u8; 16] = b"0123456789abcdef";

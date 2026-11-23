@@ -298,3 +298,28 @@ fn c3de_index_count() {
 fn c3de_read_or_refused_with_the_reason() {
     check(Cap::C3deRead);
 }
+
+#[test]
+fn c3dc_json_round_trip() {
+    check(Cap::C3dcJson);
+}
+
+#[test]
+fn vani_json_round_trip() {
+    check(Cap::VaniJson);
+}
+
+#[test]
+fn mani_json_round_trip() {
+    check(Cap::ManiJson);
+}
+
+#[test]
+fn c3do_json_round_trip() {
+    check(Cap::C3doJson);
+}
+
+#[test]
+fn c3de_json_round_trip_or_refused() {
+    check(Cap::C3deJson);
+}

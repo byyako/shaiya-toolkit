@@ -122,6 +122,26 @@ impl Mani {
         MANI_FIELDS.iter().map(|f| (*f, self.value(f))).collect()
     }
 
+    /// Builds a `.MANI` from one value per field, in [`MANI_FIELDS`] order, each written at its offset (floats by their bits). A value
+    /// whose variant is not the field's type is refused.
+    pub fn from_values(values: &[ManiValue; 20]) -> Result<Mani> {
+        let mut raw = [0u8; MANI_SIZE];
+        for (field, value) in MANI_FIELDS.iter().zip(values) {
+            let at = field.offset;
+            let bytes: Vec<u8> = match (field.kind, value) {
+                (ManiType::I32, ManiValue::I32(v)) => v.to_le_bytes().to_vec(),
+                (ManiType::U16, ManiValue::U16(v)) => v.to_le_bytes().to_vec(),
+                (ManiType::F32, ManiValue::F32(v)) => v.to_bits().to_le_bytes().to_vec(),
+                (ManiType::F32x3, ManiValue::F32x3(v)) => v.iter().flat_map(|c| c.to_bits().to_le_bytes()).collect(),
+                _ => {
+                    return Err(Error::Format { file: "mani".into(), what: format!("{}: the value is not a {:?}", field.name, field.kind), offset: at });
+                }
+            };
+            raw[at..at + bytes.len()].copy_from_slice(&bytes);
+        }
+        Ok(Mani { raw })
+    }
+
     /// The integer stored at offset 104 when its bits read as a float are a denormal (some files hold the integer 500 there); otherwise `None`.
     pub fn distance_as_integer(&self) -> Option<i32> {
         let bits = self.u32_at(104);
@@ -208,5 +228,50 @@ mod tests {
         assert_eq!(m.to_bytes(), d);
         let ManiValue::F32x3(axis) = m.value(&MANI_FIELDS[2]) else { panic!() };
         assert_eq!(axis[0].to_bits(), 0xFFC0_0000);
+    }
+
+    #[test]
+    fn from_values_writes_each_field_at_its_offset() {
+        for d in [mani_bytes(33, 1, 500, 10.0f32.to_bits()), mani_bytes(33, 0, 0, 500)] {
+            let m = parse(&d).unwrap();
+            let values: Vec<ManiValue> = m.fields().into_iter().map(|(_, v)| v).collect();
+            let values: [ManiValue; 20] = values.try_into().unwrap();
+            assert_eq!(Mani::from_values(&values).unwrap().to_bytes(), d);
+        }
+        // every field gets its own distinct bytes: one value changed changes only that field's bytes
+        let base = parse(&mani_bytes(33, 1, 500, 10.0f32.to_bits())).unwrap();
+        let values: Vec<ManiValue> = base.fields().into_iter().map(|(_, v)| v).collect();
+        for (i, field) in MANI_FIELDS.iter().enumerate() {
+            let mut changed: [ManiValue; 20] = values.clone().try_into().unwrap();
+            changed[i] = match field.kind {
+                ManiType::I32 => ManiValue::I32(0x0102_0304),
+                ManiType::U16 => ManiValue::U16(0x0A0B),
+                ManiType::F32 => ManiValue::F32(f32::from_bits(0x0000_0002)),
+                ManiType::F32x3 => ManiValue::F32x3([f32::from_bits(0x1111_1111), f32::from_bits(0x2222_2222), f32::from_bits(0x3333_3333)]),
+            };
+            let out = Mani::from_values(&changed).unwrap();
+            for at in 0..MANI_SIZE {
+                let inside = at >= field.offset && at < field.offset + field.kind.size();
+                if !inside {
+                    assert_eq!(out.raw[at], base.raw[at], "{}: byte {at} changed", field.name);
+                }
+            }
+            assert_eq!(out.value(field), changed[i], "{}", field.name);
+        }
+    }
+
+    #[test]
+    fn from_values_refuses_a_value_of_another_type() {
+        let base = parse(&mani_bytes(33, 1, 500, 10.0f32.to_bits())).unwrap();
+        let values: Vec<ManiValue> = base.fields().into_iter().map(|(_, v)| v).collect();
+        let mut wrong: [ManiValue; 20] = values.try_into().unwrap();
+        wrong[0] = ManiValue::F32(1.0);
+        assert!(Mani::from_values(&wrong).unwrap_err().to_string().contains("tick_ms"));
+        wrong[0] = ManiValue::I32(33);
+        wrong[14] = ManiValue::I32(1);
+        assert!(Mani::from_values(&wrong).unwrap_err().to_string().contains("move_on"));
+        wrong[14] = ManiValue::U16(1);
+        wrong[2] = ManiValue::F32(0.0);
+        assert!(Mani::from_values(&wrong).is_err());
     }
 }

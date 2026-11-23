@@ -43,6 +43,30 @@ On US EP4.5 the collision flag is 0 in all 66 files, so no real file exercises t
 
 The preview and the player are validated offline on US EP4.5 files; the eight other matrix clients have their index only.
 
+## JSON (export and import)
+
+The toolkit's library can turn a `.VANI` into a JSON text (`shaiya-toolkit-vani-v1`) and that text back into the file. An unedited file comes back byte for byte (US EP4.5: all 66 `.VANI` files; validated offline; the eight other matrix clients have their index only and were not read). The JSON goes in through the same Replace and `archive replace` paths as any file: nothing is written into a client folder.
+
+| Key | Content |
+|---|---|
+| `format` | `shaiya-toolkit-vani-v1`; any other name is refused, and a newer version (`-v2`) is refused as "made by a newer toolkit" |
+| `source` | label only (ignored on import) |
+| `inferred` | label: `frame_ms` is milliseconds per step, which is inferred (ignored on import) |
+| `columns` | `vertices`: `x, y, z, nx, ny, nz, diffuse, u, v`; may be left out, but when present it must equal this list |
+| `sphere_centre`, `sphere_radius`, `box_min`, `box_max` | the sphere and the box |
+| `step_count`, `frame_ms` | integers (`frame_ms` is inferred) |
+| `items` | one object per item |
+| `items[i].texture_hex` | the texture name as stored, as hex |
+| `items[i].faces` | `[a, b, c]` per triangle, shared by every step |
+| `items[i].verts_per_step` | integer |
+| `items[i].vertices` | `[x, y, z, nx, ny, nz, diffuse, u, v]` per vertex, step by step; the number of records must be `verts_per_step` times `step_count`. `diffuse` is the stored colour as an integer (4294967295 is `0xFFFFFFFF`) |
+| `box2_min`, `box2_max` | the second box |
+| `collision` | `null` (every file of US EP4.5), or `{"points": [[x, y, z], ...], "faces": [[a, b, c], ...]}`; the key must be present |
+
+- Each vertex, point and triangle is written on one line. Floats are written as for `.3DC`: the shortest number, or `"bits:XXXXXXXX"` for NaN, infinity or a value that has no such number.
+- A vertex list that is not `verts_per_step` times `step_count`, counts over the reader's limits, unknown keys, other columns and a newer format are refused. Hex is read in either letter case.
+- The bytes made from a JSON are read back by the `.VANI` reader before they are returned.
+
 ## Verified on
 
 US EP4.5 (patch 108), read only: all 66 `.VANI` files read to the last byte and write back byte for byte. They have 1 to 8 items (7 different counts: 1, 2, 3, 4, 5, 7 and 8) and 11 to 101 steps. `frame_ms` is 33 in 8 files, 66 in 47 and 100 in 11. In 16 files a vertex has a diffuse colour other than `0xFFFFFFFF`. In all 66 the sphere centre equals the centre of the box and the sphere radius equals half the box diagonal (within 0.1 % or 0.001). The collision flag is 0 in every file. The opt-in test `every_vani_of_the_us_client_reads_and_writes_back` measures these numbers.
