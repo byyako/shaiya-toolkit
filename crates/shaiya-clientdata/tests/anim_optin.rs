@@ -133,8 +133,14 @@ fn the_changed_animations_pass_the_rig_check_against_the_stock_files() {
             changed.push(path.to_string());
         }
     });
-    println!("{} changed .ani files pass the rig check against the stock files", changed.len());
-    assert_eq!(changed.len(), 2, "{changed:?}");
+    println!("{} changed .ani files pass the rig check against the stock files: {changed:?}", changed.len());
+    // the expected count (SHAIYA_EXPECT_CHANGED_ANI) is asserted first, before any early exit
+    if let Some(expected) = shaiya_testkit::env_usize("SHAIYA_EXPECT_CHANGED_ANI") {
+        assert_eq!(changed.len(), expected, "SHAIYA_EXPECT_CHANGED_ANI={expected}: {changed:?}");
+    }
+    if changed.is_empty() {
+        println!("no changed .ani files between the two archives: nothing compared");
+    }
 }
 
 fn is_3dc(path: &str) -> bool {

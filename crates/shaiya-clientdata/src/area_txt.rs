@@ -244,10 +244,7 @@ mod tests {
     /// line changes only that line.
     #[test]
     fn area_txt_roundtrip() {
-        let Some(dir) = std::env::var_os("SHAIYA_CLIENT").map(std::path::PathBuf::from).filter(|d| d.is_dir()) else {
-            eprintln!("skipped: SHAIYA_CLIENT not set");
-            return;
-        };
+        let Some(dir) = shaiya_testkit::env_client().filter(|d| d.is_dir()) else { return };
         let c = crate::source::ClientSource::open(&dir).expect("open the client");
         let mut seen = 0;
         for id in c.map_ids() {

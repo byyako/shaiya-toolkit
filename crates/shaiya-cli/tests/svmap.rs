@@ -582,13 +582,7 @@ fn svmap_help_covers_the_group_and_every_subcommand() {
 // ------------------------------------------------------------------------------------------------------------------ opt-in: the original server maps
 
 fn env_dir(var: &str) -> Option<PathBuf> {
-    match std::env::var_os(var) {
-        Some(v) if !v.is_empty() => Some(PathBuf::from(v)),
-        _ => {
-            eprintln!("skipped: {var} not set");
-            None
-        }
-    }
+    shaiya_testkit::env_var_path(var)
 }
 
 #[test]

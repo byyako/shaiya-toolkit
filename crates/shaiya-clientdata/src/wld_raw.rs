@@ -1146,10 +1146,7 @@ mod tests {
     // ------------------------------------------------------------------ the real client
 
     fn client() -> Option<crate::source::ClientSource> {
-        let Some(dir) = std::env::var_os("SHAIYA_CLIENT").map(std::path::PathBuf::from) else {
-            eprintln!("skipped: SHAIYA_CLIENT not set");
-            return None;
-        };
+        let dir = shaiya_testkit::env_client()?;
         dir.is_dir().then(|| crate::source::ClientSource::open(&dir).expect("open the client"))
     }
 

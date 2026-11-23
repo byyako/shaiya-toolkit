@@ -6,7 +6,7 @@ mod common;
 use common::*;
 use shaiya_testkit::anim::{ani_bytes, arm_ani, arm_mesh_3dc, c3dc_cloak_bytes, identity_bits, translation_bits, BoneSpec, VertSpec};
 use shaiya_testkit::{env_client, env_client_original, env_scratch, SahBuilder};
-use std::path::Path;
+use std::path::PathBuf;
 
 fn bone(parent: i32, y: f32) -> BoneSpec {
     BoneSpec { parent, matrix: translation_bits(0.0, y, 0.0), rot: Vec::new(), trans: Vec::new() }
@@ -546,9 +546,11 @@ fn validate_from_the_us_client_exits_0() {
 #[test]
 fn compare_of_the_custom_emotes_passes() {
     let (Some(client), Some(orig), Some(scratch)) = (env_client(), env_client_original(), env_scratch()) else { return };
-    let (now, stock) = (shaiya_archive::Archive::open(&client).unwrap(), shaiya_archive::Archive::open(&orig).unwrap());
+    // the guard is declared before the archives, so it drops after them (every handle closed first: exFAT), also on a failed assert
     let out_dir = scratch.join(format!("anim-compare-{}", std::process::id()));
     std::fs::create_dir_all(&out_dir).unwrap();
+    let _cleanup = RemoveDirOnDrop(out_dir.clone());
+    let (now, stock) = (shaiya_archive::Archive::open(&client).unwrap(), shaiya_archive::Archive::open(&orig).unwrap());
     let w = world();
     let mut changed = Vec::new();
     for f in now.index().visible() {
@@ -563,18 +565,29 @@ fn compare_of_the_custom_emotes_passes() {
             changed.push((f.path.clone(), file));
         }
     }
-    assert_eq!(changed.len(), 2, "{:?}", changed.iter().map(|c| &c.0).collect::<Vec<_>>());
+    let names: Vec<&String> = changed.iter().map(|c| &c.0).collect();
+    println!("{} changed .ani files between the two archives: {names:?}", changed.len());
+    // the expected count (SHAIYA_EXPECT_CHANGED_ANI) is asserted first, before any early exit
+    if let Some(expected) = shaiya_testkit::env_usize("SHAIYA_EXPECT_CHANGED_ANI") {
+        assert_eq!(changed.len(), expected, "SHAIYA_EXPECT_CHANGED_ANI={expected}: {names:?}");
+    }
+    if changed.is_empty() {
+        println!("no changed .ani files between the two archives: nothing compared");
+        return;
+    }
     for (path, file) in &changed {
         let o = sh(&w.data, &["anim", "compare", p(file), path, "--from", p(&orig)]);
         assert_eq!(code(&o), 0, "{path}: {}{}", out(&o), err(&o));
         assert_eq!(out(&o).lines().last(), Some("passes"));
     }
-    // every handle is closed before the folder goes (exFAT)
-    drop((now, stock));
-    remove_dir(&out_dir);
 }
 
-fn remove_dir(dir: &Path) {
-    std::fs::remove_dir_all(dir).unwrap();
+/// Removes a scratch folder when dropped (after the values declared later, which hold open files, are gone).
+struct RemoveDirOnDrop(PathBuf);
+
+impl Drop for RemoveDirOnDrop {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
 }
 

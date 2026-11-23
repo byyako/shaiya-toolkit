@@ -189,14 +189,35 @@ pub fn flip(bytes: &[u8], at: usize) -> Vec<u8> {
     v
 }
 
-fn env_path(var: &str) -> Option<PathBuf> {
+/// The path in `var`, or `None` (printing `skipped: <var> not set`) when it is unset or empty. When `var` is listed in `require`
+/// (a comma-separated list of names, the value of `SHAIYA_OPTIN_REQUIRE`), a missing variable panics instead, so a test that would
+/// skip silently fails.
+pub fn env_path_with(var: &str, require: &str) -> Option<PathBuf> {
     match std::env::var_os(var) {
         Some(v) if !v.is_empty() => Some(PathBuf::from(v)),
         _ => {
+            if require.split(',').any(|n| n.trim() == var) {
+                panic!("{var} is required by SHAIYA_OPTIN_REQUIRE but not set");
+            }
             eprintln!("skipped: {var} not set");
             None
         }
     }
+}
+
+fn env_path(var: &str) -> Option<PathBuf> {
+    let require = std::env::var("SHAIYA_OPTIN_REQUIRE").unwrap_or_default();
+    env_path_with(var, &require)
+}
+
+/// Opt-in data for any other variable (for example `SVMAP_ORIGINALS`), with the same skip and `SHAIYA_OPTIN_REQUIRE` rules.
+pub fn env_var_path(var: &str) -> Option<PathBuf> {
+    env_path(var)
+}
+
+/// An optional integer from the environment (no skip message): `None` when unset, empty or not a number.
+pub fn env_usize(var: &str) -> Option<usize> {
+    std::env::var(var).ok()?.trim().parse().ok()
 }
 
 /// Opt-in data. Prints "skipped: SHAIYA_CLIENT not set" to stderr and returns None when unset.
@@ -346,6 +367,24 @@ pub const TEST_CLIENT_IDS: [&str; 8] = ["ru-ep3", "ru-ep45", "ru-ep54", "fr-ep54
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn probe() -> String {
+        format!("SHAIYA_TESTKIT_PROBE_{}", std::process::id())
+    }
+
+    #[test]
+    #[should_panic(expected = "is required by SHAIYA_OPTIN_REQUIRE but not set")]
+    fn a_required_variable_that_is_missing_panics() {
+        let var = probe();
+        let _ = env_path_with(&var, &format!("SHAIYA_CLIENT, {var}"));
+    }
+
+    #[test]
+    fn an_unlisted_missing_variable_skips() {
+        let var = probe();
+        assert_eq!(env_path_with(&var, ""), None);
+        assert_eq!(env_path_with(&var, "SHAIYA_CLIENT,SHAIYA_SCRATCH"), None);
+    }
 
     fn le32(b: &[u8], at: usize) -> u32 {
         u32::from_le_bytes(b[at..at + 4].try_into().unwrap())

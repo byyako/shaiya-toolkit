@@ -2,6 +2,12 @@
 
 All notable changes are listed here, newest first. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). One version number covers every program and library of the workspace.
 
+## [Unreleased]
+
+### Documentation
+
+- Opt-in tests can be made to fail when their variable is missing: set `SHAIYA_OPTIN_REQUIRE` to a list of variable names (the svmap crates still only skip). `SHAIYA_EXPECT_CHANGED_ANI` sets the number of changed `.ANI` files the two opt-in comparisons expect; without it no count is asserted.
+
 ## [0.4.0] - 2026-11-22
 
 ### Shaiya Toolkit
