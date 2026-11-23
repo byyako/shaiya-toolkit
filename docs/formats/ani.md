@@ -90,6 +90,30 @@ On US EP4.5, the default parts of each of the 16 character rigs, posed with that
 
 `shaiya anim info` prints one line per file (kind and rig of an archive path, bones, end key and seconds, key counts, errors and warnings; a first field other than 0 as "inferred: start key"). `shaiya anim validate` prints each finding with its code and exits 1 when a file has an error. `shaiya anim compare CANDIDATE TARGET` prints "same skeleton as TARGET" or each skeleton difference, the first field on its own line, the candidate's validation errors and `passes` or `does not pass` (exit 0 or 1); it passes under the rig-check rule above. Folders are searched for `.ani` and `.3dc` in any letter case. Details and JSON: [shaiya anim](../tools/shaiya.md#shaiya-anim).
 
+## JSON (export and import)
+
+The toolkit's library can turn an `.ANI` into a JSON text (`shaiya-toolkit-ani-v1`) and that text back into the file. An unedited file comes back byte for byte (US EP4.5: all 3,509 `.ANI` files; validated offline; the eight other matrix clients have their index only). Export checks this itself before it returns any text.
+
+| Key | Content |
+|---|---|
+| `format` | `shaiya-toolkit-ani-v1`; any other name is refused, and a newer version (`-v2`) is refused as "made by a newer toolkit" |
+| `source` | label only (ignored on import) |
+| `inferred` | label: `first_field` is the start key, which is inferred (ignored on import) |
+| `columns` | the column names of the key arrays; may be left out, but when present it must equal the documented lists |
+| `first_field`, `end_key` | integers |
+| `bones` | one object per bone, in file order, at most 65,535 |
+| `bones[i].index` | must equal `i`: bones cannot be reordered |
+| `bones[i].parent` | integer, -1 for a root |
+| `bones[i].matrix_hex` | the 64 stored bytes of the reference matrix as 128 hex digits, in file order |
+| `bones[i].rotation_keys` | `[key, x, y, z, w]` per key |
+| `bones[i].translation_keys` | `[key, x, y, z]` per key |
+
+- One key is written on its own line. A float is written in its shortest form (`0.1`); a float that has no such number, NaN or infinity is written as the string `"bits:XXXXXXXX"` (the 32 bits in hex). Both forms are read back.
+- The reference matrices are hex, kept bit for bit (20 stock files hold NaN there).
+- Key values must be finite: a NaN or infinity in a key is refused on export and on import, and so is a number too large for a 32-bit float.
+- Unknown keys, other columns, a bone out of order and a newer format are refused. Hex is read in either letter case.
+- The bytes made from a JSON are read back by the `.ANI` reader before they are returned; bytes that do not read back are refused.
+
 ## Verified on
 
 US EP4.5 (patch 108), read only: all 3,509 `.ANI` files read to the last byte, write back byte for byte and have no validation error; 382 tracks (all rotation tracks) in 254 files start after key 0; 20 files hold NaN in reference matrices; the first field is -1 in 7 files, exactly those whose tracks start at key -1, and 0 in all others (inferred: the start key). The 16 character rigs have 1,192 files and 1,116 distinct skeletons (parents and reference matrices) between them; the lowest rig is 86 % distinct. Two animations that were replaced in that client pass the rig check against the stock files (2 files; compared with the original archive that sits beside the client).

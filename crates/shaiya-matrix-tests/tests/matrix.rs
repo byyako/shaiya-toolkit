@@ -235,6 +235,11 @@ fn ani_round_trip() {
 }
 
 #[test]
+fn ani_json_round_trip() {
+    check(Cap::AniJson);
+}
+
+#[test]
 fn c3dc_index_count() {
     check(Cap::C3dcIndexCount);
 }

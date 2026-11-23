@@ -4,6 +4,7 @@
 use crate::{Cap, Cell, Observed};
 use shaiya_archive::{Archive, Index};
 use shaiya_clientdata::anim::{validate, Severity};
+use shaiya_clientdata::modeljson::{export, import, ModelFormat};
 use shaiya_clientdata::meshpick::{mesh_candidates_in, MeshInfo};
 use shaiya_clientdata::{Ani, C3dc, Mani, Mesh3de, Mesh3do, Vani};
 use std::path::Path;
@@ -22,6 +23,7 @@ pub(crate) fn ani_caps(o: &mut Observed, dir: &Path, idx: &Index) {
 
     if !has_data_file(dir) || listed.is_empty() {
         o.set(Cap::AniRoundTrip, NA);
+        o.set(Cap::AniJson, NA);
         return;
     }
     let archive = match Archive::open(dir) {
@@ -29,13 +31,19 @@ pub(crate) fn ani_caps(o: &mut Observed, dir: &Path, idx: &Index) {
         Err(e) => {
             o.notes.push(format!("ani round trip: {e}"));
             o.set(Cap::AniRoundTrip, F);
+            o.set(Cap::AniJson, F);
             return;
         }
     };
-    let (mut good, mut errors) = (0u64, 0u64);
+    let (mut good, mut errors, mut json_good) = (0u64, 0u64, 0u64);
     for f in &listed {
         match archive.read_entry(f.entry).map_err(|e| e.to_string()).and_then(|b| Ani::parse(&b, &f.path).map(|a| (a, b)).map_err(|e| e.to_string())) {
             Ok((a, bytes)) => {
+                match export(ModelFormat::Ani, &bytes, &f.path).map_err(|e| e.to_string()).and_then(|text| import(text.as_bytes()).map_err(|e| e.to_string())) {
+                    Ok((ModelFormat::Ani, back)) if back == bytes => json_good += 1,
+                    Ok(_) => o.notes.push(format!("ani json {}: imported to different bytes", f.path)),
+                    Err(e) => o.notes.push(format!("ani json {}: {e}", f.path)),
+                }
                 if a.to_bytes() != bytes {
                     o.notes.push(format!("ani {}: written back differently", f.path));
                 } else if validate(&a).iter().any(|i| i.severity == Severity::Error) {
@@ -50,7 +58,9 @@ pub(crate) fn ani_caps(o: &mut Observed, dir: &Path, idx: &Index) {
     }
     o.set(Cap::AniRoundTrip, if good == listed.len() as u64 { O } else { F });
     o.numbers.push((Cap::AniRoundTrip, good));
-    o.facts.push(format!("animations: {} .ANI files, {good} read, written back identically and without an error ({errors} with a validation error)", listed.len()));
+    o.set(Cap::AniJson, if json_good == listed.len() as u64 { O } else { F });
+    o.numbers.push((Cap::AniJson, json_good));
+    o.facts.push(format!("animations: {} .ANI files, {good} read, written back identically and without an error ({errors} with a validation error); {json_good} exported to JSON and imported back to the same bytes", listed.len()));
 }
 
 fn is_3dc(path: &str) -> bool {

@@ -47,7 +47,12 @@ pub struct Ani {
 
 /// Smallest size of one bone in the file: parent, matrix, two counts.
 const BONE_MIN: usize = 4 + 64 + 4 + 4;
-const KEY_LIMIT: usize = 10_000_000;
+pub(crate) const KEY_LIMIT: usize = 10_000_000;
+
+/// True when a track of `n` keys is one the reader accepts (at most [`KEY_LIMIT`]).
+pub(crate) fn track_fits(n: usize) -> bool {
+    n <= KEY_LIMIT
+}
 
 impl Ani {
     /// Reads a whole `.ANI`; anything left over, or anything missing, is an error.
@@ -86,21 +91,22 @@ impl Ani {
 
     /// The bytes of this animation; for a parsed file, exactly the bytes that were read.
     ///
-    /// Panics when the animation cannot be written (more than 65,535 bones or a track longer than `i32::MAX`), which no parsed file can
+    /// Panics when the animation cannot be written (more than 65,535 bones, a track longer than the reader accepts, or bytes that do not read back), which no parsed file can
     /// hold; use [`Ani::try_to_bytes`] for an animation built in memory.
     pub fn to_bytes(&self) -> Vec<u8> {
         self.try_to_bytes().expect("animation cannot be written")
     }
 
-    /// Like [`Ani::to_bytes`], but refuses an animation whose counts do not fit the file (never writes wrong bytes).
+    /// Like [`Ani::to_bytes`], but refuses an animation whose counts do not fit the file (never writes wrong bytes): more than 65,535 bones, a
+    /// track longer than the reader accepts, or bytes that [`Ani::parse`] does not read back.
     pub fn try_to_bytes(&self) -> Result<Vec<u8>> {
         let too_big = |what: String| Error::Format { file: "animation".into(), what, offset: 0 };
         if self.bones.len() > u16::MAX as usize {
             return Err(too_big(format!("{} bones do not fit the 16-bit bone count", self.bones.len())));
         }
         for (i, b) in self.bones.iter().enumerate() {
-            if b.rot.len() > i32::MAX as usize || b.trans.len() > i32::MAX as usize {
-                return Err(too_big(format!("bone {i}: a track is too long for a 32-bit key count")));
+            if !track_fits(b.rot.len()) || !track_fits(b.trans.len()) {
+                return Err(too_big(format!("bone {i}: a track is longer than the {KEY_LIMIT} keys the reader accepts")));
             }
         }
         let (nr, nt) = self.key_counts();
@@ -128,6 +134,7 @@ impl Ani {
                 }
             }
         }
+        Ani::parse(&d, "animation").map_err(|e| too_big(format!("the bytes do not read back: {e}")))?;
         Ok(d)
     }
 
@@ -566,6 +573,12 @@ mod tests {
         assert_eq!(a.bones[0].matrix[3].to_bits(), 0xFFC0_0000);
         assert_eq!(a.bones[0].matrix[7].to_bits(), 0x7FA0_0001);
         assert_eq!(a.to_bytes(), d);
+    }
+
+    #[test]
+    fn track_fits_refuses_more_than_key_limit() {
+        assert!(track_fits(0) && track_fits(KEY_LIMIT));
+        assert!(!track_fits(KEY_LIMIT + 1) && !track_fits(usize::MAX));
     }
 
     #[test]

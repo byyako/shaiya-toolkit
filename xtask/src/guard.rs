@@ -11,6 +11,19 @@ const FIXTURE_MAX: u64 = 64 << 10;
 const BAD_EXTENSIONS: &[&str] = &["sah", "saf", "sdata", "exe", "dll", "patch", "pdb", "mdf", "bak", "ani", "3dc", "3do", "3de", "vani", "mani", "smod"];
 const SEED_SIGNATURE: &[u8] = b"0001CBCEBC5B2784D3FC9A2A9DB84D1C3FEB6E99";
 
+const MODEL_EXTENSIONS: [&str; 6] = ["ani", "3dc", "vani", "mani", "3do", "3de"];
+
+/// True when the head of a file is the start of a model exported to JSON (`"format": "shaiya-toolkit-<ext>-v..."`).
+fn looks_like_model_json(head: &[u8]) -> bool {
+    let text = String::from_utf8_lossy(head);
+    const MARK: &str = "\"shaiya-toolkit-";
+    text.contains("\"format\":")
+        && text.match_indices(MARK).any(|(at, _)| {
+            let rest = &text[at + MARK.len()..];
+            MODEL_EXTENSIONS.iter().any(|e| rest.strip_prefix(e).is_some_and(|r| r.starts_with("-v")))
+        })
+}
+
 /// Problems with one file, from what is known about it. `head` is its first bytes.
 pub fn check_file(path: &str, size: u64, head: &[u8], readme_lists: &dyn Fn(&str, &str) -> Option<bool>) -> Vec<String> {
     let mut out = Vec::new();
@@ -22,6 +35,9 @@ pub fn check_file(path: &str, size: u64, head: &[u8], readme_lists: &dyn Fn(&str
         if BAD_EXTENSIONS.contains(&ext) {
             out.push(format!("{path}: the extension .{ext} is a game-file or binary type"));
         }
+    }
+    if lower.ends_with(".json") && looks_like_model_json(head) {
+        out.push(format!("{path}: looks like a model exported to JSON: game data must not be committed"));
     }
     if !path.starts_with("xtask/") {
         if head.starts_with(b"SAH") {
@@ -69,7 +85,7 @@ pub fn run() -> Result<(), String> {
     for f in &files {
         let p = root.join(f);
         let Ok(meta) = std::fs::metadata(&p) else { continue }; // a tracked file that is deleted in the working tree
-        let mut head = vec![0u8; 64];
+        let mut head = vec![0u8; 256];
         let n = std::fs::File::open(&p).and_then(|mut h| std::io::Read::read(&mut h, &mut head)).unwrap_or(0);
         head.truncate(n);
         problems.extend(check_file(f, meta.len(), &head, &readme_lists));
@@ -119,6 +135,25 @@ mod tests {
         }
         // a neighbouring name that only contains the text is not refused
         assert!(check_file("docs/formats/ani.md", 10, b"x", &none).is_empty());
+    }
+
+    #[test]
+    fn exported_model_json_is_refused() {
+        for ext in ["ani", "3dc", "vani", "mani", "3do", "3de"] {
+            let head = format!("{{
+  \"format\": \"shaiya-toolkit-{ext}-v1\",
+  \"source\": \"a\"");
+            assert_eq!(check_file("notes/x.json", 100, head.as_bytes(), &none).len(), 1, "{ext}");
+            assert_eq!(check_file("notes/X.JSON", 100, head.as_bytes(), &none).len(), 1, "{ext}");
+            // only a .json file is looked at: a doc or a test may quote the text
+            assert!(check_file("docs/x.md", 100, head.as_bytes(), &none).is_empty(), "{ext}");
+        }
+        // layout files of the sdata crate and other JSON pass
+        assert!(check_file("crates/shaiya-sdata/layouts/item-134.json", 100, b"{
+  \"name\": \"item\",
+  \"size\": 134", &none).is_empty());
+        assert!(check_file("a.json", 100, b"{\"format\": \"other\"}", &none).is_empty());
+        assert!(check_file("a.json", 100, b"{\"format\": \"shaiya-toolkit-future-v1\"}", &none).is_empty());
     }
 
     #[test]

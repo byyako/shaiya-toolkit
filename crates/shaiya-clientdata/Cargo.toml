@@ -1,6 +1,6 @@
 [package]
 name = "shaiya-clientdata"
-description = "Read-only readers for Shaiya client data: archive or folder access, .wld, .dg, .smod, .ANI, .3DC, .VANI, .MANI, .3DO, .3DE, SData (Monster, NpcQuest), sysmsg, map names, textures"
+description = "Read-only readers for Shaiya client data: archive or folder access, .wld, .dg, .smod, .ANI, .3DC, .VANI, .MANI, .3DO, .3DE, the JSON form of the six model formats (modeljson), SData (Monster, NpcQuest), sysmsg, map names, textures"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -16,6 +16,8 @@ shaiya-core = { workspace = true }
 shaiya-seed = { workspace = true }
 shaiya-archive = { workspace = true }
 encoding_rs = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true, features = ["float_roundtrip"] }
 
 [dev-dependencies]
 shaiya-testkit = { workspace = true }

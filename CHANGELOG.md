@@ -8,6 +8,10 @@ All notable changes are listed here, newest first. The format follows [Keep a Ch
 
 - Opt-in tests can be made to fail when their variable is missing: set `SHAIYA_OPTIN_REQUIRE` to a list of variable names (the svmap crates still only skip). `SHAIYA_EXPECT_CHANGED_ANI` sets the number of changed `.ANI` files the two opt-in comparisons expect; without it no count is asserted.
 
+### Libraries
+
+- `shaiya-clientdata`: the new `modeljson` module turns an `.ANI` into a documented JSON text (`shaiya-toolkit-ani-v1`) and back; floats are numbers in their shortest form or `"bits:XXXXXXXX"`, reference matrices are hex, unknown keys and other columns are refused, key values must be finite. On US EP4.5, all 3,509 `.ANI` files export and import back byte for byte (validated offline); the eight other matrix clients are index only. `Ani::try_to_bytes` now also reads its bytes back and refuses a track longer than the reader accepts.
+
 ## [0.4.0] - 2026-11-22
 
 ### Shaiya Toolkit

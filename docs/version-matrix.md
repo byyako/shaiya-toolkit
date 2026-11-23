@@ -38,6 +38,7 @@ Client ids: `us-108` (US patch level 108), and the eight test clients `ru-ep3`, 
 | `auto` picks exactly one layout or none, every SData (the number is the files that exactly one layout reads; the rest are shown raw) | OK 5 | OK 5 | OK 5 | n/a | OK 5 | OK 5 | OK 6 | OK 5 | OK 6 |
 | `.ANI` files the index lists (index only: the number is the visible `.ANI` files of the index; no contents were read on the eight test clients) | OK 3,509 | OK 3,537 | OK 3,624 | OK 3,724 | OK 3,723 | OK 4,099 | OK 4,255 | OK 5,951 | OK 3,429 |
 | `Ani::parse` reads every `.ANI` to the last byte and `to_bytes` gives it back byte for byte; `validate` finds no error | OK 3,509 | n/a | n/a | n/a | n/a | n/a | n/a | n/a | n/a |
+| `modeljson::export` then `import` gives every `.ANI` back byte for byte | OK 3,509 | n/a | n/a | n/a | n/a | n/a | n/a | n/a | n/a |
 | `.3DC` files the index lists (index only: the number is the visible `.3DC` files of the index; no contents were read on the eight test clients) | OK 2,431 | OK 2,635 | OK 3,049 | OK 3,164 | OK 3,126 | OK 4,988 | OK 4,220 | OK 6,534 | OK 2,317 |
 | `C3dc::parse` reads every `.3DC` to the last byte with exactly one layout and `to_bytes` gives it back byte for byte | OK 2,431 | n/a | n/a | n/a | n/a | n/a | n/a | n/a | n/a |
 | Animation preview: `.ANI` files that have at least one compatible `.3DC` mesh (found by name and bone count; validated offline) | OK 3,365 | n/a | n/a | n/a | n/a | n/a | n/a | n/a | n/a |
