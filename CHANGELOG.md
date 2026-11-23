@@ -9,7 +9,7 @@ All notable changes are listed here, newest first. The format follows [Keep a Ch
 - The `.ANI` preview says when bones cannot be posed ("N bones cannot be posed (a reference matrix holds NaN or infinity, or cannot be inverted) and are not drawn").
 - The `.ANI` preview scans each candidate `.3DC` once per opened archive (the answers are dropped when the archive is loaded again; a failed or cancelled read is not remembered; the chosen meshes are read again for every preview) and skips a candidate over 32 MiB.
 - The "Replace with file..." question about an `.ani` with a different skeleton is titled "The skeleton differs from the file it replaces"; otherwise (an SData finding or an unfinished check also asks) it keeps "This file looks broken". The Add dialog keeps its title "Some files look broken".
-- Archive tab: "Export as JSON..." (row context menu and command palette) writes the JSON of the selected `.ANI`, `.3DC`, `.VANI`, `.MANI`, `.3DO` or `.3DE` file to a `.json` file outside the open client's folder, as a background task; the JSON imports back to the same bytes. The Toolkit has no JSON import (use `shaiya anim import`).
+- Archive tab: "Export as JSON..." (row context menu and command palette) writes the JSON of the selected `.ANI`, `.3DC`, `.VANI`, `.MANI`, `.3DO` or `.3DE` file to a `.json` file outside the open client's folder and any saved client's folder, as a background task (a second export to a file that is being written is refused); the JSON imports back to the same bytes. The Toolkit has no JSON import (use `shaiya anim import`).
 
 ### Fixed
 

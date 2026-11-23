@@ -3007,3 +3007,68 @@ fn the_export_menu_entry_is_for_the_six_model_formats_in_any_letter_case() {
         assert!(!is_model_path(p), "{p}");
     }
 }
+
+#[test]
+fn a_second_export_to_a_target_that_is_being_written_is_refused() {
+    let mut w = ani_world("t11-w8-twice");
+    let out_dir = TempDir::new("t11-w8-twice-out");
+    let out = out_dir.path().join("x.json");
+    with_cx(&mut w.h, |app, cx| app.archive.select_path(ANI_PATH, cx));
+    assert!(preview_ready(&mut w.h));
+    with_cx(&mut w.h, |app, cx| app.archive.export_json_to(&out, cx));
+    with_cx(&mut w.h, |app, cx| app.archive.export_json_to(&out, cx));
+    let d = w.h.app.shell.banner_details().expect("the second export is refused with a message").to_string();
+    assert!(d.contains("An export to") && d.contains("is running"), "{d}");
+    assert!(export_done(&mut w));
+    w.h.frames(2);
+    let json = std::fs::read(&out).expect("the first export wrote its file");
+    assert_eq!(shaiya_clientdata::modeljson::import(&json).expect("the JSON imports").1, shaiya_testkit::anim::arm_ani(60));
+}
+
+#[test]
+fn exporting_to_a_missing_folder_is_refused() {
+    let mut w = ani_world("t11-w8-nofolder");
+    with_cx(&mut w.h, |app, cx| app.archive.select_path(ANI_PATH, cx));
+    assert!(preview_ready(&mut w.h));
+    let out_dir = TempDir::new("t11-w8-nofolder-out");
+    let out = out_dir.path().join("missing").join("x.json");
+    with_cx(&mut w.h, |app, cx| app.archive.export_json_to(&out, cx));
+    assert!(!w.h.app.app.archive.is_exporting_json() && !out.exists());
+    let d = w.h.app.shell.banner_details().expect("the error is shown").to_string();
+    assert!(d.contains("The folder does not exist"), "{d}");
+}
+
+#[test]
+fn the_export_command_needs_exactly_one_file() {
+    let mut w = ani_world("t11-w8-two");
+    with_cx(&mut w.h, |app, cx| app.archive.select_path(ANI_PATH, cx));
+    assert!(preview_ready(&mut w.h));
+    assert!(export_enabled(&w.h));
+    let other = w.h.app.app.archive.find_row("Character/Human/3DC/huwm_torso001.3DC").expect("the mesh row");
+    w.h.app.app.archive.selected.insert(other);
+    assert_eq!(w.h.app.app.archive.selected.len(), 2);
+    assert!(!export_enabled(&w.h), "two selected files disable the command");
+}
+
+#[test]
+fn the_export_is_off_while_only_the_index_is_open() {
+    let mut w = world("t11-w8-index");
+    SahBuilder::new(0).file(b"Character/Human/ANI/huwm_117_test.ANI", &shaiya_testkit::anim::arm_ani(60)).write_to(w.client.path());
+    for e in std::fs::read_dir(w.client.path()).unwrap().flatten() {
+        if e.file_name().to_string_lossy().eq_ignore_ascii_case("data.saf") {
+            std::fs::remove_file(e.path()).unwrap();
+        }
+    }
+    w.h.frames(2);
+    let dir = w.client_dir();
+    with_cx(&mut w.h, |app, cx| app.add_client("Index only", &dir, true, cx)).unwrap();
+    assert!(w.h.wait_until(WAIT, |h| h.app.app.archive.is_open()), "the index opens");
+    w.h.frames(2);
+    assert!(!w.h.app.app.archive.offers_export_json(ANI_PATH), "the row menu hides the entry");
+    with_cx(&mut w.h, |app, cx| app.archive.select_path(ANI_PATH, cx));
+    assert!(!export_enabled(&w.h), "the command is disabled");
+    let out_dir = TempDir::new("t11-w8-index-out");
+    let out = out_dir.path().join("x.json");
+    with_cx(&mut w.h, |app, cx| app.archive.export_json_to(&out, cx));
+    assert!(!w.h.app.app.archive.is_exporting_json() && !out.exists());
+}

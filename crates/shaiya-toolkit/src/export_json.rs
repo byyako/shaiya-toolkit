@@ -16,7 +16,7 @@ type ToolkitCx<'a> = Cx<'a, ToolkitSettings>;
 
 /// The running exports of one Archive tab.
 #[derive(Default)]
-pub struct JsonExports {
+pub(crate) struct JsonExports {
     running: Vec<(String, PathBuf, TaskHandle<()>)>,
 }
 
@@ -26,13 +26,13 @@ pub fn is_model_path(path: &str) -> bool {
 }
 
 /// The default name in the save dialog: the file's name without its extension, plus `.json`.
-pub fn default_name(file_name: &str) -> String {
+pub(crate) fn default_name(file_name: &str) -> String {
     let stem = file_name.rsplit_once('.').map(|(s, _)| s).unwrap_or(file_name);
     format!("{stem}.json")
 }
 
 /// The refusal text when `out` would land inside the open client's folder or a saved client's folder (or a folder that does not exist).
-pub fn refusal(out: &Path, client_dir: Option<&Path>, saved: &[PathBuf]) -> Option<String> {
+pub(crate) fn refusal(out: &Path, client_dir: Option<&Path>, saved: &[PathBuf]) -> Option<String> {
     let mut all: Vec<PathBuf> = saved.to_vec();
     all.extend(client_dir.map(Path::to_path_buf));
     let parent = out.parent().filter(|p| !p.as_os_str().is_empty());
@@ -70,17 +70,21 @@ fn run(archive: &Archive, entry: &Entry, path: &str, format: ModelFormat, out: &
 }
 
 impl JsonExports {
-    pub fn is_running(&self) -> bool {
+    pub(crate) fn is_running(&self) -> bool {
         !self.running.is_empty()
     }
 
     /// Checks the target against the client folders (before anything is read), then starts the task. A refusal is shown and nothing starts.
-    pub fn start(&mut self, archive: Arc<Archive>, entry: Entry, path: String, out: PathBuf, client_dir: Option<&Path>, cx: &mut ToolkitCx<'_>) {
+    pub(crate) fn start(&mut self, archive: Arc<Archive>, entry: Entry, path: String, out: PathBuf, client_dir: Option<&Path>, cx: &mut ToolkitCx<'_>) {
         let name = path.rsplit('/').next().unwrap_or(&path).to_string();
         let Some(format) = ModelFormat::from_file_name(&name) else { return };
         let saved: Vec<PathBuf> = cx.shell.shared().clients.iter().map(|c| PathBuf::from(&c.path)).collect();
         if let Some(text) = refusal(&out, client_dir, &saved) {
             cx.shell.error("Export failed", &Error::Refused(text));
+            return;
+        }
+        if self.running.iter().any(|(_, t, _)| *t == out) {
+            cx.shell.error("Export failed", &Error::Refused(format!("An export to {} is running", out.display())));
             return;
         }
         let target = out.clone();
@@ -89,7 +93,7 @@ impl JsonExports {
     }
 
     /// Finishes the exports that are done; returns the status line of the last success.
-    pub fn poll(&mut self, cx: &mut ToolkitCx<'_>) -> Option<String> {
+    pub(crate) fn poll(&mut self, cx: &mut ToolkitCx<'_>) -> Option<String> {
         let mut status = None;
         for (name, out, mut h) in std::mem::take(&mut self.running) {
             match h.poll() {

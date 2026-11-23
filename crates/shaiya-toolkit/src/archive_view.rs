@@ -1120,7 +1120,8 @@ impl ArchiveView {
         explain::compact_rows(size, live, shadowed, later, &files)
     }
 
-    /// Cancels every task that reads the archive and hands out the app's handle on `data.saf`, so a write (apply, compact, swap, patch
+    /// Cancels the previews, extracts, checks and compares that read the archive (a running "Export as JSON..." cannot be cancelled: the
+    /// write that follows waits for it to finish) and hands out the app's handle on `data.saf`, so a write (apply, compact, swap, patch
     /// apply) can take the files exclusively. The caller waits until `Arc::strong_count` is 1 (a cancelled task may still hold a clone for
     /// a moment) and drops it. `reopen` reads the archive again afterwards.
     pub fn release_handle(&mut self) -> Option<Arc<Archive>> {
@@ -1645,6 +1646,13 @@ impl ArchiveView {
         self.json_exports.start(a, entry, path, out, dir.as_deref(), cx);
     }
 
+    /// Whether the row menu of the file at `path` offers "Export as JSON..." (needs the data.saf and one of the six formats).
+    #[doc(hidden)]
+    pub fn offers_export_json(&self, path: &str) -> bool {
+        let l = self.loaded.as_ref();
+        l.is_some_and(|l| l.archive.is_some()) && crate::export_json::is_model_path(path) && self.find_row(path).is_some()
+    }
+
     /// Test hook: "Export as JSON..." for the selected file, writing to `path` without the save dialog.
     #[doc(hidden)]
     pub fn export_json_to(&mut self, path: &Path, cx: &mut ToolkitCx<'_>) {
@@ -1653,6 +1661,7 @@ impl ArchiveView {
         }
     }
 
+    #[doc(hidden)]
     pub fn is_exporting_json(&self) -> bool {
         self.json_exports.is_running()
     }
@@ -2255,7 +2264,7 @@ impl ArchiveView {
                                 ("Decrypt to file...", MenuChoice::Decrypt),
                                 ("Export as JSON...", MenuChoice::ExportJson),
                             ] {
-                                if matches!(choice, MenuChoice::ExportJson) && !matches!(v, ViewRow::File(i) if crate::export_json::is_model_path(&l.rows[i].path)) {
+                                if matches!(choice, MenuChoice::ExportJson) && !matches!(v, ViewRow::File(i) if l.archive.is_some() && crate::export_json::is_model_path(&l.rows[i].path)) {
                                     continue;
                                 }
                                 if ui.button(label).clicked() {
