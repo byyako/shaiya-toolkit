@@ -82,8 +82,9 @@ fn strings(r: &mut Cur, what: &str) -> Result<Vec<Vec<u8>>> {
     Ok(out)
 }
 
+/// A refusal of the writer (there is no file or byte offset: the list is not a file yet).
 fn bad(what: String) -> Error {
-    Error::Format { file: "list".into(), what, offset: 0 }
+    Error::Format { file: "list writer".into(), what: format!("the list cannot be written: {what}"), offset: 0 }
 }
 
 struct Out(Vec<u8>);
@@ -193,8 +194,8 @@ pub struct MonPart {
     pub texture: Vec<u8>,
 }
 
-/// One `.MON` record.
-#[derive(Clone, Debug, PartialEq)]
+/// One `.MON` record. Records are equal when every field is, `size` compared by its bits (so NaN equals the same NaN and `-0.0` is not `0.0`).
+#[derive(Clone, Debug)]
 pub struct MonRecord {
     pub name: Vec<u8>,
     pub flag: u8,
@@ -206,8 +207,21 @@ pub struct MonRecord {
     pub attachments: Vec<(i32, i32)>,
 }
 
-/// A `.MON` file: `"MO2"`, a record count and the records.
-#[derive(Clone, Debug, PartialEq)]
+impl PartialEq for MonRecord {
+    fn eq(&self, o: &MonRecord) -> bool {
+        self.name == o.name
+            && self.flag == o.flag
+            && self.slots == o.slots
+            && self.parts == o.parts
+            && self.size.to_bits() == o.size.to_bits()
+            && self.attachments == o.attachments
+    }
+}
+
+impl Eq for MonRecord {}
+
+/// A `.MON` file: `"MO2"`, a record count and the records (equal when the records are, see [`MonRecord`]).
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Mon {
     pub records: Vec<MonRecord>,
 }
@@ -277,10 +291,7 @@ impl Mon {
                 o.i32(*b);
             }
         }
-        let back = Mon::parse(&o.0, "list")?;
-        let same = back.records.len() == self.records.len()
-            && back.records.iter().zip(&self.records).all(|(x, y)| x.size.to_bits() == y.size.to_bits() && MonRecord { size: 0.0, ..x.clone() } == MonRecord { size: 0.0, ..y.clone() });
-        if !same {
+        if Mon::parse(&o.0, "list")? != *self {
             return Err(bad("the bytes do not read back to the same list".into()));
         }
         Ok(o.0)
@@ -546,6 +557,14 @@ mod tests {
         m.records[0].size = f32::from_bits(0x7fc0_1234);
         let back = Mon::parse(&m.to_bytes(), "t").unwrap();
         assert_eq!(back.records[0].size.to_bits(), 0x7fc0_1234);
+        // equality is by the bits of the size
+        assert!(back == m, "the same NaN equals itself");
+        let mut z = back.clone();
+        z.records[0].size = f32::from_bits(0x7fc0_1235);
+        assert!(z != m, "another NaN is another value");
+        let (mut a, mut b) = (m.clone(), m.clone());
+        (a.records[0].size, b.records[0].size) = (0.0, -0.0);
+        assert!(a != b, "-0.0 is not 0.0");
     }
 
     fn mlt_bytes_raw(meshes: &[&[u8]], textures: &[&[u8]], recs: &[(i32, i32, i32)]) -> Vec<u8> {

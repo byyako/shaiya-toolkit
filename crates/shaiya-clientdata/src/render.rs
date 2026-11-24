@@ -264,14 +264,14 @@ impl PreviewFit {
         b.fit()
     }
 
-    /// Picture points per model unit: the fitted scale times the zoom.
+    /// Picture points per model unit: the fitted scale times the (sanitized) zoom.
     pub fn effective_scale(self) -> f32 {
-        self.scale * self.view.zoom
+        self.scale * self.view.sanitized().zoom
     }
 
-    /// A model-space point in picture points (origin top left), with its view depth.
+    /// A model-space point in picture points (origin top left), with its view depth; the view is sanitized first.
     pub fn to_points(self, v: V3) -> [f32; 3] {
-        let q = view_transform(v, self.view);
+        let q = view_transform(v, self.view.sanitized());
         let s = self.effective_scale();
         [PREVIEW_SIZE[0] * 0.5 + (q[0] - self.mid[0]) * s, PREVIEW_SIZE[1] * 0.5 - (q[1] - self.mid[1]) * s, q[2]]
     }
@@ -360,7 +360,8 @@ pub fn render_picture_with(tris: &[PreviewTri], textures: &[MipImage], alpha: &[
             continue;
         }
         // the light: a face normal in view space, turned towards the viewer (-z)
-        let v = t.pos.map(|p| view_transform(p, fit.view));
+        let view = fit.view.sanitized();
+        let v = t.pos.map(|p| view_transform(p, view));
         let (a, b) = ([v[1][0] - v[0][0], v[1][1] - v[0][1], v[1][2] - v[0][2]], [v[2][0] - v[0][0], v[2][1] - v[0][1], v[2][2] - v[0][2]]);
         let mut n = [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
         let nl = (n[0] * n[0] + n[1] * n[1] + n[2] * n[2]).sqrt().max(1e-12);
@@ -1353,6 +1354,60 @@ mod tests {
         assert!(sample(&edge, 0, 0.5, 0.5, AlphaMode::Cutout, Filter::Bilinear).is_some());
         assert!(sample(&edge, 0, 0.7, 0.5, AlphaMode::Cutout, Filter::Bilinear).is_none());
         assert!(sample(&edge, 0, 0.7, 0.5, AlphaMode::Opaque, Filter::Bilinear).is_some());
+    }
+
+    #[test]
+    fn bilinear_wraps_in_v_too() {
+        // two rows, black above white; their centres are at v = 0.25 and 0.75
+        let m = mip(1, 2, vec![0, 0, 0, 255, 255, 255, 255, 255]);
+        let s = |v: f32, f: Filter| sample(&m, 0, 0.5, v, AlphaMode::Cutout, f).unwrap()[0];
+        assert_eq!((s(0.25, Filter::Bilinear), s(0.75, Filter::Bilinear)), (0, 255), "on a centre the row itself");
+        assert_eq!(s(0.5, Filter::Bilinear), 128, "half way between the rows");
+        assert_eq!(s(0.0, Filter::Bilinear), 128, "at v = 0 the last row on the far side blends in (wrap)");
+        assert_eq!(s(1.0, Filter::Bilinear), 128, "at v = 1 the first row blends in (wrap)");
+        assert_eq!((s(0.4, Filter::Nearest), s(0.6, Filter::Nearest)), (0, 255), "nearest does not blend");
+    }
+
+    #[test]
+    fn the_still_picture_filters_bilinearly_and_animation_frames_use_the_nearest_texel() {
+        // a black and a white texel; the vertices alternate u = 0 and u = 1, so u runs across every face
+        let (ani, mut c) = arm();
+        for (i, v) in c.meshes[0].vertices.iter_mut().enumerate() {
+            v.uv = [(i % 2) as f32, 0.5];
+        }
+        let tex = mip(2, 1, vec![0, 0, 0, 255, 255, 255, 255, 255]);
+        // distinct opaque colours: the faces are lit flat, so nearest gives a few (two texels times the light levels of the faces and the
+        // wire), a blend gives a continuum of greys
+        let distinct = |rgba: &[u8]| {
+            let mut set = std::collections::BTreeSet::new();
+            for p in rgba.as_chunks::<4>().0.iter().filter(|p| p[3] == 255) {
+                set.insert([p[0], p[1], p[2]]);
+            }
+            set.len()
+        };
+        let still = c3dc_picture_with(&c, Some((&tex, AlphaMode::Cutout)), View::DEFAULT).unwrap();
+        let frames = anim_frames_with(&ani, &[(&c.meshes[0], Some(0))], std::slice::from_ref(&tex), &[], View::DEFAULT, &mut || false).unwrap();
+        let (ds, df) = (distinct(&still.rgba), distinct(&frames.frames[0]));
+        assert!(still.textured_px > 100 && drawn(&frames.frames[0]) > 100);
+        assert!(ds > 60, "the still picture blends the texels into many greys: {ds}");
+        assert!(df < 60 && ds > df * 2, "frames show the nearest texel only: {df} colours against {ds}");
+        // the same texture through the render function: nearest has no grey between the texels, bilinear has
+        let tris = quad([[0.0, 0.5], [1.0, 0.5], [1.0, 0.5], [0.0, 0.5]], Some(0));
+        let (n, b) = (textured(&[], Filter::Nearest, &tris, std::slice::from_ref(&tex)), textured(&[], Filter::Bilinear, &tris, std::slice::from_ref(&tex)));
+        assert!(distinct(&b.rgba) > distinct(&n.rgba));
+    }
+
+    #[test]
+    fn an_unsanitized_view_in_the_fit_is_sanitized_when_drawing() {
+        let pts = [[0.0, 0.0, 0.0], [4.0, 1.0, 2.0]];
+        let fit = PreviewFit::of_view(pts.into_iter(), View::DEFAULT).unwrap();
+        for bad in [View { zoom: 0.0, ..View::DEFAULT }, View { zoom: -3.0, ..View::DEFAULT }, View { zoom: f32::NAN, ..View::DEFAULT }, View { yaw_deg: f32::NAN, ..View::DEFAULT }] {
+            let wild = PreviewFit { view: bad, ..fit };
+            let clean = PreviewFit { view: bad.sanitized(), ..fit };
+            assert_eq!(wild.effective_scale().to_bits(), clean.effective_scale().to_bits());
+            assert_eq!(wild.to_points([1.0, 2.0, 3.0]).map(f32::to_bits), clean.to_points([1.0, 2.0, 3.0]).map(f32::to_bits));
+            assert!(wild.effective_scale() > 0.0 && wild.effective_scale().is_finite());
+        }
     }
 
     #[test]

@@ -1,5 +1,5 @@
 //! Identify a Shaiya file and describe it: SAH index, SAF data, SData (SEED-encrypted or plain), patch, patch signature, model list (`.MLT`, `.MON`, `.ITM`), Windows
-//! program. Detection is by content first, name second. Malformed input gives a `problems` entry, not a failure, unless the file cannot
+//! program. Detection is by content first, name second; the three model lists are the exception: a file named `.mlt`, `.mon` or `.itm` is read as that list (a valid list under another name is Unknown). Malformed input gives a `problems` entry, not a failure, unless the file cannot
 //! be read at all.
 
 pub mod validate;
