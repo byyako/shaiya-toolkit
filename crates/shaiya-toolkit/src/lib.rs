@@ -16,12 +16,14 @@ pub mod multi_lock;
 pub mod patch_builder;
 pub mod preview;
 pub mod preview_models;
+pub mod preview_tex;
 pub mod publish_form;
 pub mod replace_title;
 pub mod sdata_tab;
 pub mod sdata_table;
 pub mod shot;
 pub mod sign_tab;
+pub mod source;
 pub mod start;
 
 use apply_tab::ApplyTab;
@@ -73,6 +75,8 @@ pub struct ToolkitSettings {
     pub preview_bones: bool,
     pub preview_fit: bool,
     pub preview_alpha: bool,
+    /// Models are drawn with their textures (off: plain grey, as before).
+    pub preview_textured: bool,
     /// Per client name: signature settings.
     pub keys: BTreeMap<String, KeySettings>,
 }
@@ -92,6 +96,7 @@ impl Default for ToolkitSettings {
             preview_bones: true,
             preview_fit: true,
             preview_alpha: true,
+            preview_textured: true,
             keys: BTreeMap::new(),
         }
     }

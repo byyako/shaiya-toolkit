@@ -2,10 +2,11 @@
 //! entry's bytes (never on the UI thread).
 
 use crate::preview_models;
-use shaiya_archive::{Archive, Entry};
+use crate::preview_tex::{self, Look, TextureInfo};
+use crate::source::FileSource;
 use shaiya_core::text::Encoding;
 pub use shaiya_clientdata::meshpick::{mesh_candidates_in, MeshInfo};
-use shaiya_core::{Error, Job, Result, Unit};
+use shaiya_core::{Error, Job, Result};
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
@@ -35,7 +36,8 @@ pub enum PreviewData {
     /// triangles). `header` is the counts line; the lists name the textures by what the picture does with them.
     /// A `.3DC` skinned mesh uses the same variant: its rest pose in plain grey (`missing`, `see_through`, `invisible` are empty and
     /// `notes` says what the picture is).
-    Model { header: String, missing: Vec<String>, see_through: Vec<String>, invisible: Vec<String>, notes: Vec<String>, width: u32, height: u32, rgba: Vec<u8> },
+    /// `texture` is set for a `.3DC` a list file names textures for (the line and the choice).
+    Model { header: String, missing: Vec<String>, see_through: Vec<String>, invisible: Vec<String>, notes: Vec<String>, texture: Option<TextureInfo>, width: u32, height: u32, rgba: Vec<u8> },
     /// An `.ANI` skeletal animation with its pre-rendered frames (rendered on the worker thread; the UI only swaps one texture).
     Anim {
         header: Vec<String>,
@@ -235,15 +237,14 @@ pub fn map_preview(data: &[u8], path: &str) -> shaiya_clientdata::Result<Preview
 /// Each texture a module names is looked up in `archive` under `Entity/Texture` by the editor's rule (the name as written, else
 /// the same stem as `.dds`, else as `.tga`); one that is not there or does not decode is counted as missing and drawn plain grey.
 /// A file that does not parse is an error (the caller shows it as Failed).
-pub fn model_preview(archive: &Archive, data: &[u8], path: &str, job: &Job) -> shaiya_clientdata::Result<PreviewData> {
+pub fn model_preview(src: &dyn FileSource, data: &[u8], path: &str, job: &Job) -> shaiya_clientdata::Result<PreviewData> {
     let sm = shaiya_clientdata::Smod::parse(data, path)?;
     let p = shaiya_clientdata::render::model_picture(&sm, &mut |name| {
         if job.check().is_err() {
             return None;
         }
-        let found = shaiya_clientdata::texture_candidates("Entity/Texture", name).into_iter().find_map(|c| archive.index().get(&c).map(|e| (c, e)));
-        let (c, e) = found?;
-        shaiya_clientdata::texture::decode(&archive.read_entry(e).ok()?, &c).ok()
+        let c = shaiya_clientdata::texture_candidates("Entity/Texture", name).into_iter().find(|c| src.has(c))?;
+        shaiya_clientdata::texture::decode(&src.read(&c, preview_tex::TEXTURE_CAP, job).ok()?, &c).ok()
     });
     let n = |n: usize, one: &str, many: &str| shaiya_inspect::counted(n as u64, one, many);
     let header = format!("{}, {}, {} ({} missing)", n(p.modules, "module", "modules"), n(p.triangles, "triangle", "triangles"), n(p.textures, "texture", "textures"), p.missing.len());
@@ -251,7 +252,7 @@ pub fn model_preview(archive: &Archive, data: &[u8], path: &str, job: &Job) -> s
         Some(pic) => (pic.width as u32, pic.height as u32, pic.rgba),
         None => (0, 0, Vec::new()),
     };
-    Ok(PreviewData::Model { header, missing: p.missing, see_through: p.see_through, invisible: p.invisible, notes: Vec::new(), width, height, rgba })
+    Ok(PreviewData::Model { header, missing: p.missing, see_through: p.see_through, invisible: p.invisible, notes: Vec::new(), texture: None, width, height, rgba })
 }
 
 /// The `.3DC` files that suit the animation at `ani_path`, by names only (no list file is read): the folder next to the `ANI` folder
@@ -260,21 +261,21 @@ pub fn model_preview(archive: &Archive, data: &[u8], path: &str, job: &Job) -> s
 /// `_segment`. At most 64 candidates (by name) are read with `read` (archive path to bytes); one is offered when it is a skinned
 /// layout, has vertices and every bone its vertices name is below `bone_count`. Returns (compatible, default parts), both archive
 /// paths in name order.
-pub fn mesh_candidates(index: &shaiya_archive::Index, ani_path: &str, bone_count: usize, cache: &MeshInfoCache, read: &mut dyn FnMut(&str) -> Option<Vec<u8>>) -> (Vec<String>, Vec<String>) {
-    let paths: Vec<String> = index.visible().into_iter().map(|f| f.path).filter(|p| ext_of(p) == "3dc").collect();
+pub fn mesh_candidates(src: &dyn FileSource, ani_path: &str, bone_count: usize, cache: &MeshInfoCache, read: &mut dyn FnMut(&str) -> Option<Vec<u8>>) -> (Vec<String>, Vec<String>) {
+    let paths: Vec<String> = src.paths().into_iter().filter(|p| ext_of(p) == "3dc").collect();
     mesh_candidates_in(&paths, ani_path, bone_count, &mut |p| {
-        let entry = index.get(p)?;
-        if entry.length as u64 > MESH_CANDIDATE_LIMIT {
+        let (offset, length) = src.stamp(p)?;
+        if length > MESH_CANDIDATE_LIMIT {
             return None;
         }
         let key = p.replace('\\', "/").to_ascii_lowercase();
-        if let Some(known) = cache.get(&key, entry.offset, entry.length) {
+        if let Some(known) = cache.get(&key, offset, length) {
             return known;
         }
         // A read that gave nothing (cancelled job, I/O error) says nothing about the file: remember only what parsing decided.
         let bytes = read(p)?;
         let info = shaiya_clientdata::C3dc::parse(&bytes, p).ok().map(|c| MeshInfo::of(&c));
-        cache.put(key, entry.offset, entry.length, info);
+        cache.put(key, offset, length, info);
         info
     })
 }
@@ -289,15 +290,15 @@ pub const MESH_CANDIDATE_LIMIT: u64 = 32 << 20;
 pub struct MeshInfoCache(Arc<Mutex<HashMap<String, CachedMesh>>>);
 
 /// Entry offset, entry length and what was learned (`None`: the file does not read).
-type CachedMesh = (u64, u32, Option<MeshInfo>);
+type CachedMesh = (u64, u64, Option<MeshInfo>);
 
 impl MeshInfoCache {
-    fn get(&self, key: &str, offset: u64, length: u32) -> Option<Option<MeshInfo>> {
+    fn get(&self, key: &str, offset: u64, length: u64) -> Option<Option<MeshInfo>> {
         let m = self.0.lock().unwrap_or_else(|e| e.into_inner());
         m.get(key).filter(|(o, l, _)| *o == offset && *l == length).map(|(_, _, i)| *i)
     }
 
-    fn put(&self, key: String, offset: u64, length: u32, info: Option<MeshInfo>) {
+    fn put(&self, key: String, offset: u64, length: u64, info: Option<MeshInfo>) {
         self.0.lock().unwrap_or_else(|e| e.into_inner()).insert(key, (offset, length, info));
     }
 
@@ -317,18 +318,23 @@ impl MeshInfoCache {
 #[derive(Clone, Debug, Default)]
 pub struct TextureIndexCache(Arc<Mutex<Option<BuiltIndex>>>);
 
+/// List files over this many bytes are not read.
+const LIST_CAP: u64 = 32 << 20;
+
 /// The index and what building it read.
 pub type BuiltIndex = Arc<(shaiya_clientdata::TextureIndex, shaiya_clientdata::IndexReport)>;
 
 impl TextureIndexCache {
     /// The index, built from the list files of `archive` on this thread when nobody has built it yet; `None` when `job` was cancelled
     /// (nothing is kept then). Two workers that build at the same time both finish; the first result stays.
-    pub fn get_or_build(&self, archive: &Archive, job: &Job) -> Option<BuiltIndex> {
+    pub fn get_or_build(&self, src: &dyn FileSource, job: &Job) -> Option<BuiltIndex> {
         if let Some(done) = self.0.lock().unwrap_or_else(|e| e.into_inner()).clone() {
             return Some(done);
         }
-        let paths: Vec<String> = archive.index().visible().into_iter().map(|f| f.path).collect();
-        let built = shaiya_clientdata::TextureIndex::build(&paths, &mut |p| archive.index().get(p).and_then(|e| archive.read_entry(e).ok()), &mut || job.check().is_err())?;
+        let paths = src.paths();
+        let built = shaiya_clientdata::TextureIndex::build(&paths, &mut |p| src.read(p, LIST_CAP, job).ok(), &mut || job.check().is_err())?;
+        // a list read while the job was being cancelled counts as unreadable: keep nothing of such a build
+        job.check().ok()?;
         let mut slot = self.0.lock().unwrap_or_else(|e| e.into_inner());
         Some(slot.get_or_insert_with(|| Arc::new(built)).clone())
     }
@@ -351,9 +357,11 @@ fn kind_line(path: &str) -> String {
 }
 
 /// The preview of an `.ANI` from its bytes: header, validation lines, bones table and the frames pre-rendered on the meshes chosen by
-/// `mesh` (found in `archive` by name, see [`mesh_candidates`]). A file that does not read is an error (the caller shows it as Failed).
+/// `mesh` (found in `src` by name, see [`mesh_candidates`]). Each part is drawn with the default texture its list file names for it (once per
+/// distinct texture; `look.textured` off draws grey). A file that does not read is an error (the caller shows it as Failed).
 /// The frames are made here, on the worker thread, and the job's cancel stops them.
-pub fn anim_preview(archive: &Archive, data: &[u8], path: &str, mesh: &MeshChoice, cache: &MeshInfoCache, job: &Job) -> shaiya_clientdata::Result<PreviewData> {
+#[allow(clippy::too_many_arguments)]
+pub fn anim_preview(src: &dyn FileSource, data: &[u8], path: &str, mesh: &MeshChoice, cache: &MeshInfoCache, textures: &TextureIndexCache, look: &Look, job: &Job) -> shaiya_clientdata::Result<PreviewData> {
     use shaiya_clientdata::anim::{self, Severity};
     let ani = shaiya_clientdata::Ani::parse(data, path)?;
     let (rot, trans) = ani.key_counts();
@@ -409,9 +417,9 @@ pub fn anim_preview(archive: &Archive, data: &[u8], path: &str, mesh: &MeshChoic
 
     let mut read = |p: &str| -> Option<Vec<u8>> {
         job.check().ok()?;
-        archive.read_entry(archive.index().get(p)?).ok()
+        src.read(p, MESH_CANDIDATE_LIMIT, job).ok()
     };
-    let (compatible, defaults) = mesh_candidates(archive.index(), path, ani.bones.len(), cache, &mut read);
+    let (compatible, defaults) = mesh_candidates(src, path, ani.bones.len(), cache, &mut read);
     let mesh = match mesh {
         MeshChoice::One(_) | MeshChoice::Default if compatible.is_empty() => MeshChoice::Skeleton,
         MeshChoice::One(p) if !compatible.contains(p) => MeshChoice::Default,
@@ -422,17 +430,27 @@ pub fn anim_preview(archive: &Archive, data: &[u8], path: &str, mesh: &MeshChoic
         MeshChoice::Skeleton => Vec::new(),
         MeshChoice::One(p) => vec![p.clone()],
     };
-    let mut parsed = Vec::new();
+    let mut parsed: Vec<(String, shaiya_clientdata::C3dc)> = Vec::new();
     for p in &chosen {
         if let Some(c) = read(p).and_then(|b| shaiya_clientdata::C3dc::parse(&b, p).ok()) {
-            parsed.push(c);
+            parsed.push((p.clone(), c));
         }
     }
     job.check()?;
-    let meshes: Vec<&shaiya_clientdata::mesh3dc::C3dcMesh> = parsed.iter().flat_map(|c| c.meshes.iter()).collect();
-    let frames = shaiya_clientdata::render::anim_frames(&ani, &meshes, &mut || job.check().is_err()).ok_or_else(|| shaiya_clientdata::Error::Archive("cancelled".into()))?;
+    let mut tex = preview_tex::AnimTextures { textures: Vec::new(), alpha: Vec::new(), per_mesh: vec![None; parsed.len()], notes: Vec::new() };
+    if look.textured && !parsed.is_empty() {
+        let built = textures.get_or_build(src, job).ok_or_else(|| shaiya_clientdata::Error::Archive("cancelled".into()))?;
+        let paths: Vec<String> = parsed.iter().map(|(p, _)| p.clone()).collect();
+        tex = preview_tex::for_meshes(src, &built.0, &paths, job).ok_or_else(|| shaiya_clientdata::Error::Archive("cancelled".into()))?;
+    }
+    let meshes: Vec<(&shaiya_clientdata::mesh3dc::C3dcMesh, Option<usize>)> = parsed.iter().zip(&tex.per_mesh).flat_map(|((_, c), t)| c.meshes.iter().map(move |m| (m, *t))).collect();
+    let frames = shaiya_clientdata::render::anim_frames_with(&ani, &meshes, &tex.textures, &tex.alpha, shaiya_clientdata::render::View::DEFAULT, &mut || job.check().is_err()).ok_or_else(|| shaiya_clientdata::Error::Archive("cancelled".into()))?;
 
     let mut notes = Vec::new();
+    if !look.textured && !parsed.is_empty() {
+        notes.push(preview_tex::TEXTURES_OFF.to_string());
+    }
+    notes.extend(tex.notes);
     if compatible.is_empty() {
         let folder = path.rsplit_once('/').map_or("", |(d, _)| d);
         let sibling = folder.rsplit_once('/').map_or("3DC".to_string(), |(up, _)| format!("{up}/3DC"));
@@ -461,9 +479,10 @@ pub fn anim_preview(archive: &Archive, data: &[u8], path: &str, mesh: &MeshChoic
     Ok(PreviewData::Anim { header, issues, bones, end_key: ani.end_key, frames, mesh, mesh_choices, notes, rate: 30.0, unit: "key" })
 }
 
-/// The preview of a `.3DC` from its bytes: the first mesh at rest in plain grey with the wire. A file that does not read (or is
-/// ambiguous) is an error (the caller shows it as Failed).
-pub fn c3dc_preview(data: &[u8], path: &str) -> shaiya_clientdata::Result<PreviewData> {
+/// The preview of a `.3DC` from its bytes: the first mesh at rest with the texture the list files name for it (the one `look` chooses;
+/// plain grey with a note when none is named, it is not in the archive, or textures are off), with the wire. A file that does not read
+/// (or is ambiguous) is an error (the caller shows it as Failed).
+pub fn c3dc_preview(src: &dyn FileSource, data: &[u8], path: &str, textures: &TextureIndexCache, look: &Look, job: &Job) -> shaiya_clientdata::Result<PreviewData> {
     use shaiya_clientdata::mesh3dc::C3dcLayout;
     let c = shaiya_clientdata::C3dc::parse(data, path)?;
     let n = |n: usize, one: &str, many: &str| shaiya_inspect::counted(n as u64, one, many);
@@ -483,51 +502,62 @@ pub fn c3dc_preview(data: &[u8], path: &str) -> shaiya_clientdata::Result<Previe
             )
         }
     };
-    let note = if c.texture_name().is_empty() {
-        "shown in the mesh's own rest pose, plain grey (the mesh file names no texture)"
+    let mut notes = vec!["shown in the mesh's own rest pose".to_string()];
+    let mut texture = None;
+    let mut mip = None;
+    if look.textured {
+        let built = textures.get_or_build(src, job).ok_or_else(|| shaiya_clientdata::Error::Archive("cancelled".into()))?;
+        let refs = built.0.for_mesh(path);
+        if refs.is_empty() {
+            notes.push(preview_tex::NOT_LISTED.to_string());
+        } else {
+            let chosen = look.texture.min(refs.len() - 1);
+            let r = &refs[chosen];
+            texture = Some(preview_tex::info_of(refs, chosen));
+            if !r.found {
+                notes.push(preview_tex::not_in_archive(&r.texture));
+            } else {
+                match preview_tex::decode_mip(src, &r.texture, job) {
+                    Some(m) => mip = Some((m, preview_tex::alpha_mode(r.alpha))),
+                    None => notes.push(preview_tex::unreadable(file_name(&r.texture))),
+                }
+            }
+        }
     } else {
-        "shown in the mesh's own rest pose, plain grey (textures are not looked up for skinned meshes)"
-    };
-    let (width, height, rgba) = match shaiya_clientdata::render::c3dc_picture(&c) {
+        notes.push(preview_tex::TEXTURES_OFF.to_string());
+    }
+    let picture = shaiya_clientdata::render::c3dc_picture_with(&c, mip.as_ref().map(|(m, a)| (m, *a)), shaiya_clientdata::render::View::DEFAULT);
+    let (width, height, rgba) = match picture {
         Some(p) => (p.width as u32, p.height as u32, p.rgba),
         None => (0, 0, Vec::new()),
     };
-    Ok(PreviewData::Model { header, missing: Vec::new(), see_through: Vec::new(), invisible: Vec::new(), notes: vec![note.to_string()], width, height, rgba })
+    Ok(PreviewData::Model { header, missing: Vec::new(), see_through: Vec::new(), invisible: Vec::new(), notes, texture, width, height, rgba })
 }
 
-fn read_all(archive: &Archive, entry: &Entry, cap: u64, job: &Job) -> Result<Vec<u8>> {
-    let n = (entry.length as u64).min(cap) as usize;
-    let mut out = Vec::with_capacity(n);
-    job.total(Some(n as u64), Unit::Bytes);
-    let mut done = 0usize;
-    while done < n {
-        job.check()?;
-        let m = (n - done).min(1 << 20);
-        out.extend_from_slice(&archive.read_range(entry, done as u64, m)?);
-        job.advance(m as u64);
-        done += m;
-    }
-    Ok(out)
+/// Builds the preview of the file `path` of `src` (the path decides what it should be, the bytes can overrule). `text_all`: read up to
+/// 16 MiB of text instead of 1 MiB. `hex_from`: where the hex window starts for files over 64 MiB.
+pub fn make_preview(src: &dyn FileSource, path: &str, text_all: bool, hex_from: u64, job: &Job) -> Result<PreviewData> {
+    make_preview_with(src, path, text_all, hex_from, &MeshChoice::Default, &MeshInfoCache::default(), &TextureIndexCache::default(), job)
 }
 
-/// Builds the preview of `entry` (`path` decides what it should be, the bytes can overrule). `text_all`: read up to 16 MiB of text
-/// instead of 1 MiB. `hex_from`: where the hex window starts for entries over 64 MiB.
-pub fn make_preview(archive: &Archive, entry: &Entry, path: &str, text_all: bool, hex_from: u64, job: &Job) -> Result<PreviewData> {
-    make_preview_with(archive, entry, path, text_all, hex_from, &MeshChoice::Default, &MeshInfoCache::default(), &TextureIndexCache::default(), job)
-}
-
-/// [`make_preview`] with the mesh choice of an `.ANI` preview.
+/// [`make_preview`] with the mesh choice of an `.ANI` preview and the caches of one loaded source; models are drawn textured.
 #[allow(clippy::too_many_arguments)]
-pub fn make_preview_with(archive: &Archive, entry: &Entry, path: &str, text_all: bool, hex_from: u64, mesh: &MeshChoice, cache: &MeshInfoCache, _textures: &TextureIndexCache, job: &Job) -> Result<PreviewData> {
-    if entry.length == 0 {
+pub fn make_preview_with(src: &dyn FileSource, path: &str, text_all: bool, hex_from: u64, mesh: &MeshChoice, cache: &MeshInfoCache, textures: &TextureIndexCache, job: &Job) -> Result<PreviewData> {
+    make_preview_look(src, path, text_all, hex_from, mesh, cache, textures, &Look::default(), job)
+}
+
+/// [`make_preview_with`] with the texture switch and choice of the model previews.
+#[allow(clippy::too_many_arguments)]
+pub fn make_preview_look(src: &dyn FileSource, path: &str, text_all: bool, hex_from: u64, mesh: &MeshChoice, cache: &MeshInfoCache, textures: &TextureIndexCache, look: &Look, job: &Job) -> Result<PreviewData> {
+    let Some(total) = src.len(path) else { return Err(Error::io(path, std::io::Error::new(std::io::ErrorKind::NotFound, "not in the archive"))) };
+    if total == 0 {
         return Ok(PreviewData::Empty);
     }
-    let total = entry.length as u64;
     let ext = ext_of(path);
-    let head = archive.read_range(entry, 0, total.min(64 << 10) as usize)?;
+    let head = src.read_range(path, 0, total.min(64 << 10) as usize)?;
     let is_image = matches!(ext.as_str(), "dds" | "tga" | "bmp") || head.starts_with(b"DDS ") || (head.starts_with(b"BM") && ext == "dds");
     if is_image {
-        let data = read_all(archive, entry, 128 << 20, job)?;
+        let data = src.read(path, 128 << 20, job)?;
         return Ok(match shaiya_clientdata::texture::decode(&data, path) {
             Ok(img) => {
                 let header = image_header(&data, img.width, img.height);
@@ -538,7 +568,7 @@ pub fn make_preview_with(archive: &Archive, entry: &Entry, path: &str, text_all:
         });
     }
     if ext == "sdata" || shaiya_seed::is_encrypted(&head) {
-        let data = read_all(archive, entry, 128 << 20, job)?;
+        let data = src.read(path, 128 << 20, job)?;
         let size = data.len() as u64;
         return Ok(match shaiya_seed::info(&data, path) {
             Ok(Some(h)) => {
@@ -561,12 +591,12 @@ pub fn make_preview_with(archive: &Archive, entry: &Entry, path: &str, text_all:
         });
     }
     if ext == "wld" {
-        let data = read_all(archive, entry, 128 << 20, job)?;
+        let data = src.read(path, 128 << 20, job)?;
         return Ok(map_preview(&data, path).unwrap_or_else(|e| PreviewData::Failed { message: e.to_string(), bytes: data.into_iter().take(64 << 10).collect(), total }));
     }
     if ext == "smod" {
-        let data = read_all(archive, entry, 128 << 20, job)?;
-        let made = model_preview(archive, &data, path, job);
+        let data = src.read(path, 128 << 20, job)?;
+        let made = model_preview(src, &data, path, job);
         job.check()?;
         return Ok(match made {
             Ok(p) => p,
@@ -575,14 +605,14 @@ pub fn make_preview_with(archive: &Archive, entry: &Entry, path: &str, text_all:
     }
     // the animation and model formats: a file that does not read is Failed with its bytes, never Text (even when its bytes look like text)
     if matches!(ext.as_str(), "ani" | "3dc" | "vani" | "mani" | "3do" | "3de") {
-        let data = read_all(archive, entry, 128 << 20, job)?;
+        let data = src.read(path, 128 << 20, job)?;
         let made = match ext.as_str() {
-            "ani" => anim_preview(archive, &data, path, mesh, cache, job),
-            "3dc" => c3dc_preview(&data, path),
-            "vani" => preview_models::vani_preview(archive, &data, path, job),
+            "ani" => anim_preview(src, &data, path, mesh, cache, textures, look, job),
+            "3dc" => c3dc_preview(src, &data, path, textures, look, job),
+            "vani" => preview_models::vani_preview(src, &data, path, job),
             "mani" => preview_models::mani_preview(&data, path),
-            "3do" => preview_models::m3do_preview(&data, path, job),
-            _ => preview_models::m3de_preview(&data, path),
+            "3do" => preview_models::m3do_preview(src, &data, path, textures, look, job),
+            _ => preview_models::m3de_preview(src, &data, path, textures, look, job),
         };
         job.check()?;
         return Ok(match made {
@@ -593,21 +623,18 @@ pub fn make_preview_with(archive: &Archive, entry: &Entry, path: &str, text_all:
     let by_ext = matches!(ext.as_str(), "txt" | "ini" | "xml" | "csv" | "cfg" | "lst" | "log");
     if by_ext || looks_like_text(&head) {
         let cap = if text_all { TEXT_ALL } else { TEXT_FIRST };
-        let bytes = read_all(archive, entry, cap, job)?;
+        let bytes = src.read(path, cap, job)?;
         let guess = guess_encoding(&bytes);
         return Ok(PreviewData::Text { truncated: total > bytes.len() as u64, total, bytes, guess });
     }
     // hex: the whole entry up to 64 MiB, else a window of 64 MiB at `hex_from`
     if total <= HEX_MAX {
-        let bytes = read_all(archive, entry, HEX_MAX, job)?;
+        let bytes = src.read(path, HEX_MAX, job)?;
         return Ok(PreviewData::Hex { bytes, base: 0, total });
     }
     let base = hex_from.min(total - 1) / 16 * 16;
     let n = (total - base).min(16 << 20) as usize;
-    let bytes = archive.read_range(entry, base, n).map_err(|e| match e {
-        Error::Cancelled => Error::Cancelled,
-        other => other,
-    })?;
+    let bytes = src.read_range(path, base, n)?;
     Ok(PreviewData::Hex { bytes, base, total })
 }
 
@@ -642,6 +669,7 @@ pub fn file_name(path: &str) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use shaiya_archive::Archive;
     use shaiya_testkit::{bmp_stub, tga_stub, SahBuilder, TempDir};
 
     fn open(d: &TempDir, files: &[(&str, Vec<u8>)]) -> Archive {
@@ -654,7 +682,7 @@ mod tests {
     }
 
     fn pv(a: &Archive, path: &str) -> PreviewData {
-        make_preview(a, a.index().get(path).unwrap(), path, false, 0, &Job::silent()).unwrap()
+        make_preview(a, path, false, 0, &Job::silent()).unwrap()
     }
 
     #[test]
@@ -749,8 +777,7 @@ mod tests {
             PreviewData::Text { bytes, truncated, total, .. } => assert_eq!((bytes.len() as u64, truncated, total), (TEXT_FIRST, true, 3 << 20)),
             other => panic!("{other:?}"),
         }
-        let e = a.index().get("t/big.txt").unwrap();
-        match make_preview(&a, e, "t/big.txt", true, 0, &Job::silent()).unwrap() {
+        match make_preview(&a, "t/big.txt", true, 0, &Job::silent()).unwrap() {
             PreviewData::Text { bytes, truncated, .. } => assert_eq!((bytes.len(), truncated), (3 << 20, false)),
             other => panic!("{other:?}"),
         }
@@ -760,6 +787,7 @@ mod tests {
 #[cfg(test)]
 mod map_tests {
     use super::*;
+    use shaiya_archive::Archive;
     use shaiya_testkit::{SahBuilder, TempDir};
 
     /// A `.wld` head followed by zeros until it parses to its last byte (every later count, name and number is 0).
@@ -819,7 +847,7 @@ mod map_tests {
         let d = TempDir::new("preview-map-field");
         SahBuilder::new(0).file(b"world/12.wld", &field_wld(32)).write_to(d.path());
         let a = Archive::open(d.path()).unwrap();
-        match make_preview(&a, a.index().get("world/12.wld").unwrap(), "world/12.wld", false, 0, &Job::silent()).unwrap() {
+        match make_preview(&a, "world/12.wld", false, 0, &Job::silent()).unwrap() {
             PreviewData::Map { header, height_range, note, width, height, rgba, downscaled } => {
                 assert_eq!(header, "Map 12, 17 x 17 corners, 32 units");
                 assert_eq!((width, height, rgba.len(), downscaled, note), (17, 17, 17 * 17 * 4, false, None));
@@ -851,7 +879,7 @@ mod map_tests {
         bad.extend([1u8; 40]);
         SahBuilder::new(0).file(b"world/9.wld", &bad).write_to(d.path());
         let a = Archive::open(d.path()).unwrap();
-        match make_preview(&a, a.index().get("world/9.wld").unwrap(), "world/9.wld", false, 0, &Job::silent()).unwrap() {
+        match make_preview(&a, "world/9.wld", false, 0, &Job::silent()).unwrap() {
             PreviewData::Failed { message, bytes, total } => assert!(!message.is_empty() && bytes.len() == 48 && total == 48),
             other => panic!("{other:?}"),
         }
@@ -874,6 +902,7 @@ mod map_tests {
 mod map_note_tests {
     use super::map_tests::dungeon_wld;
     use super::*;
+    use shaiya_archive::Archive;
     use shaiya_testkit::{SahBuilder, TempDir};
 
     #[test]
@@ -894,7 +923,7 @@ mod map_note_tests {
         SahBuilder::new(0).file(b"world/1.wld", b"just some words, not a map").file(b"world/2.wld", &[0u8; 8]).write_to(d.path());
         let a = Archive::open(d.path()).unwrap();
         for p in ["world/1.wld", "world/2.wld"] {
-            match make_preview(&a, a.index().get(p).unwrap(), p, false, 0, &Job::silent()).unwrap() {
+            match make_preview(&a, p, false, 0, &Job::silent()).unwrap() {
                 PreviewData::Failed { message, bytes, total } => assert!(!message.is_empty() && bytes.len() as u64 == total, "{p}"),
                 other => panic!("{p}: {other:?}"),
             }
@@ -905,6 +934,7 @@ mod map_note_tests {
 #[cfg(test)]
 mod model_tests {
     use super::*;
+    use shaiya_archive::Archive;
     use shaiya_testkit::{tga_stub, SahBuilder, TempDir};
 
     /// A `.smod` file: modules of (texture name, face corners as quads).
@@ -968,7 +998,7 @@ mod model_tests {
         SahBuilder::new(0).file(b"Entity/Building/box.smod", &box_bytes()).file(b"Entity/Texture/top.tga", &tga).file(b"Entity/Texture/side.tga", &tga).write_to(d.path());
         let a = Archive::open(d.path()).unwrap();
         let p = "Entity/Building/box.smod";
-        match make_preview(&a, a.index().get(p).unwrap(), p, false, 0, &Job::silent()).unwrap() {
+        match make_preview(&a, p, false, 0, &Job::silent()).unwrap() {
             PreviewData::Model { header, missing, see_through, invisible, width, height, rgba, .. } => {
                 assert_eq!(header, "3 modules, 10 triangles, 3 textures (1 missing)");
                 assert_eq!((missing, see_through.len(), invisible.len()), (vec!["gone.tga".to_string()], 0, 0), "side.dds is found as side.tga");
@@ -984,9 +1014,9 @@ mod model_tests {
         let d = TempDir::new("preview-model-bad");
         SahBuilder::new(0).file(b"m/bad.smod", b"short").file(b"m/a.3DC", &[1u8, 2, 3, 0, 0, 0, 9, 9]).file(b"m/b.3do", &[7u8; 20]).write_to(d.path());
         let a = Archive::open(d.path()).unwrap();
-        assert!(matches!(make_preview(&a, a.index().get("m/bad.smod").unwrap(), "m/bad.smod", false, 0, &Job::silent()).unwrap(), PreviewData::Failed { .. }));
-        assert!(matches!(make_preview(&a, a.index().get("m/a.3DC").unwrap(), "m/a.3DC", false, 0, &Job::silent()).unwrap(), PreviewData::Failed { .. }), "a .3DC that does not read is Failed, with hex");
-        match make_preview(&a, a.index().get("m/b.3do").unwrap(), "m/b.3do", false, 0, &Job::silent()).unwrap() {
+        assert!(matches!(make_preview(&a, "m/bad.smod", false, 0, &Job::silent()).unwrap(), PreviewData::Failed { .. }));
+        assert!(matches!(make_preview(&a, "m/a.3DC", false, 0, &Job::silent()).unwrap(), PreviewData::Failed { .. }), "a .3DC that does not read is Failed, with hex");
+        match make_preview(&a, "m/b.3do", false, 0, &Job::silent()).unwrap() {
             PreviewData::Failed { message, bytes, total } => assert!(message.contains("m/b.3do") && bytes == [7u8; 20] && total == 20, "a .3DO that does not read is Failed with its reason and its bytes: {message}"),
             other => panic!("{other:?}"),
         }
@@ -999,7 +1029,7 @@ mod model_tests {
         SahBuilder::new(0).file(b"Entity/Building/e.smod", &bytes).write_to(d.path());
         let a = Archive::open(d.path()).unwrap();
         let p = "Entity/Building/e.smod";
-        match make_preview(&a, a.index().get(p).unwrap(), p, false, 0, &Job::silent()).unwrap() {
+        match make_preview(&a, p, false, 0, &Job::silent()).unwrap() {
             PreviewData::Model { header, rgba, missing, .. } => assert_eq!((header.as_str(), rgba.len(), missing.len()), ("1 module, 0 triangles, 1 texture (1 missing)", 0, 1)),
             other => panic!("{other:?}"),
         }
@@ -1009,6 +1039,7 @@ mod model_tests {
 #[cfg(test)]
 mod anim_tests {
     use super::*;
+    use shaiya_archive::Archive;
     use shaiya_core::{Cancel, Silent};
     use shaiya_testkit::anim::{ani_bytes, arm_ani, arm_mesh_3dc, c3dc_bytes, c3dc_cloak_bytes, identity_bits, translation_bits, BoneSpec, VertSpec};
     use shaiya_testkit::{SahBuilder, TempDir};
@@ -1047,7 +1078,7 @@ mod anim_tests {
     }
 
     fn pv(a: &Archive, path: &str, mesh: &MeshChoice) -> PreviewData {
-        make_preview_with(a, a.index().get(path).unwrap(), path, false, 0, mesh, &MeshInfoCache::default(), &TextureIndexCache::default(), &Job::silent()).unwrap()
+        make_preview_with(a, path, false, 0, mesh, &MeshInfoCache::default(), &TextureIndexCache::default(), &Job::silent()).unwrap()
     }
 
     struct Seen {
@@ -1077,7 +1108,7 @@ mod anim_tests {
         assert_eq!(s.header[0], "Character animation, rig huwm (Human)");
         assert_eq!(s.header[1], "3 bones, end key 60 (2.0 s at 30 keys per second), 2 rotation keys, 0 translation keys");
         assert_eq!(s.header.len(), 2, "no first-field line when it is 0");
-        assert!(s.issues.is_empty() && s.notes.is_empty(), "{:?} {:?}", s.issues, s.notes);
+        assert!(s.issues.is_empty() && s.notes == [preview_tex::NOT_LISTED_FOR_PART.replace("{}", "huwm_torso001.3DC")], "{:?} {:?}", s.issues, s.notes);
         assert_eq!(s.bones.len(), 3);
         assert_eq!((s.bones[1].parent, s.bones[1].rot_keys, s.bones[1].first_key, s.bones[1].last_key), (0, 2, Some(0), Some(60)));
         assert_eq!((s.bones[0].first_key, s.bones[0].last_key), (None, None));
@@ -1090,11 +1121,11 @@ mod anim_tests {
         assert_eq!(f.unposed_vertices, 0);
         // the candidates themselves, with the default parts
         let mut read = |p: &str| a.index().get(p).and_then(|e| a.read_entry(e).ok());
-        let (all, defaults) = mesh_candidates(a.index(), ANI, 3, &MeshInfoCache::default(), &mut read);
+        let (all, defaults) = mesh_candidates(&a, ANI, 3, &MeshInfoCache::default(), &mut read);
         assert_eq!(all, vec!["Character/Human/3DC/huwm_torso001.3DC".to_string()]);
         assert_eq!(defaults, all);
         // with fewer bones than the mesh names, nothing is offered
-        let (none, _) = mesh_candidates(a.index(), ANI, 2, &MeshInfoCache::default(), &mut read);
+        let (none, _) = mesh_candidates(&a, ANI, 2, &MeshInfoCache::default(), &mut read);
         assert!(none.is_empty(), "a mesh is offered only when every bone it uses exists in the animation");
     }
 
@@ -1139,7 +1170,7 @@ mod anim_tests {
             ],
         );
         let mut read = |p: &str| a.index().get(p).and_then(|e| a.read_entry(e).ok());
-        let (all, defaults) = mesh_candidates(a.index(), "Monster/ANI/Mob_T_01_Att1.ANI", 3, &MeshInfoCache::default(), &mut read);
+        let (all, defaults) = mesh_candidates(&a, "Monster/ANI/Mob_T_01_Att1.ANI", 3, &MeshInfoCache::default(), &mut read);
         let mut names: Vec<String> = all.iter().map(|p| p.rsplit('/').next().unwrap().to_ascii_lowercase()).collect();
         names.sort();
         assert_eq!(names, ["mob_t_01.3dc", "mob_t_01_a.3dc", "mob_t_01_b.3dc"], "any case; not _02 and not _010");
@@ -1174,7 +1205,7 @@ mod anim_tests {
             ],
         );
         let mut read = |p: &str| a.index().get(p).and_then(|e| a.read_entry(e).ok());
-        let (all, defaults) = mesh_candidates(a.index(), ANI, 3, &MeshInfoCache::default(), &mut read);
+        let (all, defaults) = mesh_candidates(&a, ANI, 3, &MeshInfoCache::default(), &mut read);
         assert_eq!(all.len(), 5);
         let short: Vec<&str> = defaults.iter().map(|p| p.rsplit('/').next().unwrap()).collect();
         assert_eq!(short, ["huwm_torso001.3DC", "huwm_lower001.3DC", "HUWM_hair001.3DC"], "torso, lower, hair; the cape is not a default part");
@@ -1243,10 +1274,10 @@ mod anim_tests {
         };
         let (h, notes, px, size) = model("Monster/3DC/s.3DC");
         assert_eq!(h, "Skinned mesh: 3 vertices, 1 triangle, 3 bones");
-        assert_eq!(notes, ["shown in the mesh's own rest pose, plain grey (the mesh file names no texture)"]);
+        assert_eq!(notes, ["shown in the mesh's own rest pose", preview_tex::NOT_LISTED]);
         assert_eq!((px, size), (480 * 440 * 4, (480, 440)), "drawn at the rest-pose scale");
         let (_, notes, _, _) = model("Monster/3DC/n.3DC");
-        assert_eq!(notes, ["shown in the mesh's own rest pose, plain grey (textures are not looked up for skinned meshes)"]);
+        assert_eq!(notes, ["shown in the mesh's own rest pose", preview_tex::NOT_LISTED], "a texture name inside the .3DC is not used; only the list files name textures");
         let (h, _, px, _) = model("Cloak/Character/3DC/c.3DC");
         assert_eq!(h, "Cloak mesh without bones: 3 vertices, 1 triangle");
         assert!(px > 0);
@@ -1271,10 +1302,10 @@ mod anim_tests {
         let cancel = Cancel::new();
         let job = Job::new(&Silent, cancel.clone());
         cancel.cancel();
-        let e = make_preview_with(&a, a.index().get(ANI).unwrap(), ANI, false, 0, &MeshChoice::Default, &MeshInfoCache::default(), &TextureIndexCache::default(), &job).unwrap_err();
+        let e = make_preview_with(&a, ANI, false, 0, &MeshChoice::Default, &MeshInfoCache::default(), &TextureIndexCache::default(), &job).unwrap_err();
         assert!(matches!(e, Error::Cancelled), "{e:?}");
         let data = a.read_entry(a.index().get(ANI).unwrap()).unwrap();
-        assert!(anim_preview(&a, &data, ANI, &MeshChoice::Default, &MeshInfoCache::default(), &job).is_err());
+        assert!(anim_preview(&a, &data, ANI, &MeshChoice::Default, &MeshInfoCache::default(), &TextureIndexCache::default(), &Look::default(), &job).is_err());
     }
 
     #[test]
@@ -1290,8 +1321,9 @@ mod anim_tests {
 #[cfg(test)]
 mod model_format_tests {
     use super::*;
+    use shaiya_archive::Archive;
     use shaiya_core::{Cancel, Silent};
-    use shaiya_testkit::anim::{animated_3do, box_3de, box_3do, box_vani, mani_bytes};
+    use shaiya_testkit::anim::{animated_3do, box_3de, box_3do, box_vani, mani_bytes, moving_3de};
     use shaiya_testkit::{tga_stub, SahBuilder, TempDir};
 
     fn open(d: &TempDir, files: &[(&str, Vec<u8>)]) -> Archive {
@@ -1304,7 +1336,7 @@ mod model_format_tests {
     }
 
     fn pv(a: &Archive, path: &str) -> PreviewData {
-        make_preview(a, a.index().get(path).unwrap(), path, false, 0, &Job::silent()).unwrap()
+        make_preview(a, path, false, 0, &Job::silent()).unwrap()
     }
 
     struct Played {
@@ -1381,7 +1413,7 @@ mod model_format_tests {
         assert_eq!((p.frames.frames.len(), p.end_key, p.unit, p.rate, p.choices), (11, 10, "frame", 20.0, 0));
         assert_eq!(p.header[0], "3DO mesh: 8 vertices, 12 triangles");
         assert_eq!(p.header[1], "11 frames at 20 per second (inferred from the file; not checked in the game)");
-        assert_eq!(p.notes, ["the file names the texture box.tga; textures are not looked up (shown in plain grey)"]);
+        assert_eq!(p.notes, ["texture box.tga is not in the archive; drawn grey"]);
         assert!(p.frames.frames.iter().all(|f| drawn(f) > 0));
         assert!(p.frames.frames[0] != p.frames.frames[10], "the frames differ");
         // a framed mesh with a rate that is not positive plays at the fallback
@@ -1403,26 +1435,30 @@ mod model_format_tests {
                 assert_eq!(header, "3DO mesh: 8 vertices, 12 triangles");
                 assert_eq!((width, height, rgba.len()), (480, 440, 480 * 440 * 4));
                 assert!(rgba.chunks(4).any(|p| p[3] == 255) && missing.is_empty());
-                assert!(notes.is_empty(), "the box names no texture and has no frames: {notes:?}");
+                assert_eq!(notes, [preview_tex::NOT_LISTED], "the box names no texture and no list names one");
             }
             other => panic!("{other:?}"),
         }
     }
 
     #[test]
-    fn a_3de_preview_lists_its_frames_without_playing_them() {
+    fn a_3de_preview_plays_its_frames_and_draws_a_missing_texture_grey() {
         let d = TempDir::new("w2bx-3de");
-        let a = open(&d, &[("Effect/3DE/a.3de", box_3de(Some(4))), ("Effect/3DE/b.3de", box_3de(Some(0))), ("Effect/3DE/c.3de", box_3de(None))]);
+        let a = open(&d, &[("Effect/3DE/a.3de", moving_3de(4)), ("Effect/3DE/b.3de", box_3de(Some(0))), ("Effect/3DE/c.3de", box_3de(None))]);
+        // a file with frames plays them (four pictures); the texture fx.tga is not in this archive
+        let p = played(pv(&a, "Effect/3DE/a.3de"));
+        assert_eq!((p.frames.frames.len(), p.unit, p.rate, p.end_key, p.choices), (4, "frame", 30.0, 3, 0));
+        assert_eq!(p.header[0], "Effect mesh: 8 vertices, 12 triangles");
+        assert_eq!(p.header[1], "4 frames, played as positions (inferred) at 30 frames per second (the file stores no rate)");
+        assert!(p.notes.iter().any(|n| n == preview_models::EFFECT_NOTE) && p.notes.iter().any(|n| n == "texture fx.tga is not in the archive; drawn grey"), "{:?}", p.notes);
+        assert!(p.frames.frames.iter().all(|f| drawn(f) > 0) && p.frames.frames[0] != p.frames.frames[3]);
+        // no frames and the static layout stay single pictures
         let model = |p: &str| match pv(&a, p) {
             PreviewData::Model { header, notes, rgba, .. } => (header, notes, rgba.len()),
-            other => panic!("{p}: {other:?} (a .3DE is shown as a model picture, never played)"),
+            other => panic!("{p}: {other:?}"),
         };
-        let (h, notes, px) = model("Effect/3DE/a.3de");
-        assert_eq!(h, "Effect mesh: 8 vertices, 12 triangles");
-        assert_eq!(notes[0], "4 frames (not played: their meaning is inferred)");
-        assert!(notes.iter().any(|n| n.contains("fx.tga") && n.contains("not looked up")), "{notes:?}");
-        assert_eq!(px, 480 * 440 * 4);
-        assert_eq!(model("Effect/3DE/b.3de").1[0], "0 frames");
+        let (h, notes, px) = model("Effect/3DE/b.3de");
+        assert_eq!((h.as_str(), notes[0].as_str(), px), ("Effect mesh: 8 vertices, 12 triangles", "0 frames", 480 * 440 * 4));
         assert_eq!(model("Effect/3DE/c.3de").1[0], "no frame block: the file ends after the faces");
     }
 
@@ -1516,10 +1552,10 @@ mod model_format_tests {
         let job = Job::new(&Silent, cancel.clone());
         cancel.cancel();
         for p in ["Entity/Building/b.VANI", "Item/3DO/arrow.3DO"] {
-            let e = make_preview(&a, a.index().get(p).unwrap(), p, false, 0, &job).unwrap_err();
+            let e = make_preview(&a, p, false, 0, &job).unwrap_err();
             assert!(matches!(e, Error::Cancelled), "{p}: {e:?}");
             let data = a.read_entry(a.index().get(p).unwrap()).unwrap();
-            let made = if p.ends_with("VANI") { preview_models::vani_preview(&a, &data, p, &job) } else { preview_models::m3do_preview(&data, p, &job) };
+            let made = if p.ends_with("VANI") { preview_models::vani_preview(&a, &data, p, &job) } else { preview_models::m3do_preview(&a, &data, p, &TextureIndexCache::default(), &Look::default(), &job) };
             assert!(made.is_err(), "{p}");
         }
     }

@@ -124,7 +124,7 @@ impl ToolkitApp {
             ("health", 1) => self.open_health(Some(CLIENT_NAME), cx),
             ("map-preview", 1) => self.archive.select_path("world/7.wld", cx),
             ("model-preview", 1) => self.archive.select_path("Entity/Building/demo-box.smod", cx),
-            ("anim-preview", 1) => self.archive.select_path("Demo/ANI/demo_wave.ANI", cx),
+            ("anim-preview", 1) => self.archive.select_path("Monster/ANI/demo_wave.ANI", cx),
             // the preview is ready now: pause the player at key 30 (Bones is on by default)
             ("anim-preview", 2) => {
                 if !self.archive.pause_anim_at(ANIM_SHOT_KEY) {

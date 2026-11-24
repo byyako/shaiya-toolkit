@@ -485,9 +485,21 @@ pub struct PreviewState {
     pub error: Option<String>,
     /// The meshes an `.ANI` preview is drawn on (back to the default when another row is selected).
     pub anim_mesh: MeshChoice,
+    /// Whether models are drawn with their textures, and which of the textures a list names for a `.3DC` (0 = the default; another row resets it).
+    pub textured: bool,
+    pub texture_pick: usize,
     pub player: AnimPlayer,
     /// The one texture of the `.ANI` frame on screen, with the frame it shows.
     anim_tex: Option<(usize, egui::TextureHandle)>,
+}
+
+/// The "Textures" check box of a model preview; true when it was changed (the preview is drawn again).
+fn textures_switch(textured: &mut bool, ui: &mut egui::Ui, cx: &mut ToolkitCx<'_>) -> bool {
+    let changed = ui.checkbox(textured, "Textures").changed();
+    if changed {
+        cx.settings.preview_textured = *textured;
+    }
+    changed
 }
 
 pub enum OpenSource {
@@ -623,6 +635,8 @@ impl ArchiveView {
                 goto: String::new(),
                 error: None,
                 anim_mesh: MeshChoice::Default,
+                textured: true,
+                texture_pick: 0,
                 player: AnimPlayer::default(),
                 anim_tex: None,
             },
@@ -1494,10 +1508,12 @@ impl ArchiveView {
         self.preview.handle = None;
         if self.preview.row != Some(row) {
             self.preview.anim_mesh = MeshChoice::Default;
+            self.preview.texture_pick = 0;
             self.preview.player = AnimPlayer { looping: cx.settings.preview_loop, show_bones: cx.settings.preview_bones, ..AnimPlayer::default() };
         }
         self.preview.fit = cx.settings.preview_fit;
         self.preview.alpha = cx.settings.preview_alpha;
+        self.preview.textured = cx.settings.preview_textured;
         self.preview.row = Some(row);
         self.preview.data = None;
         self.preview.error = None;
@@ -1508,8 +1524,9 @@ impl ArchiveView {
         let cache = l.mesh_cache.clone();
         let textures = l.texture_index.clone();
         let r = &l.rows[row];
-        let (entry, path, all, mesh) = (r.entry.clone(), r.path.clone(), self.preview.text_all, self.preview.anim_mesh.clone());
-        let h = cx.shell.tasks().spawn(TaskSpec { title: format!("Preview {}", r.name()), cancellable: true, exclusive: None }, move |job| preview::make_preview_with(&a, &entry, &path, all, 0, &mesh, &cache, &textures, job));
+        let (path, all, mesh) = (r.path.clone(), self.preview.text_all, self.preview.anim_mesh.clone());
+        let look = crate::preview_tex::Look { textured: self.preview.textured, texture: self.preview.texture_pick };
+        let h = cx.shell.tasks().spawn(TaskSpec { title: format!("Preview {}", r.name()), cancellable: true, exclusive: None }, move |job| preview::make_preview_look(&*a, &path, all, 0, &mesh, &cache, &textures, &look, job));
         self.preview.handle = Some(h);
     }
 
@@ -2394,6 +2411,9 @@ impl ArchiveView {
                 }
             }
             Some(data @ PreviewData::Anim { .. }) => {
+                if textures_switch(&mut self.preview.textured, ui, cx) {
+                    acts.push(Act::Open("texture-choice".into()));
+                }
                 if anim_view::draw(ui, &pal, &mut self.preview.player, data, &mut self.preview.anim_tex, &mut self.preview.anim_mesh) {
                     acts.push(Act::Open("anim-mesh".into()));
                 }
@@ -2401,8 +2421,26 @@ impl ArchiveView {
                 cx.settings.preview_bones = self.preview.player.show_bones;
             }
             Some(data @ PreviewData::Fields { .. }) => anim_view::draw_fields(ui, &pal, data),
-            Some(PreviewData::Model { header, missing, see_through, invisible, notes, rgba, .. }) => {
+            Some(PreviewData::Model { header, missing, see_through, invisible, notes, texture, rgba, .. }) => {
                 ui.label(header);
+                if let Some(t) = texture {
+                    ui.label(RichText::new(&t.line).color(pal.weak));
+                    if t.choices.len() > 1 {
+                        let mut pick = t.chosen;
+                        egui::ComboBox::from_id_salt("toolkit-texture-pick").selected_text(format!("Texture: {}", t.choices[t.chosen])).show_ui(ui, |ui| {
+                            for (i, label) in t.choices.iter().enumerate() {
+                                ui.selectable_value(&mut pick, i, label);
+                            }
+                        });
+                        if pick != t.chosen {
+                            self.preview.texture_pick = pick;
+                            acts.push(Act::Open("texture-choice".into()));
+                        }
+                    }
+                }
+                if textures_switch(&mut self.preview.textured, ui, cx) {
+                    acts.push(Act::Open("texture-choice".into()));
+                }
                 for note in notes {
                     ui.label(RichText::new(note).color(pal.weak));
                 }
@@ -2860,7 +2898,7 @@ impl ArchiveView {
                     }
                 }
                 Act::Open(what) => {
-                    if what == "reload-preview" || what == "anim-mesh" {
+                    if what == "reload-preview" || what == "anim-mesh" || what == "texture-choice" {
                         if let Some(r) = self.preview.row {
                             self.start_preview(r, cx);
                         }
@@ -2871,8 +2909,8 @@ impl ArchiveView {
                         if let (Some(off), Some(row)) = (v, self.preview.row) {
                             if let (Some(l), true) = (&self.loaded, true) {
                                 if let (Some(a), Some(r)) = (l.archive.clone(), l.rows.get(row)) {
-                                    let (entry, path) = (r.entry.clone(), r.path.clone());
-                                    let h = cx.shell.tasks().spawn(TaskSpec { title: "Preview".into(), cancellable: true, exclusive: None }, move |job| preview::make_preview(&a, &entry, &path, false, off, job));
+                                    let path = r.path.clone();
+                                    let h = cx.shell.tasks().spawn(TaskSpec { title: "Preview".into(), cancellable: true, exclusive: None }, move |job| preview::make_preview(&*a, &path, false, off, job));
                                     self.preview.handle = Some(h);
                                     self.preview.data = None;
                                 }

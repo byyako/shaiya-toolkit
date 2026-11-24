@@ -49,6 +49,10 @@ A `.3DC` mesh names no texture (the name is empty in 2,429 of the 2,431 `.3DC` f
 
 The alpha channel is described by the `.MLT` flag only: 0 is transparency and 1 is a glow; `.MON` and `.ITM` say nothing about it, and a texture of those lists is "unknown".
 
+### In the Toolkit
+
+The Archive tab draws a `.3DC` and the parts of an `.ANI` with the first texture their list names, a `.3DO` with its `.ITM` texture and a `.3DE` with its own texture from `Effect/DDS`. A texture whose `.MLT` flag is 1 is drawn with its alpha ignored (the list says the alpha is a glow: inferred); every other texture is cut out where its alpha is under half. A mesh no list names, or whose texture is not in the archive, is drawn grey, and a weak line says why. An `.ANI` decodes each distinct texture once. The record in "texture NAME from LIST (record N)" counts from 0. The picture is the toolkit's own drawing, not the game's renderer: the view is orthographic and the texture is read with the nearest texel in animations and with a bilinear blend in a still picture.
+
 On `us-108` (US EP4.5), read from the client files and measured by the opt-in test `the_us_client_texture_index_numbers` (validated offline):
 
 | List | Pairs | Mesh in own folder | Texture in own folder | Mesh elsewhere | Texture elsewhere | Mesh nowhere | Texture nowhere |

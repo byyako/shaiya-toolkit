@@ -1,11 +1,12 @@
 //! Previews of `.VANI`, `.MANI`, `.3DO` and `.3DE` files, built on the worker thread (see `preview::make_preview_with`). The pictures come
 //! from `shaiya_clientdata::render`; a file that does not read to its last byte is an error, which the caller shows as Failed with hex.
 
-use crate::preview::{FieldRow, MeshChoice, PreviewData};
-use shaiya_archive::Archive;
+use crate::preview::{file_name, FieldRow, MeshChoice, PreviewData, TextureIndexCache};
+use crate::preview_tex::{self, Look};
+use crate::source::FileSource;
 use shaiya_clientdata::mani::{ManiType, ManiValue};
 use shaiya_clientdata::mesh3de::De3Layout;
-use shaiya_clientdata::render::{self, MorphItem, MAX_ANIM_FRAMES};
+use shaiya_clientdata::render::{self, AlphaMode, MipImage, MorphItem, View, MAX_ANIM_FRAMES};
 use shaiya_core::Job;
 
 /// Playback speed when a file's own rate is not a positive number.
@@ -20,13 +21,20 @@ fn cancelled() -> shaiya_clientdata::Error {
 }
 
 /// A texture of the client's `Entity/Texture` folder by the `.smod` rule (the name as written, else the same stem as `.dds`, else `.tga`).
-fn archive_texture(archive: &Archive, job: &Job, name: &str) -> Option<shaiya_clientdata::Image> {
+fn archive_texture(src: &dyn FileSource, job: &Job, name: &str) -> Option<shaiya_clientdata::Image> {
     if job.check().is_err() {
         return None;
     }
-    let found = shaiya_clientdata::texture_candidates("Entity/Texture", name).into_iter().find_map(|c| archive.index().get(&c).map(|e| (c, e)));
-    let (c, e) = found?;
-    shaiya_clientdata::texture::decode(&archive.read_entry(e).ok()?, &c).ok()
+    let c = shaiya_clientdata::texture_candidates("Entity/Texture", name).into_iter().find(|c| src.has(c))?;
+    image_at(src, job, &c)
+}
+
+/// The texture file at the archive path `path`, decoded.
+fn image_at(src: &dyn FileSource, job: &Job, path: &str) -> Option<shaiya_clientdata::Image> {
+    if job.check().is_err() {
+        return None;
+    }
+    shaiya_clientdata::texture::decode(&src.read(path, preview_tex::TEXTURE_CAP, job).ok()?, path).ok()
 }
 
 fn prepared_note(step: f32, unit: &str) -> Option<String> {
@@ -34,7 +42,7 @@ fn prepared_note(step: f32, unit: &str) -> Option<String> {
 }
 
 /// The `.VANI` preview: the model's pictures, one per step, played at one step per `frame_ms` milliseconds (inferred).
-pub fn vani_preview(archive: &Archive, data: &[u8], path: &str, job: &Job) -> shaiya_clientdata::Result<PreviewData> {
+pub fn vani_preview(src: &dyn FileSource, data: &[u8], path: &str, job: &Job) -> shaiya_clientdata::Result<PreviewData> {
     let v = shaiya_clientdata::Vani::parse(data, path)?;
     let (verts, tris) = v.counts();
     let items: Vec<MorphItem> = v.items.iter().enumerate().map(|(k, it)| MorphItem { texture: v.texture_name(k), faces: &it.faces, uv: v.step_vertices(k, 0).iter().map(|x| x.uv).collect() }).collect();
@@ -42,7 +50,7 @@ pub fn vani_preview(archive: &Archive, data: &[u8], path: &str, job: &Job) -> sh
         &items,
         v.step_count,
         &mut |k, step| v.step_vertices(k, step).iter().map(|x| x.pos).collect(),
-        &mut |name| archive_texture(archive, job, name),
+        &mut |name| archive_texture(src, job, name),
         &mut || job.check().is_err(),
     )
     .ok_or_else(cancelled)?;
@@ -82,28 +90,69 @@ pub fn vani_preview(archive: &Archive, data: &[u8], path: &str, job: &Job) -> sh
     })
 }
 
-fn texture_note(name: &str) -> Option<String> {
-    (!name.is_empty()).then(|| format!("the file names the texture {name}; textures are not looked up (shown in plain grey)"))
+/// The texture a `.3DO` or `.3DE` is drawn with: its archive path (`None`: grey), the alpha rule, and the notes that say where it came from
+/// or why there is none.
+struct Picked {
+    path: Option<String>,
+    alpha: AlphaMode,
+    notes: Vec<String>,
 }
 
-fn rest_picture(vertices: &[([f32; 3], [f32; 2])], faces: &[[u16; 3]]) -> (u32, u32, Vec<u8>) {
+fn grey(note: impl Into<String>) -> Picked {
+    Picked { path: None, alpha: AlphaMode::Cutout, notes: vec![note.into()] }
+}
+
+/// The texture of the item model `path` (named `name` inside the file): the one its `.ITM` record names, else the file's own name in
+/// `Item/DDS`.
+fn pick_3do(src: &dyn FileSource, path: &str, name: &str, textures: &TextureIndexCache, look: &Look, job: &Job) -> shaiya_clientdata::Result<Picked> {
+    if !look.textured {
+        return Ok(grey(preview_tex::TEXTURES_OFF));
+    }
+    let built = textures.get_or_build(src, job).ok_or_else(cancelled)?;
+    if let Some(r) = built.0.for_mesh(path).first() {
+        let alpha = preview_tex::alpha_mode(r.alpha);
+        let line = format!("texture {} from {} (record {}); {}", file_name(&r.texture), r.list, r.record, preview_tex::alpha_words(r.alpha));
+        return Ok(if r.found { Picked { path: Some(r.texture.clone()), alpha, notes: vec![line] } } else { Picked { path: None, alpha, notes: vec![preview_tex::not_in_archive(&r.texture)] } });
+    }
+    let name = name.trim();
+    if name.is_empty() {
+        return Ok(grey(preview_tex::NOT_LISTED));
+    }
+    Ok(match shaiya_clientdata::texture_candidates("Item/DDS", name).into_iter().find(|c| src.has(c)) {
+        Some(c) => Picked { notes: vec![format!("texture {} (the name the model file holds; no list file names one); alpha: cut out", file_name(&c))], path: Some(c), alpha: AlphaMode::Cutout },
+        None => grey(preview_tex::not_in_archive(name)),
+    })
+}
+
+fn rest_picture(vertices: &[([f32; 3], [f32; 2])], faces: &[[u16; 3]], tex: Option<(&MipImage, AlphaMode)>) -> (u32, u32, Vec<u8>) {
     let pos: Vec<[f32; 3]> = vertices.iter().map(|v| v.0).collect();
     let uv: Vec<[f32; 2]> = vertices.iter().map(|v| v.1).collect();
-    match render::plain_mesh_picture(&pos, &uv, faces) {
+    match render::mesh_picture(&pos, &uv, faces, tex, View::DEFAULT) {
         Some(p) => (p.width as u32, p.height as u32, p.rgba),
         None => (0, 0, Vec::new()),
     }
 }
 
-/// The `.3DO` preview: the rest mesh in plain grey; a mesh with frames plays them at its frame rate (inferred).
-pub fn m3do_preview(data: &[u8], path: &str, job: &Job) -> shaiya_clientdata::Result<PreviewData> {
+/// The rest picture of a model with the texture `picked` names (decoded here; an unreadable one is noted and drawn grey).
+fn rest_with(src: &dyn FileSource, picked: &mut Picked, vertices: &[([f32; 3], [f32; 2])], faces: &[[u16; 3]], job: &Job) -> shaiya_clientdata::Result<(u32, u32, Vec<u8>)> {
+    let mip = picked.path.as_ref().and_then(|p| preview_tex::decode_mip(src, p, job));
+    job.check().map_err(|_| cancelled())?;
+    if let (Some(p), None) = (&picked.path, &mip) {
+        let note = preview_tex::unreadable(file_name(p));
+        picked.notes.push(note);
+    }
+    Ok(rest_picture(vertices, faces, mip.as_ref().map(|m| (m, picked.alpha))))
+}
+
+/// The `.3DO` preview: the rest mesh with its `.ITM` texture; a mesh with frames plays them (textured) at its frame rate (inferred).
+pub fn m3do_preview(src: &dyn FileSource, data: &[u8], path: &str, textures: &TextureIndexCache, look: &Look, job: &Job) -> shaiya_clientdata::Result<PreviewData> {
     let m = shaiya_clientdata::Mesh3do::parse(data, path)?;
     let (verts, tris) = m.counts();
     let first = format!("3DO mesh: {}, {}", n(verts, "vertex", "vertices"), n(tris, "triangle", "triangles"));
-    let mut notes: Vec<String> = texture_note(&m.texture_name()).into_iter().collect();
+    let mut picked = pick_3do(src, path, &m.texture_name(), textures, look, job)?;
     if m.frames.is_empty() {
-        let (width, height, rgba) = rest_picture(&m.vertices.iter().map(|x| (x.pos, x.uv)).collect::<Vec<_>>(), &m.faces);
-        return Ok(PreviewData::Model { header: first, missing: Vec::new(), see_through: Vec::new(), invisible: Vec::new(), notes, width, height, rgba });
+        let (width, height, rgba) = rest_with(src, &mut picked, &m.vertices.iter().map(|x| (x.pos, x.uv)).collect::<Vec<_>>(), &m.faces, job)?;
+        return Ok(PreviewData::Model { header: first, missing: Vec::new(), see_through: Vec::new(), invisible: Vec::new(), notes: picked.notes, texture: None, width, height, rgba });
     }
     let positive = m.frame_rate > 0;
     let rate = if positive { m.frame_rate as f32 } else { FALLBACK_RATE };
@@ -112,9 +161,13 @@ pub fn m3do_preview(data: &[u8], path: &str, job: &Job) -> shaiya_clientdata::Re
     } else {
         format!("{}, the file's rate ({}) is not a positive number; played at {FALLBACK_RATE} frames per second", n(m.frames.len(), "frame", "frames"), m.frame_rate)
     };
-    let items = [MorphItem { texture: String::new(), faces: &m.faces, uv: m.vertices.iter().map(|x| x.uv).collect() }];
-    let made = render::morph_frames(&items, m.frames.len(), &mut |_, f| m.frames[f].vertices.iter().map(|x| x.0).collect(), &mut |_| None, &mut || job.check().is_err()).ok_or_else(cancelled)?;
+    let items = [MorphItem { texture: picked.path.clone().unwrap_or_default(), faces: &m.faces, uv: m.vertices.iter().map(|x| x.uv).collect() }];
+    let made = render::morph_frames_with(&items, &[picked.alpha], m.frames.len(), View::DEFAULT, &mut |_, f| m.frames[f].vertices.iter().map(|x| x.0).collect(), &mut |name| image_at(src, job, name), &mut || job.check().is_err()).ok_or_else(cancelled)?;
     job.check().map_err(|_| cancelled())?;
+    let mut notes = picked.notes;
+    if let Some(name) = made.missing.first() {
+        notes.push(preview_tex::unreadable(file_name(name)));
+    }
     notes.extend(prepared_note(made.frames.step, "frame"));
     Ok(PreviewData::Anim {
         header: vec![first, second],
@@ -130,21 +183,66 @@ pub fn m3do_preview(data: &[u8], path: &str, job: &Job) -> shaiya_clientdata::Re
     })
 }
 
-/// The `.3DE` preview: the static mesh in plain grey, and how many frames the file holds (not played: their meaning is inferred). A file in
-/// neither known layout is an error (shown as Failed with its bytes).
-pub fn m3de_preview(data: &[u8], path: &str) -> shaiya_clientdata::Result<PreviewData> {
+/// The note every `.3DE` preview carries.
+pub const EFFECT_NOTE: &str = "blend mode and flip-book come from the .EFT: drawn plain with cut-out alpha";
+
+/// The `.3DE` preview: the mesh with its own texture from `Effect/DDS` (cut-out alpha), and the frames of the standard layout played as
+/// positions (inferred) at 30 frames per second (the file stores no rate). A file in neither known layout is an error (shown as Failed
+/// with its bytes).
+pub fn m3de_preview(src: &dyn FileSource, data: &[u8], path: &str, textures: &TextureIndexCache, look: &Look, job: &Job) -> shaiya_clientdata::Result<PreviewData> {
     let m = shaiya_clientdata::Mesh3de::parse(data, path)?;
     let (verts, tris) = m.counts();
     let header = format!("Effect mesh: {}, {}", n(verts, "vertex", "vertices"), n(tris, "triangle", "triangles"));
+    let name = m.texture_name();
+    let mut picked = if !look.textured {
+        grey(preview_tex::TEXTURES_OFF)
+    } else if name.trim().is_empty() {
+        grey("the file names no texture; drawn grey")
+    } else {
+        let built = textures.get_or_build(src, job).ok_or_else(cancelled)?;
+        match built.0.for_effect_mesh(path, &name) {
+            Some(p) => Picked { notes: Vec::new(), path: Some(p), alpha: AlphaMode::Cutout },
+            None => grey(preview_tex::not_in_archive(name.trim())),
+        }
+    };
     let mut notes = Vec::new();
-    match m.layout() {
-        De3Layout::Static => notes.push("no frame block: the file ends after the faces".to_string()),
-        De3Layout::Standard if m.frame_count() == 0 => notes.push("0 frames".to_string()),
-        De3Layout::Standard => notes.push(format!("{} (not played: their meaning is inferred)", n(m.frame_count(), "frame", "frames"))),
+    let block = match (m.layout(), &m.block) {
+        (De3Layout::Standard, Some(b)) if !b.frames.is_empty() => Some(b),
+        (De3Layout::Static, _) => {
+            notes.push("no frame block: the file ends after the faces".to_string());
+            None
+        }
+        _ => {
+            notes.push("0 frames".to_string());
+            None
+        }
+    };
+    notes.push(EFFECT_NOTE.to_string());
+    let Some(block) = block else {
+        let (width, height, rgba) = rest_with(src, &mut picked, &m.vertices.iter().map(|x| (x.pos, x.uv)).collect::<Vec<_>>(), &m.faces, job)?;
+        notes.extend(picked.notes);
+        return Ok(PreviewData::Model { header, missing: Vec::new(), see_through: Vec::new(), invisible: Vec::new(), notes, texture: None, width, height, rgba });
+    };
+    let items = [MorphItem { texture: picked.path.clone().unwrap_or_default(), faces: &m.faces, uv: m.vertices.iter().map(|x| x.uv).collect() }];
+    let made = render::morph_frames_with(&items, &[picked.alpha], block.frames.len(), View::DEFAULT, &mut |_, f| block.frames[f].vertices.iter().map(|x| x.delta).collect(), &mut |name| image_at(src, job, name), &mut || job.check().is_err()).ok_or_else(cancelled)?;
+    job.check().map_err(|_| cancelled())?;
+    notes.extend(picked.notes);
+    if let Some(name) = made.missing.first() {
+        notes.push(preview_tex::unreadable(file_name(name)));
     }
-    notes.extend(texture_note(&m.texture_name()));
-    let (width, height, rgba) = rest_picture(&m.vertices.iter().map(|x| (x.pos, x.uv)).collect::<Vec<_>>(), &m.faces);
-    Ok(PreviewData::Model { header, missing: Vec::new(), see_through: Vec::new(), invisible: Vec::new(), notes, width, height, rgba })
+    notes.extend(prepared_note(made.frames.step, "frame"));
+    Ok(PreviewData::Anim {
+        header: vec![header, format!("{}, played as positions (inferred) at {FALLBACK_RATE} frames per second (the file stores no rate)", n(block.frames.len(), "frame", "frames"))],
+        issues: Vec::new(),
+        bones: Vec::new(),
+        end_key: block.frames.len().saturating_sub(1) as i32,
+        frames: made.frames,
+        mesh: MeshChoice::Skeleton,
+        mesh_choices: Vec::new(),
+        notes,
+        rate: FALLBACK_RATE,
+        unit: "frame",
+    })
 }
 
 /// The `.MANI` preview: a labelled table of the 20 fields; every meaning is inferred. The value is shown as a number; the stored bits of a

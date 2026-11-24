@@ -71,7 +71,7 @@ fn the_archive_scene_opens_the_demo_client_with_a_picture_selected() {
     assert_eq!(s.h.app.app.tab, Tab::Archive);
     assert!(s.h.app.app.archive.is_open() && s.h.app.app.archive.has_texture());
     let t = s.h.text();
-    assert!(t.contains(CLIENT_NAME) && t.contains("data.sah v0, 10 files"), "{t}");
+    assert!(t.contains(CLIENT_NAME) && t.contains("data.sah v0, 15 files"), "{t}");
     assert_no_path(&s, "archive");
 }
 
@@ -172,6 +172,31 @@ fn the_demo_animation_reads_and_has_a_matching_mesh() {
     let Some(shaiya_toolkit::preview::PreviewData::Anim { mesh_choices, .. }) = s.h.app.app.archive.preview_data() else { panic!("not an animation preview") };
     let labels: Vec<&str> = mesh_choices.iter().map(|(_, l)| l.as_str()).collect();
     assert_eq!(labels, ["Skeleton only", "Default parts (1)", "demo_arm.3DC"]);
+}
+
+#[test]
+fn the_anim_preview_scene_draws_the_demo_arm_with_its_texture() {
+    let mut s = scene("anim-preview");
+    wait_preview(&mut s);
+    let Some(shaiya_toolkit::preview::PreviewData::Anim { frames, notes, .. }) = s.h.app.app.archive.preview_data() else { panic!("not an animation preview") };
+    let px = |f: &[u8]| f.chunks(4).filter(|p| p[3] > 0 && (p[0] as i32 - p[2] as i32).abs() > 40).count();
+    assert!(px(&frames.frames[30]) > 0, "the texture of the monster list is on the arm");
+    assert!(notes.is_empty(), "{notes:?}");
+}
+
+#[test]
+fn the_demo_lists_name_the_demo_textures_in_their_own_folders() {
+    use shaiya_clientdata::{Found, TextureIndex};
+    let d = TempDir::new("w6-demo-index");
+    demo_client(d.path());
+    let a = shaiya_archive::Archive::open(d.path()).unwrap();
+    let paths: Vec<String> = a.index().visible().into_iter().map(|f| f.path).collect();
+    let (idx, report) = TextureIndex::build(&paths, &mut |p| a.index().get(p).and_then(|e| a.read_entry(e).ok()), &mut || false).unwrap();
+    assert_eq!((report.lists_read, report.lists_refused.len()), (2, 0));
+    for (mesh, tex) in [("Monster/3DC/demo_arm.3DC", "Monster/DDS/demo_arm.dds"), ("Item/3DO/demo_crate.3DO", "Item/DDS/demo_crate.dds")] {
+        let t = idx.for_mesh(mesh);
+        assert_eq!((t.len(), t[0].found, t[0].by, t[0].texture.as_str()), (1, true, Found::OwnFolder, tex));
+    }
 }
 
 #[test]

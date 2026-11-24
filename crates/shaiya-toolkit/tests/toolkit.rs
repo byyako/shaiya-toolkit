@@ -2719,7 +2719,7 @@ fn selecting_a_vani_shows_the_player_at_its_rate() {
 }
 
 #[test]
-fn selecting_a_framed_3do_plays_it_and_a_3de_shows_a_picture() {
+fn selecting_a_framed_3do_or_a_3de_with_frames_plays_it() {
     use shaiya_toolkit::preview::PreviewData;
     let mut w = models_world("t10-w2bx-3do");
     select_and_wait(&mut w, "Item/3DO/arrow.3DO");
@@ -2733,10 +2733,10 @@ fn selecting_a_framed_3do_plays_it_and_a_3de_shows_a_picture() {
     assert!(t.contains("3DO mesh: 8 vertices, 12 triangles") && t.contains("11 frames at 20 per second (inferred from the file; not checked in the game)"), "{t}");
     assert!(!t.contains("no preview yet"), "{t}");
     select_and_wait(&mut w, "Effect/3DE/fx.3de");
-    assert_eq!(w.h.app.app.archive.preview_kind(), Some("model"));
+    assert_eq!(w.h.app.app.archive.preview_kind(), Some("anim"), "a .3DE with frames plays them");
     assert!(w.h.app.app.archive.has_texture());
     let t = w.h.text();
-    assert!(t.contains("Effect mesh: 8 vertices, 12 triangles") && t.contains("4 frames (not played: their meaning is inferred)"), "{t}");
+    assert!(t.contains("Effect mesh: 8 vertices, 12 triangles") && t.contains("4 frames, played as positions (inferred) at 30 frames per second"), "{t}");
 }
 
 #[test]
@@ -3235,11 +3235,32 @@ fn the_animation_toggles_stay_when_another_animation_or_file_is_selected() {
 }
 
 #[test]
+fn the_textures_setting_decides_whether_a_model_preview_is_textured() {
+    let mut w = ani_world("w6-textures-setting");
+    assert!(w.h.app.tool_settings.preview_textured, "textures are on by default");
+    w.h.app.tool_settings.preview_textured = false;
+    with_cx(&mut w.h, |app, cx| app.archive.select_path("Character/Human/3DC/huwm_torso001.3DC", cx));
+    assert!(preview_ready(&mut w.h));
+    w.h.frames(3);
+    assert!(!w.h.app.app.archive.preview.textured);
+    let Some(shaiya_toolkit::preview::PreviewData::Model { notes, .. }) = w.h.app.app.archive.preview_data() else { panic!("not a model preview") };
+    assert!(notes.iter().any(|n| n == shaiya_toolkit::preview_tex::TEXTURES_OFF), "{notes:?}");
+    let t = w.h.text();
+    assert!(t.contains("Textures") && t.contains("textures are turned off"), "{t}");
+    // on again: the note about the missing list file takes its place
+    w.h.app.tool_settings.preview_textured = true;
+    with_cx(&mut w.h, |app, cx| app.archive.select_path("Character/Human/3DC/huwm_torso001.3DC", cx));
+    assert!(preview_ready(&mut w.h));
+    let Some(shaiya_toolkit::preview::PreviewData::Model { notes, .. }) = w.h.app.app.archive.preview_data() else { panic!("not a model preview") };
+    assert!(notes.iter().any(|n| n == shaiya_toolkit::preview_tex::NOT_LISTED), "{notes:?}");
+}
+
+#[test]
 fn an_old_settings_file_without_the_preview_fields_still_loads() {
     let old = r#"{"tab":"archive","last_client":"US test","tree_width":210.0,"preview_width":400.0,"columns":[100.0],"show_shadowed":true,"text_encoding":"UTF-8","extract_keep_times":false,"keys":{}}"#;
     let s: ToolkitSettings = serde_json::from_str(old).unwrap();
     assert_eq!((s.preview_width, s.tree_width, s.show_shadowed, s.extract_keep_times), (400.0, 210.0, true, false), "the old fields are read");
-    assert!(s.preview_loop && s.preview_bones && s.preview_fit && s.preview_alpha, "the new ones take their defaults");
+    assert!(s.preview_loop && s.preview_bones && s.preview_fit && s.preview_alpha && s.preview_textured, "the new ones take their defaults");
     // the same through a data folder
     let data = TempDir::new("t11-w10-old");
     let h = Harness::<ToolkitApp>::new(shaiya_ui::ShellOptions { data_dir: Some(data.path().to_path_buf()), ..Default::default() });
@@ -3256,7 +3277,7 @@ fn an_old_settings_file_without_the_preview_fields_still_loads() {
 
 #[test]
 fn the_preview_settings_round_trip() {
-    let s = ToolkitSettings { preview_width: 512.5, preview_loop: false, preview_bones: false, preview_fit: false, preview_alpha: false, ..Default::default() };
+    let s = ToolkitSettings { preview_width: 512.5, preview_loop: false, preview_bones: false, preview_fit: false, preview_alpha: false, preview_textured: false, ..Default::default() };
     let back: ToolkitSettings = serde_json::from_str(&serde_json::to_string(&s).unwrap()).unwrap();
     assert_eq!(back, s);
 }

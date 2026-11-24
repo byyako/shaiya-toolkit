@@ -1,5 +1,5 @@
 //! A synthetic client folder for screenshots and for the tests of the screenshot scenes. Every byte is made up here: neutral names, a
-//! gradient texture, a box model, a hill-shaped map, a three-bone arm animation and its mesh. It holds no game data and no game art.
+//! gradient texture, a box model, a hill-shaped map, a three-bone arm animation with its mesh and a checker texture, and a crate model; the list files that pair them. It holds no game data and no game art.
 
 use crate::{bmp_stub, tga_stub, SahBuilder};
 use std::path::Path;
@@ -18,8 +18,13 @@ pub const DEMO_ARCHIVE_FILES: &[&str] = &[
     "world/7.wld",
     "Demo/readme.txt",
     "Demo/notes.txt",
-    "Demo/ANI/demo_wave.ANI",
-    "Demo/3DC/demo_arm.3DC",
+    "Monster/demo.MON",
+    "Monster/ANI/demo_wave.ANI",
+    "Monster/3DC/demo_arm.3DC",
+    "Monster/DDS/demo_arm.dds",
+    "Item/demo.ITM",
+    "Item/3DO/demo_crate.3DO",
+    "Item/DDS/demo_crate.dds",
 ];
 
 /// The pack time (Unix seconds, 2010-01-01 00:00 UTC) of every file of the demo archive.
@@ -148,6 +153,21 @@ pub fn demo_box_smod() -> Vec<u8> {
     d
 }
 
+/// The texture of the demo arm: a checker of 8-pixel squares, orange and teal (uncompressed; generated here, not art).
+pub fn demo_arm_texture() -> Vec<u8> {
+    crate::tex::checker(64, 8, [230, 150, 40], [30, 140, 160])
+}
+
+/// A monster list file with one made-up record whose one part is the demo arm and its texture.
+pub fn demo_mon() -> Vec<u8> {
+    crate::lists::mon_bytes(&[crate::lists::MonRec { name: "Demo Arm", flag: 0, slots: [""; 17], parts: &[("demo_arm.3DC", "demo_arm.dds")], size: 1.0, attachments: &[] }])
+}
+
+/// An item list file with one made-up record: the demo crate model and its texture.
+pub fn demo_itm() -> Vec<u8> {
+    crate::lists::itm_bytes(&["demo_crate.3DO"], &["demo_crate.dds"], &[crate::lists::ItmRec { words: [0; 6], extra: None }])
+}
+
 /// Writes a synthetic client into `dir` (which must exist; it is not emptied):
 ///
 /// * `data.sah` and `data.saf` with [`DEMO_ARCHIVE_FILES`] and some unused space at the end of `data.saf`,
@@ -167,8 +187,13 @@ pub fn demo_client(dir: &Path) -> Vec<String> {
         ("world/7.wld", demo_wld()),
         ("Demo/readme.txt", readme.to_vec()),
         ("Demo/notes.txt", notes.to_vec()),
-        ("Demo/ANI/demo_wave.ANI", crate::anim::arm_ani(60)),
-        ("Demo/3DC/demo_arm.3DC", crate::anim::arm_mesh_3dc()),
+        ("Monster/demo.MON", demo_mon()),
+        ("Monster/ANI/demo_wave.ANI", crate::anim::arm_ani(60)),
+        ("Monster/3DC/demo_arm.3DC", crate::anim::arm_mesh_3dc()),
+        ("Monster/DDS/demo_arm.dds", demo_arm_texture()),
+        ("Item/demo.ITM", demo_itm()),
+        ("Item/3DO/demo_crate.3DO", crate::anim::box_3do()),
+        ("Item/DDS/demo_crate.dds", crate::tex::dds_dxt1_solid(8, 8, 0xFD20)),
     ];
     debug_assert_eq!(files.iter().map(|(p, _)| *p).collect::<Vec<_>>(), DEMO_ARCHIVE_FILES);
     let mut b = SahBuilder::new(0);
@@ -219,7 +244,7 @@ mod tests {
     #[test]
     fn the_demo_archive_has_only_neutral_folders_and_made_up_item_names() {
         for p in DEMO_ARCHIVE_FILES {
-            assert!(p.starts_with("Interface/") || p.starts_with("Item/") || p.starts_with("Entity/") || p.starts_with("world/") || p.starts_with("Demo/"), "{p}");
+            assert!(p.starts_with("Interface/") || p.starts_with("Item/") || p.starts_with("Entity/") || p.starts_with("world/") || p.starts_with("Demo/") || p.starts_with("Monster/"), "{p}");
         }
         let items = String::from_utf8_lossy(&demo_item_sdata()).to_string();
         assert!(items.contains("Demo Training Sword") && items.contains("made-up"));

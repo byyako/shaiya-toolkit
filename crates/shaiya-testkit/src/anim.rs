@@ -449,3 +449,15 @@ pub fn box_3de(frames: Option<i32>) -> Vec<u8> {
     });
     mesh3de_bytes(&Mesh3deSpec { texture: b"fx.tga\0".to_vec(), vertices, faces, block })
 }
+
+/// A `.3DE` of a unit box whose frame entries are absolute positions (the box with its top four vertices raised by `frame / 10` in frame
+/// `frame`), keys 0, 1, ...; the texture name is `fx.tga`.
+pub fn moving_3de(frames: i32) -> Vec<u8> {
+    let (corners, faces) = unit_box();
+    let vertices: Vec<Vert3deSpec> = corners.iter().map(|p| Vert3deSpec { pos: *p, flag: -1, uv: [p[0], p[2]] }).collect();
+    let block = Block3deSpec {
+        max_key: frames.max(1) - 1,
+        frames: (0..frames).map(|f| (f, corners.iter().map(|p| ([p[0], p[1] + if p[1] > 0.5 { f as f32 / 10.0 } else { 0.0 }, p[2]], [p[0], p[2]])).collect())).collect(),
+    };
+    mesh3de_bytes(&Mesh3deSpec { texture: b"fx.tga\0".to_vec(), vertices, faces, block: Some(block) })
+}
