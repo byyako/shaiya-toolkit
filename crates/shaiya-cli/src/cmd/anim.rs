@@ -20,6 +20,8 @@ use std::cell::Cell;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
+mod gltf;
+
 #[derive(clap::Subcommand)]
 pub enum Cmd {
     /// Describe animation and model files: .ANI (bones, keys, validation), .3DC, .VANI, .3DO and .3DE (counts, frame rates), .MANI (fields, every meaning inferred)
@@ -52,7 +54,13 @@ pub enum Cmd {
     /// named data.sah, a `..` part), 4 (an output that exists, a second input with the same output name, or a folder that would be inside a
     /// client folder or cannot be made) and 5 (a bug), else 0. The last line says `wrote N of M (K failed)`.
     ///
-    /// Example: shaiya anim export "character/human/ani/*" --from "@us" --out-dir json-out
+    /// With --format gltf or glb the file goes out as glTF 2.0 instead (.ANI alone, .3DC with --anim ANI files, .3DO, .3DE; -o ends in .gltf and a
+    /// .bin is written next to it, or ends in .glb). glTF, OBJ and BVH are a lossy view of the game file: the game file's own round trip (JSON)
+    /// stays byte for byte; an import builds a new file and runs the same checks as `shaiya anim import` before it writes. The result is checked
+    /// by the toolkit before it is written (structure, ranges, finite numbers, weights, quaternions and the skinned pose against the toolkit's
+    /// renderer); a file that cannot be written as glTF is exit 3 and the reason names the bone or vertex, a failed check is exit 5.
+    ///
+    /// Example: shaiya anim export character/human/3dc/huwm_torso001.3dc --from "@us" --format glb --anim character/human/ani/huwm_000_normal.ani -o torso.glb
     Export(ExportArgs),
     /// Compare the poses of two .ANI files: skeleton, end key and the bones whose pose differs
     ///
@@ -200,6 +208,29 @@ pub struct ExportArgs {
     /// Replace an existing output
     #[arg(long)]
     pub force: bool,
+    /// json (the default: the file's own lossless JSON), gltf (a .gltf and a .bin) or glb (one .glb file); glTF, OBJ and BVH are a lossy view of the game file
+    #[arg(long, value_enum, default_value = "json")]
+    pub format: ExportFormat,
+    /// glTF of a .3DC: an .ANI (a file, or with --from its path in the archive) that moves it; repeat for more animations of the same skeleton
+    #[arg(long = "anim", value_name = "ANI")]
+    pub anims: Vec<String>,
+    /// glTF: project what can be projected (a sheared, mirrored or NaN placement, keys that do not increase) instead of refusing the file
+    #[arg(long)]
+    pub allow_lossy: bool,
+    /// glTF: add a key at the animation's end key to every channel that stops earlier
+    #[arg(long)]
+    pub pad_end: bool,
+    /// glTF: write texture references as DIR/<name>.png (names only; the toolkit never writes or embeds a picture)
+    #[arg(long, value_name = "DIR")]
+    pub texture_uri_base: Option<String>,
+}
+
+/// What `export` writes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum)]
+pub enum ExportFormat {
+    Json,
+    Gltf,
+    Glb,
 }
 
 #[derive(clap::Args)]
@@ -1099,6 +1130,12 @@ fn same_bytes_check<'a>(want: &'a [u8], bug: &'a Cell<bool>) -> impl Fn(&Path) -
 }
 
 fn export(ctx: &Ctx, a: &ExportArgs, job: &shaiya_core::Job) -> Res {
+    if a.format == ExportFormat::Json && (!a.anims.is_empty() || a.allow_lossy || a.pad_end || a.texture_uri_base.is_some()) {
+        return Err(Fail::Usage("--anim, --allow-lossy, --pad-end and --texture-uri-base need --format gltf or glb".to_string()));
+    }
+    if a.format != ExportFormat::Json {
+        return gltf::run(ctx, a, job);
+    }
     match (&a.out, &a.out_dir) {
         (Some(_), Some(_)) => Err(Fail::Usage("-o and --out-dir cannot be used together".to_string())),
         (None, None) => Err(Fail::Usage("give -o OUT.json (one input) or --out-dir DIR".to_string())),
@@ -1638,7 +1675,7 @@ mod tests {
         });
         let job = shaiya_core::Job::new(&progress, cancel);
         let c = Ctx { data_dir: Some(base.join("data")), ..ctx() };
-        let args = ExportArgs { inputs: vec![src.to_string_lossy().into_owned()], from: None, out: None, out_dir: Some(out.clone()), force: false };
+        let args = ExportArgs { inputs: vec![src.to_string_lossy().into_owned()], from: None, out: None, out_dir: Some(out.clone()), force: false, format: ExportFormat::Json, anims: Vec::new(), allow_lossy: false, pad_end: false, texture_uri_base: None };
         let r = export_dir(&c, &args, &out, &job);
         assert!(matches!(r, Err(Fail::Error(Error::Cancelled))));
         let written = std::fs::read_dir(&out).unwrap().count();

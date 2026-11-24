@@ -3847,3 +3847,106 @@ fn queue_as_replacement_adds_one_pending_change_and_writes_nothing() {
     assert!(source.starts_with(&w.data_path) && !source.starts_with(w.client.path()), "staged in the Toolkit's data folder, not in a client");
     assert_eq!(files(&w), before, "nothing was written to the client");
 }
+
+// ------------------------------------------------------------------------------------------------ T12 W12: Export as glTF...
+
+fn gltf_done(w: &mut World) -> bool {
+    w.h.wait_until(WAIT, |h| !h.app.app.archive.is_exporting_gltf())
+}
+
+fn gltf_enabled(h: &Harness<ToolkitApp>) -> bool {
+    h.app.app.archive.commands().into_iter().find(|c| c.id == "archive-export-gltf").expect("the command is listed").enabled
+}
+
+#[test]
+fn exporting_an_ani_as_gltf_writes_the_gltf_and_its_bin() {
+    let mut w = ani_world("t12-w12-ani");
+    let out_dir = TempDir::new("t12-w12-ani-out");
+    let out = out_dir.path().join("x.gltf");
+    with_cx(&mut w.h, |app, cx| app.archive.select_path(ANI_PATH, cx));
+    assert!(preview_ready(&mut w.h));
+    assert!(gltf_enabled(&w.h), "one selected .ANI enables the command");
+    with_cx(&mut w.h, |app, cx| app.archive.export_gltf_to(&out, cx));
+    assert!(gltf_done(&mut w), "the export ends");
+    w.h.frames(2);
+    let json: serde_json::Value = serde_json::from_slice(&std::fs::read(&out).expect("the .gltf is written")).unwrap();
+    assert!(out_dir.path().join("x.bin").exists(), "the .bin is beside it");
+    assert_eq!(json["buffers"][0]["uri"], "x.bin");
+    assert_eq!(json["asset"]["extras"]["shaiya"]["source"], ANI_PATH);
+    assert_eq!(json["asset"]["extras"]["shaiya"]["layout"], "ani");
+    assert!(!json.to_string().contains(&out_dir.path().display().to_string()), "no folder path in the file");
+    let status = w.h.app.app.archive.status_line.clone();
+    assert!(status.starts_with("Exported huwm_117_test.ANI to ") && status.contains("lossy view"), "{status}");
+    assert!(w.h.app.shell.banner_details().is_none(), "no error was shown");
+    let mut names: Vec<String> = std::fs::read_dir(out_dir.path()).unwrap().flatten().map(|e| e.file_name().to_string_lossy().into_owned()).collect();
+    names.sort();
+    assert_eq!(names, vec!["x.bin".to_string(), "x.gltf".to_string()], "no temporary file stays");
+}
+
+#[test]
+fn an_ani_goes_out_on_the_mesh_the_mesh_box_chose_and_a_mesh_alone_as_glb() {
+    let mut w = ani_world("t12-w12-mesh");
+    let out_dir = TempDir::new("t12-w12-mesh-out");
+    let torso = "Character/Human/3DC/huwm_torso001.3DC".to_string();
+    // a mesh row: one .glb with the skin and no animation
+    with_cx(&mut w.h, |app, cx| app.archive.select_path(&torso, cx));
+    assert!(preview_ready(&mut w.h));
+    let glb = out_dir.path().join("torso.glb");
+    with_cx(&mut w.h, |app, cx| app.archive.export_gltf_to(&glb, cx));
+    assert!(gltf_done(&mut w));
+    let g = shaiya_clientdata::interchange::gltf_read::Gltf::from_glb(&std::fs::read(&glb).unwrap()).unwrap();
+    assert!(g.json.get("skins").is_some() && g.json.get("animations").is_none());
+    // an .ANI row with one mesh chosen in the Mesh box: the animation is on the mesh
+    with_cx(&mut w.h, |app, cx| app.archive.select_path(ANI_PATH, cx));
+    assert!(preview_ready(&mut w.h));
+    with_cx(&mut w.h, |app, cx| app.archive.choose_anim_mesh(shaiya_toolkit::preview::MeshChoice::One(torso.clone()), cx));
+    assert!(preview_ready(&mut w.h));
+    let both = out_dir.path().join("both.glb");
+    with_cx(&mut w.h, |app, cx| app.archive.export_gltf_to(&both, cx));
+    assert!(gltf_done(&mut w));
+    let g = shaiya_clientdata::interchange::gltf_read::Gltf::from_glb(&std::fs::read(&both).unwrap()).unwrap();
+    assert_eq!(g.json["animations"][0]["name"], "huwm_117_test");
+    assert_eq!(g.json["asset"]["extras"]["shaiya"]["source"], torso);
+    assert!(w.h.app.shell.banner_details().is_none(), "{:?}", w.h.app.shell.banner_details());
+}
+
+#[test]
+fn exporting_as_gltf_into_the_client_folder_or_to_a_wrong_name_is_refused() {
+    let mut w = ani_world("t12-w12-guard");
+    with_cx(&mut w.h, |app, cx| app.archive.select_path(ANI_PATH, cx));
+    assert!(preview_ready(&mut w.h));
+    let before = tree(w.client.path());
+    let inside = w.client_dir().join("x.glb");
+    with_cx(&mut w.h, |app, cx| app.archive.export_gltf_to(&inside, cx));
+    assert!(gltf_done(&mut w));
+    w.h.frames(2);
+    assert!(!inside.exists());
+    assert_eq!(tree(w.client.path()), before, "the client folder is as it was");
+    let d = w.h.app.shell.banner_details().expect("the error is shown").to_string();
+    assert!(d.contains("Choose a folder outside the client:"), "{d}");
+    let out_dir = TempDir::new("t12-w12-guard-out");
+    let wrong = out_dir.path().join("x.json");
+    with_cx(&mut w.h, |app, cx| app.archive.export_gltf_to(&wrong, cx));
+    assert!(!w.h.app.app.archive.is_exporting_gltf() && !wrong.exists());
+    // a stray .bin that is not from an earlier export of this name is not replaced
+    std::fs::write(out_dir.path().join("y.bin"), b"keep me").unwrap();
+    with_cx(&mut w.h, |app, cx| app.archive.export_gltf_to(&out_dir.path().join("y.gltf"), cx));
+    assert!(!w.h.app.app.archive.is_exporting_gltf() && !out_dir.path().join("y.gltf").exists());
+    assert_eq!(std::fs::read(out_dir.path().join("y.bin")).unwrap(), b"keep me");
+}
+
+#[test]
+fn the_gltf_command_is_disabled_for_other_files() {
+    let client = client_of("t12-w12-other", &[("tex/a.dds", b"DDS not really"), ("Monster/VANI/a.vani", b"not a vani")]);
+    let mut w = world("t12-w12-other");
+    let dir = client.path().to_path_buf();
+    add_saved(&mut w, "Other", &dir);
+    open_saved(&mut w, "Other", &dir);
+    assert!(!gltf_enabled(&w.h), "nothing is selected");
+    for p in ["tex/a.dds", "Monster/VANI/a.vani"] {
+        with_cx(&mut w.h, |app, cx| app.archive.select_path(p, cx));
+        assert!(preview_ready(&mut w.h));
+        assert!(!gltf_enabled(&w.h), "{p} is not one of the four kinds");
+        assert!(!w.h.app.app.archive.offers_export_gltf(p));
+    }
+}

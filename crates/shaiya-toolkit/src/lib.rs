@@ -9,6 +9,7 @@ pub mod apply_tab;
 pub mod archive_view;
 pub mod clients;
 pub mod explain;
+pub mod export_interchange;
 pub mod export_json;
 pub mod health;
 pub mod inspect;

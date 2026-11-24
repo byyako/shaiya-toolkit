@@ -9,7 +9,7 @@ use std::process::Command;
 
 const MAX_SIZE: u64 = 1 << 20;
 const FIXTURE_MAX: u64 = 64 << 10;
-const BAD_EXTENSIONS: &[&str] = &["sah", "saf", "sdata", "exe", "dll", "patch", "pdb", "mdf", "bak", "ani", "3dc", "3do", "3de", "vani", "mani", "smod", "mlt", "mon", "itm"];
+const BAD_EXTENSIONS: &[&str] = &["sah", "saf", "sdata", "exe", "dll", "patch", "pdb", "mdf", "bak", "ani", "3dc", "3do", "3de", "vani", "mani", "smod", "mlt", "mon", "itm", "gltf", "glb", "bvh", "obj"];
 const SEED_SIGNATURE: &[u8] = b"0001CBCEBC5B2784D3FC9A2A9DB84D1C3FEB6E99";
 
 const MODEL_EXTENSIONS: [&str; 6] = ["ani", "3dc", "vani", "mani", "3do", "3de"];
@@ -126,6 +126,15 @@ mod tests {
         assert_eq!(check_file("a/innocent.txt", 10, b"MZ\x90\0", &none).len(), 1);
         // the xtask sources may contain these markers
         assert!(check_file("xtask/src/guard.rs", 10, b"MZ", &none).is_empty());
+    }
+
+    #[test]
+    fn interchange_exports_of_game_files_are_refused() {
+        for ext in ["gltf", "glb", "bvh", "obj"] {
+            for name in [format!("a/b.{ext}"), format!("a/B.{}", ext.to_ascii_uppercase())] {
+                assert_eq!(check_file(&name, 10, b"x", &none).len(), 1, "{name}");
+            }
+        }
     }
 
     #[test]

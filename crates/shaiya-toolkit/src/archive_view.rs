@@ -579,6 +579,7 @@ pub struct ArchiveView {
     pub compare: Option<ComparePanel>,
     extract: Option<ExtractFlow>,
     json_exports: crate::export_json::JsonExports,
+    gltf_exports: crate::export_interchange::InterchangeExports,
     folder_exports: crate::export_json::FolderExports,
     /// The "Compare with..." window of one `.ANI` (see `anim_compare`).
     anim_compare: Option<crate::anim_compare::AnimCompare>,
@@ -692,6 +693,7 @@ impl ArchiveView {
             compare: None,
             extract: None,
             json_exports: Default::default(),
+            gltf_exports: Default::default(),
             folder_exports: Default::default(),
             anim_compare: None,
             anim_edit: None,
@@ -877,6 +879,9 @@ impl ArchiveView {
         }
         self.poll_extract(cx);
         if let Some(line) = self.json_exports.poll(cx) {
+            self.status_line = line;
+        }
+        if let Some(line) = self.gltf_exports.poll(cx) {
             self.status_line = line;
         }
         if let Some(line) = self.folder_exports.poll(cx) {
@@ -1844,6 +1849,46 @@ impl ArchiveView {
         (self.selected_folder.is_none() && l.rows.get(i).is_some_and(|r| crate::export_json::is_model_path(&r.path))).then_some(i)
     }
 
+    /// The one selected file when it is an `.ANI`, `.3DC`, `.3DO` or `.3DE` (what "Export as glTF..." works on).
+    fn export_gltf_row(&self) -> Option<usize> {
+        let l = self.loaded.as_ref().filter(|l| l.archive.is_some())?;
+        let mut it = self.selected.iter();
+        let (&i, None) = (it.next()?, it.next()) else { return None };
+        (self.selected_folder.is_none() && l.rows.get(i).is_some_and(|r| crate::export_interchange::is_gltf_path(&r.path))).then_some(i)
+    }
+
+    fn export_gltf_row_to(&mut self, row: usize, out: PathBuf, cx: &mut ToolkitCx<'_>) {
+        let Some(l) = &self.loaded else { return };
+        let (Some(a), Some(r)) = (l.archive.clone(), l.rows.get(row)) else { return };
+        let (entry, path) = (r.entry.clone(), r.path.clone());
+        let dir = l.client_dir.clone();
+        // an animation goes out on the one mesh the Mesh box shows, else alone
+        let mesh = match (&self.preview.anim_mesh, is_ani_path(&path)) {
+            (MeshChoice::One(m), true) => Some(m.clone()),
+            _ => None,
+        };
+        self.gltf_exports.start(a, entry, path, mesh, out, dir.as_deref(), cx);
+    }
+
+    /// Whether the row menu of the file at `path` offers "Export as glTF..." (needs the data.saf and one of the four kinds).
+    #[doc(hidden)]
+    pub fn offers_export_gltf(&self, path: &str) -> bool {
+        self.loaded.as_ref().is_some_and(|l| l.archive.is_some()) && crate::export_interchange::is_gltf_path(path) && self.find_row(path).is_some()
+    }
+
+    /// Test hook: "Export as glTF..." for the selected file, writing to `path` (`.gltf` or `.glb`) without the save dialog.
+    #[doc(hidden)]
+    pub fn export_gltf_to(&mut self, path: &Path, cx: &mut ToolkitCx<'_>) {
+        if let Some(i) = self.export_gltf_row() {
+            self.export_gltf_row_to(i, path.to_path_buf(), cx);
+        }
+    }
+
+    #[doc(hidden)]
+    pub fn is_exporting_gltf(&self) -> bool {
+        self.gltf_exports.is_running()
+    }
+
     fn export_json_row_to(&mut self, row: usize, out: PathBuf, cx: &mut ToolkitCx<'_>) {
         let Some(l) = &self.loaded else { return };
         let (Some(a), Some(r)) = (l.archive.clone(), l.rows.get(row)) else { return };
@@ -2230,6 +2275,7 @@ enum Act {
     Open(String),
     Extract { all: bool, flat: bool },
     ExportJson(usize),
+    ExportGltf(usize),
     ExportFolderJson(usize),
     CompareAni(usize),
     EditAni(usize),
@@ -2286,6 +2332,7 @@ impl ArchiveView {
             c("archive-extract", "Extract selected files...", Some(K::new(M::COMMAND, Key::E)), open && (!self.selected.is_empty() || self.selected_folder.is_some())),
             c("archive-extract-all", "Extract all shown files...", Some(K::new(M::COMMAND | M::SHIFT, Key::E)), open),
             c("archive-export-json", "Export as JSON...", None, self.export_json_row().is_some()),
+            c("archive-export-gltf", "Export as glTF...", None, self.export_gltf_row().is_some()),
             c("archive-add", "Add files to the archive...", Some(K::new(M::NONE, Key::Insert)), edit),
             c("archive-remove", "Queue removal of selected files", Some(K::new(M::NONE, Key::Delete)), edit && !self.selected.is_empty()),
             c("archive-apply", "Apply pending changes to the client...", Some(K::new(M::COMMAND, Key::Enter)), edit && !busy && writes && !self.pending.is_empty()),
@@ -2313,6 +2360,7 @@ impl ArchiveView {
             "archive-extract" => Some(Act::Extract { all: false, flat: false }),
             "archive-extract-all" => Some(Act::Extract { all: true, flat: false }),
             "archive-export-json" => self.export_json_row().map(Act::ExportJson),
+            "archive-export-gltf" => self.export_gltf_row().map(Act::ExportGltf),
             "archive-add" => Some(Act::AddFiles),
             "archive-remove" => Some(Act::QueueRemove),
             "archive-apply" => Some(Act::ApplyPending),
@@ -2629,10 +2677,14 @@ impl ArchiveView {
                                 ("Remove", MenuChoice::Remove),
                                 ("Decrypt to file...", MenuChoice::Decrypt),
                                 ("Export as JSON...", MenuChoice::ExportJson),
+                                ("Export as glTF...", MenuChoice::ExportGltf),
                                 ("Compare with...", MenuChoice::CompareWith),
                                 ("Edit animation...", MenuChoice::EditAnimation),
                             ] {
                                 if matches!(choice, MenuChoice::ExportJson) && !matches!(v, ViewRow::File(i) if l.archive.is_some() && crate::export_json::is_model_path(&l.rows[i].path)) {
+                                    continue;
+                                }
+                                if matches!(choice, MenuChoice::ExportGltf) && !matches!(v, ViewRow::File(i) if l.archive.is_some() && crate::export_interchange::is_gltf_path(&l.rows[i].path)) {
                                     continue;
                                 }
                                 if matches!(choice, MenuChoice::EditAnimation) && !matches!(v, ViewRow::File(i) if l.archive.is_some() && is_ani_path(&l.rows[i].path)) {
@@ -2641,7 +2693,11 @@ impl ArchiveView {
                                 if matches!(choice, MenuChoice::CompareWith) && !matches!(v, ViewRow::File(i) if l.archive.is_some() && is_ani_path(&l.rows[i].path)) {
                                     continue;
                                 }
-                                if ui.button(label).clicked() {
+                                let mut b = ui.button(label);
+                                if matches!(choice, MenuChoice::ExportGltf) {
+                                    b = b.on_hover_text(crate::export_interchange::LOSSY_SENTENCE);
+                                }
+                                if b.clicked() {
                                     menu = Some((vi, choice));
                                     ui.close();
                                 }
@@ -2705,6 +2761,11 @@ impl ArchiveView {
                 MenuChoice::ExportJson => {
                     if let ViewRow::File(i) = self.view[vi] {
                         acts.push(Act::ExportJson(i));
+                    }
+                }
+                MenuChoice::ExportGltf => {
+                    if let ViewRow::File(i) = self.view[vi] {
+                        acts.push(Act::ExportGltf(i));
                     }
                 }
                 MenuChoice::CompareWith => {
@@ -3343,6 +3404,13 @@ impl ArchiveView {
                         self.export_json_row_to(i, out, cx);
                     }
                 }
+                Act::ExportGltf(i) => {
+                    let name = self.loaded.as_ref().and_then(|l| l.rows.get(i)).map(|r| r.name().to_string());
+                    cx.shell.status(crate::export_interchange::LOSSY_SENTENCE);
+                    if let Some(out) = name.and_then(|n| cx.shell.save_file("export-gltf", &crate::export_interchange::default_name(&n), &[("glTF with a .bin beside it", &["gltf"]), ("glTF binary (one file)", &["glb"])])) {
+                        self.export_gltf_row_to(i, out, cx);
+                    }
+                }
                 Act::AddFiles => {
                     let files = cx.shell.pick_files("add", &[("All files", &["*"])]);
                     if !files.is_empty() {
@@ -3455,6 +3523,7 @@ enum MenuChoice {
     Remove,
     Decrypt,
     ExportJson,
+    ExportGltf,
     ExportFolderJson,
     CompareWith,
     EditAnimation,
