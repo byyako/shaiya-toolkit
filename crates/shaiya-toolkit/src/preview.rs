@@ -311,6 +311,34 @@ impl MeshInfoCache {
     }
 }
 
+/// The texture index of one loaded archive (see [`shaiya_clientdata::TextureIndex`]): built lazily by the first preview worker that
+/// needs it and then shared. A new cache is made whenever an archive is loaded or reloaded, so applied changes are never served stale.
+/// A build that was cancelled leaves nothing behind.
+#[derive(Clone, Debug, Default)]
+pub struct TextureIndexCache(Arc<Mutex<Option<BuiltIndex>>>);
+
+/// The index and what building it read.
+pub type BuiltIndex = Arc<(shaiya_clientdata::TextureIndex, shaiya_clientdata::IndexReport)>;
+
+impl TextureIndexCache {
+    /// The index, built from the list files of `archive` on this thread when nobody has built it yet; `None` when `job` was cancelled
+    /// (nothing is kept then). Two workers that build at the same time both finish; the first result stays.
+    pub fn get_or_build(&self, archive: &Archive, job: &Job) -> Option<BuiltIndex> {
+        if let Some(done) = self.0.lock().unwrap_or_else(|e| e.into_inner()).clone() {
+            return Some(done);
+        }
+        let paths: Vec<String> = archive.index().visible().into_iter().map(|f| f.path).collect();
+        let built = shaiya_clientdata::TextureIndex::build(&paths, &mut |p| archive.index().get(p).and_then(|e| archive.read_entry(e).ok()), &mut || job.check().is_err())?;
+        let mut slot = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        Some(slot.get_or_insert_with(|| Arc::new(built)).clone())
+    }
+
+    /// Whether the index has been built.
+    pub fn is_built(&self) -> bool {
+        self.0.lock().unwrap_or_else(|e| e.into_inner()).is_some()
+    }
+}
+
 fn kind_line(path: &str) -> String {
     let info = shaiya_clientdata::anim::rig_of(path);
     match info.rig {
@@ -485,12 +513,12 @@ fn read_all(archive: &Archive, entry: &Entry, cap: u64, job: &Job) -> Result<Vec
 /// Builds the preview of `entry` (`path` decides what it should be, the bytes can overrule). `text_all`: read up to 16 MiB of text
 /// instead of 1 MiB. `hex_from`: where the hex window starts for entries over 64 MiB.
 pub fn make_preview(archive: &Archive, entry: &Entry, path: &str, text_all: bool, hex_from: u64, job: &Job) -> Result<PreviewData> {
-    make_preview_with(archive, entry, path, text_all, hex_from, &MeshChoice::Default, &MeshInfoCache::default(), job)
+    make_preview_with(archive, entry, path, text_all, hex_from, &MeshChoice::Default, &MeshInfoCache::default(), &TextureIndexCache::default(), job)
 }
 
 /// [`make_preview`] with the mesh choice of an `.ANI` preview.
 #[allow(clippy::too_many_arguments)]
-pub fn make_preview_with(archive: &Archive, entry: &Entry, path: &str, text_all: bool, hex_from: u64, mesh: &MeshChoice, cache: &MeshInfoCache, job: &Job) -> Result<PreviewData> {
+pub fn make_preview_with(archive: &Archive, entry: &Entry, path: &str, text_all: bool, hex_from: u64, mesh: &MeshChoice, cache: &MeshInfoCache, _textures: &TextureIndexCache, job: &Job) -> Result<PreviewData> {
     if entry.length == 0 {
         return Ok(PreviewData::Empty);
     }
@@ -1019,7 +1047,7 @@ mod anim_tests {
     }
 
     fn pv(a: &Archive, path: &str, mesh: &MeshChoice) -> PreviewData {
-        make_preview_with(a, a.index().get(path).unwrap(), path, false, 0, mesh, &MeshInfoCache::default(), &Job::silent()).unwrap()
+        make_preview_with(a, a.index().get(path).unwrap(), path, false, 0, mesh, &MeshInfoCache::default(), &TextureIndexCache::default(), &Job::silent()).unwrap()
     }
 
     struct Seen {
@@ -1243,7 +1271,7 @@ mod anim_tests {
         let cancel = Cancel::new();
         let job = Job::new(&Silent, cancel.clone());
         cancel.cancel();
-        let e = make_preview_with(&a, a.index().get(ANI).unwrap(), ANI, false, 0, &MeshChoice::Default, &MeshInfoCache::default(), &job).unwrap_err();
+        let e = make_preview_with(&a, a.index().get(ANI).unwrap(), ANI, false, 0, &MeshChoice::Default, &MeshInfoCache::default(), &TextureIndexCache::default(), &job).unwrap_err();
         assert!(matches!(e, Error::Cancelled), "{e:?}");
         let data = a.read_entry(a.index().get(ANI).unwrap()).unwrap();
         assert!(anim_preview(&a, &data, ANI, &MeshChoice::Default, &MeshInfoCache::default(), &job).is_err());

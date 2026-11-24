@@ -124,6 +124,8 @@ pub struct Loaded {
     pub archive: Option<Arc<Archive>>,
     /// What the `.ANI` previews learned about the `.3DC` candidates of this archive (new whenever an archive is loaded).
     pub mesh_cache: preview::MeshInfoCache,
+    /// The texture index of the model list files, built by the first preview that needs it (new whenever an archive is loaded).
+    pub texture_index: preview::TextureIndexCache,
     pub rows: Vec<RowData>,
     pub tree: Tree,
     by_folder: HashMap<String, Vec<usize>>,
@@ -172,7 +174,7 @@ fn load(path: &Path, label: String, client_dir: Option<PathBuf>, job: &shaiya_co
     for (i, r) in rows.iter().enumerate() {
         by_folder.entry(r.folder().to_lowercase()).or_default().push(i);
     }
-    Ok(Opened { loaded: Loaded { label, sah, client_dir, archive, mesh_cache: preview::MeshInfoCache::default(), rows, tree, by_folder, sah_version, visible, saf_len, dead }, notes })
+    Ok(Opened { loaded: Loaded { label, sah, client_dir, archive, mesh_cache: preview::MeshInfoCache::default(), texture_index: preview::TextureIndexCache::default(), rows, tree, by_folder, sah_version, visible, saf_len, dead }, notes })
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -1504,9 +1506,10 @@ impl ArchiveView {
         let Some(l) = &self.loaded else { return };
         let Some(a) = l.archive.clone() else { return };
         let cache = l.mesh_cache.clone();
+        let textures = l.texture_index.clone();
         let r = &l.rows[row];
         let (entry, path, all, mesh) = (r.entry.clone(), r.path.clone(), self.preview.text_all, self.preview.anim_mesh.clone());
-        let h = cx.shell.tasks().spawn(TaskSpec { title: format!("Preview {}", r.name()), cancellable: true, exclusive: None }, move |job| preview::make_preview_with(&a, &entry, &path, all, 0, &mesh, &cache, job));
+        let h = cx.shell.tasks().spawn(TaskSpec { title: format!("Preview {}", r.name()), cancellable: true, exclusive: None }, move |job| preview::make_preview_with(&a, &entry, &path, all, 0, &mesh, &cache, &textures, job));
         self.preview.handle = Some(h);
     }
 

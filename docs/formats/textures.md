@@ -37,6 +37,28 @@ A blank field gets a light map shaded from its heights and plain masks that foll
 
 `interface/MiniMap/<id>.tga` is a 512 x 512 picture: 24-bit uncompressed Targa, stored bottom-up, with the 26-byte footer (`TRUEVISION-XFILE`) that the client's own minimaps have. The editor shades it from the heights: a hillshade with the light from the north-west, a green to sand tint by height, and blue under -0.4. The top row is the north edge. It is written only when the box is ticked.
 
+## Which texture a model uses
+
+A `.3DC` mesh names no texture (the name is empty in 2,429 of the 2,431 `.3DC` files of `us-108`). The textures of a model come from the list files [`.MLT`](mlt.md) (character parts), [`.MON`](mon.md) (monsters, NPCs, vehicles, strip NPCs) and [`.ITM`](itm.md) (item `.3DO` models); a `.3DE` effect mesh uses the texture of its own name from `Effect/DDS`. The toolkit's texture index (`shaiya_clientdata::texindex`) reads `Character/*/*.MLT`, `Monster/*.MON`, `Npc/*.MON`, `Vehicle/*.mon`, `Strip/*.MON` and `Item/*.ITM` (any letter case) and answers, for one mesh, its textures in record order; the first is the default.
+
+| Step | Rule |
+|---|---|
+| Own folder | `<folder of the list>/3DC/<name>`, `/3DO/<name>` or `/DDS/<name>`, letter case ignored |
+| Elsewhere | else the same bare name in another `3DC`, `3DO` or `DDS` folder (the first by sorted path); the index says so ("found elsewhere") |
+| Missing | else the name is reported as missing; a name is never guessed. A mesh no list names has no texture and is drawn grey. |
+
+The alpha channel is described by the `.MLT` flag only: 0 is transparency and 1 is a glow; `.MON` and `.ITM` say nothing about it, and a texture of those lists is "unknown".
+
+On `us-108` (US EP4.5), read from the client files and measured by the opt-in test `the_us_client_texture_index_numbers` (validated offline):
+
+| List | Pairs | Mesh in own folder | Texture in own folder | Mesh elsewhere | Texture elsewhere | Mesh nowhere | Texture nowhere |
+|---|---|---|---|---|---|---|---|
+| `.MLT` (112 files) | 2,176 | 2,151 | 2,087 | 0 | 0 | 25 | 89 |
+| `.MON` (16 files) | 2,005 | 1,753 | 1,745 | 182 | 83 | 70 | 177 |
+| `.ITM` (17 files) | 1,540 | 1,540 | 1,540 | 0 | 0 | 0 | 0 |
+
+2,237 meshes have at least one texture pair whose texture exists. Whether the client searches other folders the same way is not traced; the "elsewhere" step is the toolkit's own rule.
+
 ## Verified on
 
 US EP4.5. The headers of the generated light map and masks are byte-identical to files of the client, and a map with id 110 made this way loaded on the client. The 2 x 2 chunk layout of a blank 2048 field and the orientation of the minimap have not been checked in the game.

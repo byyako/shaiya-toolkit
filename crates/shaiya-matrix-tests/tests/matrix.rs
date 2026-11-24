@@ -353,3 +353,8 @@ fn itm_index_count() {
 fn itm_round_trip() {
     check(Cap::ItmRoundTrip);
 }
+
+#[test]
+fn texture_index_found() {
+    check(Cap::TextureIndexFound);
+}

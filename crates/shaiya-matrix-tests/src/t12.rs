@@ -51,3 +51,34 @@ pub(crate) fn list_caps(o: &mut Observed, dir: &Path, idx: &Index) {
     kind_caps(o, dir, idx, ".mon", Cap::MonIndexCount, Cap::MonRoundTrip, &|b, p| Mon::parse(b, p).map(|m| m.to_bytes() == b).map_err(|e| e.to_string()));
     kind_caps(o, dir, idx, ".itm", Cap::ItmIndexCount, Cap::ItmRoundTrip, &|b, p| Itm::parse(b, p).map(|m| m.to_bytes() == b).map_err(|e| e.to_string()));
 }
+
+/// Sets `TextureIndexFound`: the meshes the list files pair with a texture that exists (needs the file contents).
+pub(crate) fn texture_caps(o: &mut Observed, dir: &Path, idx: &Index) {
+    let cap = Cap::TextureIndexFound;
+    if !has_data_file(dir) {
+        o.set(cap, NA);
+        return;
+    }
+    let archive = match Archive::open(dir) {
+        Ok(a) => a,
+        Err(e) => {
+            o.notes.push(format!("texture index: {e}"));
+            o.set(cap, F);
+            return;
+        }
+    };
+    let paths: Vec<String> = idx.visible().into_iter().map(|f| f.path).collect();
+    match shaiya_clientdata::TextureIndex::build(&paths, &mut |p| idx.get(p).and_then(|e| archive.read_entry(e).ok()), &mut || false) {
+        Some((index, report)) if report.lists_refused.is_empty() => {
+            let n = index.textured_mesh_count() as u64;
+            o.set(cap, if n > 0 { O } else { F });
+            o.numbers.push((cap, n));
+            o.facts.push(format!("texture index: {} list files read, {n} meshes with a found texture, {} texture names missing", report.lists_read, report.missing));
+        }
+        Some((_, report)) => {
+            o.notes.push(format!("texture index: {} list files refused", report.lists_refused.len()));
+            o.set(cap, F);
+        }
+        None => o.set(cap, F),
+    }
+}

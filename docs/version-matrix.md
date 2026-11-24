@@ -62,6 +62,7 @@ Client ids: `us-108` (US patch level 108), and the eight test clients `ru-ep3`, 
 | `Mon::parse` reads every `.MON` to the last byte and `to_bytes` gives it back byte for byte | OK 16 | n/a | n/a | n/a | n/a | n/a | n/a | n/a | n/a |
 | `.ITM` files the index lists (index only: the number is the visible `.ITM` files of the index; no contents were read on the eight test clients) | OK 17 | OK 17 | OK 17 | OK 17 | OK 17 | OK 17 | OK 17 | OK 17 | OK 17 |
 | `Itm::parse` reads every `.ITM` to the last byte and `to_bytes` gives it back byte for byte | OK 17 | n/a | n/a | n/a | n/a | n/a | n/a | n/a | n/a |
+| Texture index: `.3DC` and `.3DO` meshes that the `.MLT`, `.MON` and `.ITM` lists pair with at least one texture that exists (the number is the meshes) | OK 2,237 | n/a | n/a | n/a | n/a | n/a | n/a | n/a | n/a |
 
 Reading the table:
 
@@ -93,6 +94,7 @@ Reading the table:
 - The `.3DE` rows: the first counts the `.3DE` files each client's index lists (no contents read). The second reads every `.3DE` on `us-108` (US EP4.5) with exactly one of its two layouts: 467 of the 469 files read and write back byte for byte, and the other 2 (`004.3de` and `Deathknight007.3DE`) follow neither layout and are refused with the reason, never half-read; the cell is `OK` because nothing else failed. It is `n/a` on the eight test clients (index only). Whether a later episode's `.3DE` files read is not checked. See [3de.md](formats/3de.md).
 - The JSON rows (`.ANI`, `.3DC`, `.VANI`, `.MANI`, `.3DO`, `.3DE`) read every file of that kind on `us-108` (US EP4.5), export it with `modeljson::export` and import the text with `modeljson::import`; the cell is `OK` when every file comes back byte for byte (validated offline). They are `n/a` on the eight test clients (no `data.saf` in the test set; index only). For `.3DE` the 2 files the reader refuses must be refused by the export too. See the format pages.
 - The list-file rows (`.MLT`, `.MON`, `.ITM`) work the same way as the `.3DO` rows: the first of each pair counts the files each client's index lists (no contents read); the second reads every file of that kind on `us-108` (US EP4.5) to the last byte and writes it back byte for byte (112 `.MLT`, 16 `.MON` and 17 `.ITM`; validated offline). They are `n/a` on the eight test clients (index only). See [mlt.md](formats/mlt.md), [mon.md](formats/mon.md) and [itm.md](formats/itm.md).
+- The texture-index row reads every list file of `us-108` (US EP4.5) and counts the meshes that have a pair whose texture file exists in the archive (validated offline); it is `n/a` on the eight test clients (index only). See [textures.md](formats/textures.md).
 
 ## SVMap Editor and `shaiya svmap`
 
