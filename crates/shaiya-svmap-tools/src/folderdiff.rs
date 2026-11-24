@@ -332,11 +332,10 @@ mod tests {
     /// A copy of the 77 originals with 3 maps edited, one deleted and one added: 73 same, 3 differ, 1 only here, 1 only there.
     #[test]
     fn folder_diff_originals_vs_copy() {
-        let Some(dir) = std::env::var_os("SVMAP_ORIGINALS") else {
-            eprintln!("skipped: SVMAP_ORIGINALS not set");
+        let Some(dir) = shaiya_testkit::env_var_path("SVMAP_ORIGINALS") else {
             return;
         };
-        let orig = PathBuf::from(dir);
+        let orig = dir;
         let copy = TempDir::new("fd-originals");
         for (id, p) in list(&orig) {
             std::fs::copy(p, copy.join(&format!("{id}.svmap"))).unwrap();

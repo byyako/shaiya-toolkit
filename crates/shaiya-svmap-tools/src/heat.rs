@@ -412,8 +412,7 @@ mod tests {
     /// Map 1 of the originals at tile 32: the time is printed (about 10 ms in release, 60 ms in a debug build), not asserted.
     #[test]
     fn heat_map1_fast() {
-        let Some(dir) = std::env::var_os("SVMAP_ORIGINALS") else {
-            eprintln!("skipped: SVMAP_ORIGINALS not set");
+        let Some(dir) = shaiya_testkit::env_var_path("SVMAP_ORIGINALS") else {
             return;
         };
         let bytes = std::fs::read(std::path::Path::new(&dir).join("1.svmap")).unwrap();

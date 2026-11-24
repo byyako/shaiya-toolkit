@@ -616,11 +616,7 @@ pub(crate) mod tests {
     }
 
     pub fn client() -> Option<ClientSource> {
-        let Some(var) = std::env::var_os("SHAIYA_CLIENT") else {
-            eprintln!("skipped: SHAIYA_CLIENT not set");
-            return None;
-        };
-        let dir = std::path::PathBuf::from(var);
+        let dir = shaiya_testkit::env_client()?;
         let source = dir.is_dir().then(|| ClientSource::open(&dir).ok()).flatten();
         if source.is_none() {
             eprintln!("skipped: SHAIYA_CLIENT is not a client folder");

@@ -1092,23 +1092,11 @@ mod tests {
     }
 
     fn originals() -> Option<PathBuf> {
-        match std::env::var_os("SVMAP_ORIGINALS") {
-            Some(d) => Some(PathBuf::from(d)),
-            None => {
-                eprintln!("skipped: SVMAP_ORIGINALS not set");
-                None
-            }
-        }
+        shaiya_testkit::env_var_path("SVMAP_ORIGINALS")
     }
 
     fn client() -> Option<PathBuf> {
-        match std::env::var_os("SHAIYA_CLIENT") {
-            Some(d) => Some(PathBuf::from(d)),
-            None => {
-                eprintln!("skipped: SHAIYA_CLIENT not set");
-                None
-            }
-        }
+        shaiya_testkit::env_client()
     }
 
     /// Folder diff: identical folders, then one changed map and one missing on the other side.

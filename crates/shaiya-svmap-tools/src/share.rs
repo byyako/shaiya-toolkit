@@ -1167,8 +1167,7 @@ mod tests {
     /// modification time are checked unchanged. Needs `SHAIYA_CLIENT` and `SHAIYA_SCRATCH` (a new empty folder, outside every repo).
     #[test]
     fn real_client_copy_install_uninstall() {
-        let (Some(client), Some(scratch)) = (std::env::var_os("SHAIYA_CLIENT").map(PathBuf::from), std::env::var_os("SHAIYA_SCRATCH").map(PathBuf::from)) else {
-            eprintln!("skipped: SHAIYA_CLIENT and SHAIYA_SCRATCH not both set");
+        let (Some(client), Some(scratch)) = (shaiya_testkit::env_client(), shaiya_testkit::env_scratch()) else {
             return;
         };
         if !client.join("data.sah").is_file() || !client.join("data.saf").is_file() || !scratch.is_dir() {
@@ -1229,8 +1228,7 @@ mod tests {
     /// Needs `SHAIYA_CLIENT`; the original is only read (its hash is checked before and after).
     #[test]
     fn real_archive_copy_installs_and_uninstalls() {
-        let Some(client) = std::env::var_os("SHAIYA_CLIENT").map(PathBuf::from) else {
-            eprintln!("skipped: SHAIYA_CLIENT not set");
+        let Some(client) = shaiya_testkit::env_client() else {
             return;
         };
         if !client.join("data.sah").is_file() {

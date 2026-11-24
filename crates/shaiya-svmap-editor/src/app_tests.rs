@@ -1051,11 +1051,10 @@ fn portal_links_window_and_the_map_card_list_the_incoming_portals() {
 /// Drop destination to ground reads the destination map's heights from the client.
 #[test]
 fn drop_destination_to_ground() {
-    let (Some(maps), Some(client)) = (std::env::var_os("SVMAP_ORIGINALS"), std::env::var_os("SHAIYA_CLIENT")) else {
-        eprintln!("skipped: SVMAP_ORIGINALS and SHAIYA_CLIENT are not both set");
+    let (Some(maps), Some(client)) = (shaiya_testkit::env_var_path("SVMAP_ORIGINALS"), shaiya_testkit::env_client()) else {
         return;
     };
-    let mut h = Harness::new(None, StartOptions { folder: Some(PathBuf::from(maps)), client: Some(PathBuf::from(client)), maps: vec![0], ..Default::default() });
+    let mut h = Harness::new(None, StartOptions { folder: Some(maps), client: Some(client), maps: vec![0], ..Default::default() });
     wait_for_folder(&mut h);
     // a portal of map 0 that leads to another map
     let Some((i, p)) = h.app.docs[0].map.portals.iter().copied().enumerate().find(|(_, p)| p.to_map != 0 && h.app.folder.as_ref().unwrap().maps.contains_key(&p.to_map)) else {
@@ -1694,8 +1693,7 @@ fn the_spawns_tab_opens_on_demand_and_lists_findings() {
 /// The folder-scope totals of the app and the CLI come from the same code on the same maps.
 #[test]
 fn spawns_cli_matches_panel() {
-    let (Some(maps), Some(client)) = (std::env::var_os("SVMAP_ORIGINALS"), std::env::var_os("SHAIYA_CLIENT")) else {
-        eprintln!("skipped: SVMAP_ORIGINALS and SHAIYA_CLIENT are not both set");
+    let (Some(maps), Some(client)) = (shaiya_testkit::env_var_path("SVMAP_ORIGINALS"), shaiya_testkit::env_client()) else {
         return;
     };
     let mut h = Harness::new(None, StartOptions { folder: Some(PathBuf::from(&maps)), client: Some(PathBuf::from(&client)), maps: vec![1], ..Default::default() });
@@ -1720,8 +1718,7 @@ fn spawns_cli_matches_panel() {
 /// Monster.SData records with a name and a level that no map of the 77 uses, counted without the spawns code.
 #[test]
 fn never_spawned_originals() {
-    let (Some(maps), Some(client)) = (std::env::var_os("SVMAP_ORIGINALS"), std::env::var_os("SHAIYA_CLIENT")) else {
-        eprintln!("skipped: SVMAP_ORIGINALS and SHAIYA_CLIENT are not both set");
+    let (Some(maps), Some(client)) = (shaiya_testkit::env_var_path("SVMAP_ORIGINALS"), shaiya_testkit::env_client()) else {
         return;
     };
     let rules = ClientRules::open(Path::new(&client)).unwrap();

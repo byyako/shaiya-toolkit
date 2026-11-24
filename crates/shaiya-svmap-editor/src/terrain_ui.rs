@@ -579,8 +579,7 @@ mod tests {
     /// 2048 x 2048 units, 1.05 million corners).
     #[test]
     fn real_maps_terrain_strokes_are_exact() {
-        let Ok(dir) = std::env::var("SHAIYA_CLIENT") else {
-            eprintln!("skipped: SHAIYA_CLIENT not set");
+        let Some(dir) = shaiya_testkit::env_client() else {
             return;
         };
         let Ok(rules) = crate::client_rules::ClientRules::open(std::path::Path::new(&dir)) else {
@@ -627,8 +626,7 @@ mod tests {
     /// rectangle, the ground copy and the 3D chunks (printed; the bounds are loose so a slow machine does not fail it).
     #[test]
     fn real_map_stroke_costs() {
-        let Ok(dir) = std::env::var("SHAIYA_CLIENT") else {
-            eprintln!("skipped: SHAIYA_CLIENT not set");
+        let Some(dir) = shaiya_testkit::env_client() else {
             return;
         };
         let Ok(rules) = crate::client_rules::ClientRules::open(std::path::Path::new(&dir)) else {
@@ -713,15 +711,14 @@ mod tests {
     /// original files, redo of everything the last state.
     #[test]
     fn review_random_strokes_are_byte_exact() {
-        let Ok(dir) = std::env::var("SHAIYA_CLIENT") else {
-            eprintln!("skipped: SHAIYA_CLIENT not set");
+        let Some(dir) = shaiya_testkit::env_client() else {
             return;
         };
         let Ok(rules) = crate::client_rules::ClientRules::open(std::path::Path::new(&dir)) else {
             eprintln!("skipped: SHAIYA_CLIENT is not a client folder");
             return;
         };
-        let originals = std::env::var_os("SVMAP_ORIGINALS").map(std::path::PathBuf::from);
+        let originals = shaiya_testkit::env_var_path("SVMAP_ORIGINALS");
         for (id, seed) in [(0u32, 0x9E37_79B9_7F4A_7C15u64), (1, 0xD1B5_4A32_D192_ED03), (2, 0x8CB9_2BA7_2F3D_8DD7), (18, 0x5851_F42D_4C95_7F2D)] {
             let crate::pair::Attach::Part(part) = crate::pair::ClientPart::attach(&rules, id, shaiya_clientdata::wld_raw::Codepage::Cp949) else { continue };
             let size = part.terrain().unwrap().size as u32;

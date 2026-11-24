@@ -914,11 +914,8 @@ mod tests {
     /// Copy of an original map in a temp dir of the calling test's own (`tag` names the test; the directory goes away with the
     /// guard), or `None` when `SVMAP_ORIGINALS` is not set. The originals are only read.
     fn original_copy(tag: &str, id: u32) -> Option<(crate::testutil::TempDir, PathBuf)> {
-        let dir = std::env::var_os("SVMAP_ORIGINALS").or_else(|| {
-            eprintln!("skipped: SVMAP_ORIGINALS not set");
-            None
-        })?;
-        let src = PathBuf::from(dir).join(format!("{id}.svmap"));
+        let dir = shaiya_testkit::env_var_path("SVMAP_ORIGINALS")?;
+        let src = dir.join(format!("{id}.svmap"));
         let tmp = crate::testutil::TempDir::new(tag);
         let dst = tmp.join(&format!("{id}.svmap"));
         std::fs::copy(&src, &dst).ok()?;

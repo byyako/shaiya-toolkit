@@ -218,14 +218,8 @@ mod tests {
 
     /// Both data sets, or `None` (test skipped).
     fn data() -> Option<(crate::client_rules::ClientRules, std::path::PathBuf)> {
-        let c = std::path::PathBuf::from(std::env::var_os("SHAIYA_CLIENT").or_else(|| {
-            eprintln!("skipped: SHAIYA_CLIENT not set");
-            None
-        })?);
-        let s = std::path::PathBuf::from(std::env::var_os("SVMAP_ORIGINALS").or_else(|| {
-            eprintln!("skipped: SVMAP_ORIGINALS not set");
-            None
-        })?);
+        let c = shaiya_testkit::env_client()?;
+        let s = shaiya_testkit::env_var_path("SVMAP_ORIGINALS")?;
         if !(c.is_dir() && s.is_dir()) {
             return None;
         }

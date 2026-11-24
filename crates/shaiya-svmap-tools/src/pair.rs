@@ -1313,8 +1313,7 @@ mod tests {
     /// The same, on the client's real map 2: portal 0 moves, the client box follows, and the model still writes back.
     #[test]
     fn pair_portal_move_both_on_map_2() {
-        let (Some(c), Some(s)) = (std::env::var_os("SHAIYA_CLIENT"), std::env::var_os("SVMAP_ORIGINALS")) else {
-            eprintln!("skipped: SVMAP_ORIGINALS and SHAIYA_CLIENT not set");
+        let (Some(c), Some(s)) = (shaiya_testkit::env_client(), shaiya_testkit::env_var_path("SVMAP_ORIGINALS")) else {
             return;
         };
         let rules = ClientRules::open(std::path::Path::new(&c)).unwrap();
@@ -1426,8 +1425,7 @@ mod tests {
         d.commit("move region", vec![Op::replace(1, before, after)]);
         assert!(d.client_dirty());
         // the client's real maps: map 35 does not pair its portals, map 2 pairs everything
-        let (Some(c), Some(s)) = (std::env::var_os("SHAIYA_CLIENT"), std::env::var_os("SVMAP_ORIGINALS")) else {
-            eprintln!("skipped: SVMAP_ORIGINALS and SHAIYA_CLIENT not set");
+        let (Some(c), Some(s)) = (shaiya_testkit::env_client(), shaiya_testkit::env_var_path("SVMAP_ORIGINALS")) else {
             return;
         };
         let rules = ClientRules::open(std::path::Path::new(&c)).unwrap();

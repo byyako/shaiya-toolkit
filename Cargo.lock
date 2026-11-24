@@ -2739,6 +2739,7 @@ dependencies = [
  "base64",
  "serde",
  "serde_json",
+ "shaiya-testkit",
 ]
 
 [[package]]
@@ -2759,6 +2760,7 @@ dependencies = [
  "shaiya-patch",
  "shaiya-svmap",
  "shaiya-svmap-tools",
+ "shaiya-testkit",
  "shaiya-ui",
  "wgpu",
 ]
@@ -2774,6 +2776,7 @@ dependencies = [
  "shaiya-core",
  "shaiya-patch",
  "shaiya-svmap",
+ "shaiya-testkit",
 ]
 
 [[package]]

@@ -2236,8 +2236,7 @@ mod tests {
     /// a ground drag leaves NPC points and monster areas on the ground (y = ground within 0.01), as one undo step.
     #[test]
     fn real_maps_ground_drag_keeps_y_on_the_ground() {
-        let (Some(c), Some(orig)) = (std::env::var_os("SHAIYA_CLIENT"), std::env::var_os("SVMAP_ORIGINALS")) else {
-            eprintln!("skipped: SHAIYA_CLIENT and SVMAP_ORIGINALS are not both set");
+        let (Some(c), Some(orig)) = (shaiya_testkit::env_client(), shaiya_testkit::env_var_path("SVMAP_ORIGINALS")) else {
             return;
         };
         let rules = crate::client_rules::ClientRules::open(std::path::Path::new(&c)).unwrap();
@@ -2300,8 +2299,7 @@ mod tests {
     /// Picking and the ground ray must be cheap on the biggest map (map 1: 835 areas, 286 NPCs).
     #[test]
     fn picking_map_1_is_fast() {
-        let Some(orig) = std::env::var_os("SVMAP_ORIGINALS") else {
-            eprintln!("skipped: SVMAP_ORIGINALS not set");
+        let Some(orig) = shaiya_testkit::env_var_path("SVMAP_ORIGINALS") else {
             return;
         };
         let map = shaiya_svmap::read(&std::fs::read(std::path::Path::new(&orig).join("1.svmap")).unwrap()).unwrap();

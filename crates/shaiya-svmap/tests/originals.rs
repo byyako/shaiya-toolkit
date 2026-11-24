@@ -2,18 +2,11 @@
 //! when it is unset.
 
 use std::collections::BTreeMap;
-use std::path::PathBuf;
 
 use shaiya_svmap::*;
 
 fn corpus() -> Option<BTreeMap<u32, Vec<u8>>> {
-    let dir = match std::env::var_os("SVMAP_ORIGINALS") {
-        Some(d) => PathBuf::from(d),
-        None => {
-            eprintln!("SVMAP_ORIGINALS not set: skipped");
-            return None;
-        }
-    };
+    let dir = shaiya_testkit::env_var_path("SVMAP_ORIGINALS")?;
     let mut out = BTreeMap::new();
     for e in std::fs::read_dir(&dir).expect("read SVMAP_ORIGINALS") {
         let p = e.unwrap().path();

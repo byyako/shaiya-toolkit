@@ -610,11 +610,10 @@ mod tests {
     #[test]
     fn fix_all_portal_far() {
         // `[both vars]`: three portals of the real map 2 moved 60 units away give three portal-far errors; Fix all clears them
-        let (Some(o), Some(c)) = (std::env::var_os("SVMAP_ORIGINALS"), std::env::var_os("SHAIYA_CLIENT")) else {
-            eprintln!("skipped: SVMAP_ORIGINALS and SHAIYA_CLIENT not set");
+        let (Some(o), Some(c)) = (shaiya_testkit::env_var_path("SVMAP_ORIGINALS"), shaiya_testkit::env_client()) else {
             return;
         };
-        let (o, c) = (std::path::PathBuf::from(o), std::path::PathBuf::from(c));
+        let (o, c) = (o, c);
         let rules = crate::client_rules::ClientRules::open(&c).unwrap();
         let mut m = shaiya_svmap::read(&std::fs::read(o.join("2.svmap")).unwrap()).unwrap();
         let wld = rules.wld(2).expect("map 2 has a .wld");
@@ -648,11 +647,10 @@ mod tests {
     fn fixes_take_the_wld_value() {
         // `[both vars]`: the last deterministic kind of 3.8, "take the .wld value(s)": portal 0 of map 2 gets another country and
         // level range than its .wld box (two portal-field findings on one record); Fix all takes the .wld fields, one undo step
-        let (Some(o), Some(c)) = (std::env::var_os("SVMAP_ORIGINALS"), std::env::var_os("SHAIYA_CLIENT")) else {
-            eprintln!("skipped: SVMAP_ORIGINALS and SHAIYA_CLIENT not set");
+        let (Some(o), Some(c)) = (shaiya_testkit::env_var_path("SVMAP_ORIGINALS"), shaiya_testkit::env_client()) else {
             return;
         };
-        let (o, c) = (std::path::PathBuf::from(o), std::path::PathBuf::from(c));
+        let (o, c) = (o, c);
         let rules = crate::client_rules::ClientRules::open(&c).unwrap();
         let bytes = std::fs::read(o.join("2.svmap")).unwrap();
         let mut m = shaiya_svmap::read(&bytes).unwrap();

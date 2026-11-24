@@ -247,11 +247,10 @@ mod tests {
     #[test]
     fn folder_problems_match_cli() {
         // `[both vars]`: the totals the CLI prints for the 77 originals with the client
-        let (Some(o), Some(c)) = (std::env::var_os("SVMAP_ORIGINALS"), std::env::var_os("SHAIYA_CLIENT")) else {
-            eprintln!("skipped: SVMAP_ORIGINALS and SHAIYA_CLIENT not set");
+        let (Some(o), Some(c)) = (shaiya_testkit::env_var_path("SVMAP_ORIGINALS"), shaiya_testkit::env_client()) else {
             return;
         };
-        let (o, c) = (PathBuf::from(o), PathBuf::from(c));
+        let (o, c) = (o, c);
         let rules = ClientRules::open(&c).unwrap();
         let mut sources = Vec::new();
         for e in std::fs::read_dir(&o).unwrap().flatten() {

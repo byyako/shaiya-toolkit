@@ -513,14 +513,8 @@ mod tests {
     }
 
     fn originals() -> Option<(std::path::PathBuf, std::path::PathBuf)> {
-        let maps = std::path::PathBuf::from(std::env::var_os("SVMAP_ORIGINALS").or_else(|| {
-            eprintln!("skipped: SVMAP_ORIGINALS not set");
-            None
-        })?);
-        let client = std::path::PathBuf::from(std::env::var_os("SHAIYA_CLIENT").or_else(|| {
-            eprintln!("skipped: SHAIYA_CLIENT not set");
-            None
-        })?);
+        let maps = shaiya_testkit::env_var_path("SVMAP_ORIGINALS")?;
+        let client = shaiya_testkit::env_client()?;
         (maps.is_dir() && client.is_dir()).then_some((maps, client))
     }
 
@@ -665,8 +659,7 @@ mod tests {
         more.push(0);
         assert!(parse_tactics_zones(&more).is_none());
         assert!(parse_tactics_zones(b"").is_none() && parse_tactics_zones(&[0, 0, 0, 0, 255, 255, 255, 255]).is_none());
-        let Some(c) = std::env::var_os("SHAIYA_CLIENT") else {
-            eprintln!("skipped: SHAIYA_CLIENT not set");
+        let Some(c) = shaiya_testkit::env_client() else {
             return;
         };
         let src = shaiya_clientdata::ClientSource::open(std::path::Path::new(&c)).unwrap();

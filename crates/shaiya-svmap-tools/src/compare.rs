@@ -524,11 +524,10 @@ mod tests {
     #[test]
     fn compare_revert_roundtrip() {
         // `[SVMAP_ORIGINALS]`: five scripted edits on a copy of map 1 compared with the originals folder
-        let Some(dir) = std::env::var_os("SVMAP_ORIGINALS") else {
-            eprintln!("skipped: SVMAP_ORIGINALS not set");
+        let Some(dir) = shaiya_testkit::env_var_path("SVMAP_ORIGINALS") else {
             return;
         };
-        let folder = PathBuf::from(dir);
+        let folder = dir;
         let orig = std::fs::read(folder.join("1.svmap")).unwrap();
         let reference = shaiya_svmap::read(&orig).unwrap();
         let mut d = Doc::new(1, Some(1), None, reference.clone(), None);

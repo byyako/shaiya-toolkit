@@ -527,10 +527,7 @@ mod tests {
     }
 
     fn originals() -> Option<Vec<(u32, Svmap)>> {
-        let dir = std::env::var_os("SVMAP_ORIGINALS").or_else(|| {
-            eprintln!("skipped: SVMAP_ORIGINALS not set");
-            None
-        })?;
+        let dir = shaiya_testkit::env_var_path("SVMAP_ORIGINALS")?;
         let files = crate::folderdiff::list(std::path::Path::new(&dir));
         Some(files.into_iter().map(|(id, p)| (id, shaiya_svmap::read(&std::fs::read(p).unwrap()).unwrap())).collect())
     }

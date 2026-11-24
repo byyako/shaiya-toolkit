@@ -8,11 +8,7 @@ use shaiya_clientdata::wld::WldKind;
 use shaiya_clientdata::{dungeon_map_size, ClientSource, Wld};
 
 fn env_dir(name: &str) -> Option<PathBuf> {
-    let Some(v) = std::env::var_os(name) else {
-        eprintln!("skipped: {name} not set");
-        return None;
-    };
-    let p = PathBuf::from(v);
+    let p = shaiya_testkit::env_var_path(name)?;
     p.is_dir().then_some(p)
 }
 

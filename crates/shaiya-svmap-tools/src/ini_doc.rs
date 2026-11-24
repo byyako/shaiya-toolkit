@@ -304,10 +304,7 @@ mod tests {
     }
 
     fn server_dir() -> Option<PathBuf> {
-        let dir = PathBuf::from(std::env::var_os("SVMAP_ORIGINALS").or_else(|| {
-            eprintln!("skipped: SVMAP_ORIGINALS not set");
-            None
-        })?).parent()?.to_path_buf();
+        let dir = shaiya_testkit::env_var_path("SVMAP_ORIGINALS")?.parent()?.to_path_buf();
         dir.join("Map.ini").is_file().then_some(dir)
     }
 

@@ -969,8 +969,7 @@ mod tests {
 
     #[test]
     fn setup_inspect_client_archive_mode_counts_records() {
-        let (Ok(client), Ok(originals)) = (std::env::var("SHAIYA_CLIENT"), std::env::var("SVMAP_ORIGINALS")) else {
-            eprintln!("skipped: SHAIYA_CLIENT and SVMAP_ORIGINALS are not both set");
+        let (Some(client), Some(originals)) = (shaiya_testkit::env_client(), shaiya_testkit::env_var_path("SVMAP_ORIGINALS")) else {
             return;
         };
         let (maps, _) = map_files(Path::new(&originals));

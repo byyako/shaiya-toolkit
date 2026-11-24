@@ -239,11 +239,10 @@ mod tests {
     /// The shipped `Obelisk.ini`: map 0 has seven obelisks, maps 18 and 30 one each; the sample `[Portal_` line adds none.
     #[test]
     fn obelisk_ini_parsed() {
-        let Some(maps) = std::env::var_os("SVMAP_ORIGINALS") else {
-            eprintln!("skipped: SVMAP_ORIGINALS not set");
+        let Some(maps) = shaiya_testkit::env_var_path("SVMAP_ORIGINALS") else {
             return;
         };
-        let dir = PathBuf::from(maps).parent().unwrap().to_path_buf();
+        let dir = maps.parent().unwrap().to_path_buf();
         if !dir.join("Obelisk.ini").is_file() {
             eprintln!("skipped: no Obelisk.ini beside the map folder");
             return;

@@ -661,8 +661,7 @@ mod tests {
     /// `up` back; the documented basis `x = (cos a, 0, -sin a)` holds for a new placement. Counts what the originals hold.
     #[test]
     fn review_real_placements_round_trip_through_the_heading() {
-        let Ok(dir) = std::env::var("SHAIYA_CLIENT") else {
-            eprintln!("skipped: SHAIYA_CLIENT not set");
+        let Some(dir) = shaiya_testkit::env_client() else {
             return;
         };
         let Ok(src) = ClientSource::open(std::path::Path::new(&dir)) else {

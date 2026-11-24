@@ -2,6 +2,12 @@
 
 All notable changes are listed here, newest first. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). One version number covers every program and library of the workspace.
 
+## [Unreleased]
+
+### Fixed
+
+- The opt-in tests of the SVMap crates (`shaiya-svmap`, `shaiya-svmap-tools`, `shaiya-svmap-editor`) now read `SHAIYA_CLIENT`, `SHAIYA_SCRATCH` and `SVMAP_ORIGINALS` through the same helpers as every other crate, so a variable listed in `SHAIYA_OPTIN_REQUIRE` makes a test fail instead of skip. Test-only change.
+
 ## [0.4.1] - 2026-11-23
 
 ### Shaiya Toolkit

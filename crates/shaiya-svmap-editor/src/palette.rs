@@ -649,8 +649,7 @@ mod real_names {
     /// With the real client: the map names come from `sysmsg-uni.txt` and "erina" / "apul" find maps 1 and 35.
     #[test]
     fn palette_ranks_maps_with_the_real_names() {
-        let Ok(dir) = std::env::var("SHAIYA_CLIENT") else {
-            eprintln!("skipped: SHAIYA_CLIENT not set");
+        let Some(dir) = shaiya_testkit::env_client() else {
             return;
         };
         let src = shaiya_clientdata::ClientSource::open(std::path::Path::new(&dir)).unwrap();

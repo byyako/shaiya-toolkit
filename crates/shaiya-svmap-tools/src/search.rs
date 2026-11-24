@@ -680,8 +680,7 @@ mod tests {
     /// `mob:1` over the 77 original files counts the same as a direct count, and the search of all maps is fast.
     #[test]
     fn search_mob_counts() {
-        let Some(dir) = std::env::var_os("SVMAP_ORIGINALS") else {
-            eprintln!("skipped: SVMAP_ORIGINALS not set");
+        let Some(dir) = shaiya_testkit::env_var_path("SVMAP_ORIGINALS") else {
             return;
         };
         let mut maps: Vec<(u32, Svmap)> = Vec::new();
@@ -715,8 +714,7 @@ mod tests {
     /// The link table has one row per portal of the 77 files, and map 200 (the guild ranking) has no file.
     #[test]
     fn portal_links_originals() {
-        let Some(dir) = std::env::var_os("SVMAP_ORIGINALS") else {
-            eprintln!("skipped: SVMAP_ORIGINALS not set");
+        let Some(dir) = shaiya_testkit::env_var_path("SVMAP_ORIGINALS") else {
             return;
         };
         let mut maps: Vec<(u32, Svmap)> = Vec::new();

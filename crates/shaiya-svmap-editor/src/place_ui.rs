@@ -465,8 +465,7 @@ mod tests {
     /// The same edits on the real map 2 of the client: the model still validates, writes back and reads back.
     #[test]
     fn real_map_edits_write_back() {
-        let Ok(dir) = std::env::var("SHAIYA_CLIENT") else {
-            eprintln!("skipped: SHAIYA_CLIENT not set");
+        let Some(dir) = shaiya_testkit::env_client() else {
             return;
         };
         let Ok(rules) = crate::client_rules::ClientRules::open(std::path::Path::new(&dir)) else {
@@ -670,8 +669,7 @@ mod tests {
     /// see-through textures (leaves, fences, railings), which the earlier average-colour preview drew as solid flat blocks.
     #[test]
     fn every_client_model_previews_textured() {
-        let Some(c) = std::env::var_os("SHAIYA_CLIENT") else {
-            eprintln!("skipped: SHAIYA_CLIENT not set");
+        let Some(c) = shaiya_testkit::env_client() else {
             return;
         };
         let rules = crate::client_rules::ClientRules::open(std::path::Path::new(&c)).unwrap();
@@ -720,8 +718,7 @@ mod tests {
     fn review_random_placement_edits_keep_the_file_valid() {
         use crate::place_ui as pu;
         use std::collections::HashSet;
-        let Ok(dir) = std::env::var("SHAIYA_CLIENT") else {
-            eprintln!("skipped: SHAIYA_CLIENT not set");
+        let Some(dir) = shaiya_testkit::env_client() else {
             return;
         };
         let Ok(rules) = crate::client_rules::ClientRules::open(std::path::Path::new(&dir)) else {
