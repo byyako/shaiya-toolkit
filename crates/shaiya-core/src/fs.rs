@@ -275,6 +275,26 @@ pub fn client_folder_above(path: &Path, saved: &[PathBuf]) -> Option<PathBuf> {
     walks.into_iter().find(|d| saved_all.iter().any(|s| same_path_text(d, s)) || holds_data_sah(d)).map(strip_verbatim)
 }
 
+/// The first client folder that a new output folder `folder` would be at or inside, or `None`; `folder` may not exist yet. The deepest
+/// existing ancestor of `folder` is the one that is looked at (with `client_folder_above`, so links and junctions are resolved), because
+/// the part below it is made by the caller and cannot lead anywhere yet.
+pub fn client_folder_for_new(folder: &Path, saved: &[PathBuf]) -> Option<PathBuf> {
+    let folder = absolute(folder);
+    let existing = folder.ancestors().find(|a| a.exists()).unwrap_or(&folder);
+    client_folder_above(&existing.join("x"), saved)
+}
+
+/// Makes the output folder `folder` (and its missing parents) only when it is not at or inside a client folder: the deepest existing
+/// ancestor is resolved and checked BEFORE anything is created, and `folder` is checked again once it exists. `Ok(Some(client))` is a
+/// refusal (nothing was made by the first check); `Ok(None)` means the folder is ready.
+pub fn ensure_out_folder(folder: &Path, saved: &[PathBuf]) -> Result<Option<PathBuf>> {
+    if let Some(client) = client_folder_for_new(folder, saved) {
+        return Ok(Some(client));
+    }
+    std::fs::create_dir_all(folder).map_err(|e| Error::io(folder, e))?;
+    Ok(client_folder_above(&folder.join("x"), saved))
+}
+
 /// Drops the verbatim prefix `canonicalize` adds on Windows (`\\?\C:\x` becomes `C:\x`, `\\?\UNC\h\s` becomes `\\h\s`), for display.
 fn strip_verbatim(p: PathBuf) -> PathBuf {
     let text = p.to_string_lossy();
@@ -546,6 +566,83 @@ mod tests {
         std::fs::create_dir_all(&plain).unwrap();
         std::os::unix::fs::symlink(&plain, elsewhere.join("plain-link")).unwrap();
         assert!(client_folder_above(&elsewhere.join("plain-link").join("o.json"), std::slice::from_ref(&plain)).is_some());
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    /// Makes a link to a folder: a symlink on Unix, a junction (`mklink /J`) on Windows. `false` (with a printed reason) when it cannot be made.
+    fn link_dir(target: &Path, link: &Path) -> bool {
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(target, link).is_ok()
+        }
+        #[cfg(windows)]
+        {
+            match std::process::Command::new("cmd").arg("/C").arg("mklink").arg("/J").arg(link).arg(target).output() {
+                Ok(o) if o.status.success() && link.exists() => true,
+                Ok(o) => {
+                    eprintln!("skipped: mklink /J failed: {}", String::from_utf8_lossy(&o.stdout));
+                    false
+                }
+                Err(e) => {
+                    eprintln!("skipped: mklink /J could not run: {e}");
+                    false
+                }
+            }
+        }
+    }
+
+    /// A fresh folder that can hold links: on Windows a junction needs NTFS (the scratch drive is exFAT), so the profile's temp folder is used.
+    fn link_home(tag: &str) -> PathBuf {
+        let base = if cfg!(windows) { std::env::var_os("LOCALAPPDATA").map(|p| PathBuf::from(p).join("Temp")).unwrap_or_else(std::env::temp_dir) } else { std::env::temp_dir() };
+        let d = base.join(format!("shaiya-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    fn folder_names(dir: &Path) -> Vec<String> {
+        let mut v: Vec<String> = std::fs::read_dir(dir).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
+        v.sort();
+        v
+    }
+
+    #[test]
+    fn a_new_folder_under_a_link_into_a_client_is_refused_and_nothing_is_made() {
+        let d = scratch("ensure-link");
+        let client = d.join("client");
+        let sub = client.join("data");
+        std::fs::create_dir_all(&sub).unwrap();
+        std::fs::write(client.join("data.sah"), b"x").unwrap();
+        let home = link_home("ensure-link");
+        let elsewhere = home.join("elsewhere");
+        std::fs::create_dir_all(&elsewhere).unwrap();
+        if !link_dir(&sub, &elsewhere.join("J")) {
+            let _ = std::fs::remove_dir_all(&d);
+            let _ = std::fs::remove_dir_all(&home);
+            return;
+        }
+        // DIR = J\new\Monster\ANI: J is a link into the client, the rest does not exist yet
+        let r = ensure_out_folder(&elsewhere.join("J").join("new").join("Monster").join("ANI"), &[]).unwrap();
+        assert!(r.is_some(), "refused");
+        assert!(folder_names(&sub).is_empty(), "no folder was made in the client");
+        // a link that is already inside DIR
+        let dir = home.join("out");
+        std::fs::create_dir_all(&dir).unwrap();
+        assert!(link_dir(&client, &dir.join("Monster")));
+        let r = ensure_out_folder(&dir.join("Monster").join("ANI"), &[]).unwrap();
+        assert!(r.is_some(), "refused");
+        assert_eq!(folder_names(&client), vec!["data", "data.sah"], "the client is unchanged");
+        // an unrelated new folder is made
+        assert_eq!(ensure_out_folder(&dir.join("fresh").join("deep"), &[]).unwrap(), None);
+        assert!(dir.join("fresh").join("deep").is_dir());
+        // and the check-only form agrees
+        assert!(client_folder_for_new(&elsewhere.join("J").join("a").join("b"), &[]).is_some());
+        assert_eq!(client_folder_for_new(&dir.join("zzz"), &[]), None);
+        // remove the links before the tree (a junction is removed as a folder, never followed)
+        for l in [elsewhere.join("J"), dir.join("Monster")] {
+            let _ = std::fs::remove_dir(&l).or_else(|_| std::fs::remove_file(&l));
+        }
+        let _ = std::fs::remove_dir_all(&home);
         let _ = std::fs::remove_dir_all(&d);
     }
 

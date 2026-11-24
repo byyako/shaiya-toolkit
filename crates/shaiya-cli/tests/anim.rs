@@ -1146,6 +1146,73 @@ fn export_out_dir_inside_a_client_folder_exits_4_and_reads_nothing() {
     assert_eq!(snapshot(&c), before);
 }
 
+/// Makes a link to a folder (a symlink on Unix, a junction on Windows); false, with the reason printed, when it cannot be made.
+fn link_dir(target: &Path, link: &Path) -> bool {
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(target, link).is_ok()
+    }
+    #[cfg(windows)]
+    {
+        match std::process::Command::new("cmd").arg("/C").arg("mklink").arg("/J").arg(link).arg(target).output() {
+            Ok(o) if o.status.success() && link.exists() => true,
+            Ok(o) => {
+                eprintln!("skipped: mklink /J failed: {}", String::from_utf8_lossy(&o.stdout));
+                false
+            }
+            Err(e) => {
+                eprintln!("skipped: mklink /J could not run: {e}");
+                false
+            }
+        }
+    }
+}
+
+/// A fresh folder that can hold links: on Windows a junction needs NTFS (the scratch drive is exFAT), so the profile's temp folder is used.
+fn link_home(tag: &str) -> PathBuf {
+    let base = if cfg!(windows) { std::env::var_os("LOCALAPPDATA").map(|p| PathBuf::from(p).join("Temp")).unwrap_or_else(std::env::temp_dir) } else { std::env::temp_dir() };
+    let d = base.join(format!("shaiya-{tag}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&d);
+    std::fs::create_dir_all(&d).unwrap();
+    d
+}
+
+fn drop_link(link: &Path) {
+    let _ = std::fs::remove_dir(link).or_else(|_| std::fs::remove_file(link));
+}
+
+#[test]
+fn export_out_dir_through_a_link_into_a_client_exits_4_and_makes_no_folder() {
+    let w = world();
+    let c = monster_client(&w);
+    std::fs::create_dir_all(c.join("sub")).unwrap();
+    let before = snapshot(&c);
+    let home = link_home("cli-link");
+    let elsewhere = home.join("elsewhere");
+    std::fs::create_dir_all(&elsewhere).unwrap();
+    // DIR = J/new where J leads into a client subfolder
+    let j = elsewhere.join("J");
+    if link_dir(&c.join("sub"), &j) {
+        let o = sh(&w.data, &["anim", "export", "Monster/", "--from", p(&c), "--out-dir", p(&j.join("new"))]);
+        assert_eq!(code(&o), 4, "{}", err(&o));
+        assert_eq!(snapshot(&c), before);
+        assert!(!c.join("sub").join("new").exists(), "no folder was made in the client");
+        drop_link(&j);
+    }
+    // a link that is already inside DIR
+    let dir = home.join("json-out");
+    std::fs::create_dir_all(&dir).unwrap();
+    if link_dir(&c, &dir.join("Monster")) {
+        let o = sh(&w.data, &["anim", "export", "Monster/", "--from", p(&c), "--out-dir", p(&dir)]);
+        assert_eq!(code(&o), 4, "{}", err(&o));
+        assert!(err(&o).contains("is inside the client folder"), "{}", err(&o));
+        assert_eq!(snapshot(&c), before);
+        assert!(!c.join("Monster").exists(), "no folder was made in the client");
+        drop_link(&dir.join("Monster"));
+    }
+    let _ = std::fs::remove_dir_all(&home);
+}
+
 #[test]
 fn export_out_dir_keeps_existing_files_without_force() {
     let w = world();

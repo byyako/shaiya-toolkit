@@ -70,7 +70,8 @@ pub fn compare(archive: &Archive, path: &str, other: &Other, job: &shaiya_core::
         }
     };
     job.check()?;
-    Ok(Shown { a: path.to_string(), b: b_name, diff: anim::diff(&a, &b) })
+    let diff = anim::diff_with(&a, &b, &mut || job.check().is_err()).ok_or(Error::Cancelled)?;
+    Ok(Shown { a: path.to_string(), b: b_name, diff })
 }
 
 /// The window of one comparison.

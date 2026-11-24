@@ -8,7 +8,7 @@
 use crate::ToolkitSettings;
 use shaiya_archive::{Archive, Entry};
 use shaiya_clientdata::modeljson::{self, ModelFormat, MAX_MODEL_BYTES};
-use shaiya_core::fs::{client_folder_above, write_atomic_checked};
+use shaiya_core::fs::{client_folder_above, client_folder_for_new, ensure_out_folder, write_atomic_checked};
 use shaiya_core::{Error, Result};
 use shaiya_ui::{Cx, TaskHandle, TaskOutcome, TaskSpec};
 use std::path::{Path, PathBuf};
@@ -177,7 +177,7 @@ pub(crate) fn folder_refusal(dir: &Path, client_dir: Option<&Path>, saved: &[Pat
     if dir.exists() && !dir.is_dir() {
         return Some(format!("Not a folder: {}", dir.display()));
     }
-    client_folder_above(&dir.join("x"), &all).map(|c| format!("Choose a folder outside the client: {}", c.display()))
+    client_folder_for_new(dir, &all).map(|c| format!("Choose a folder outside the client: {}", c.display()))
 }
 
 /// What the worker does for a folder: each item (archive path, entry) in turn, checking the job before each. A file that does not read,
@@ -220,9 +220,8 @@ fn one_of_folder(archive: &Archive, entry: &Entry, path: &str, dir: &Path, saved
     }
     let folder = target.parent().map(Path::to_path_buf).unwrap_or_else(|| dir.to_path_buf());
     if !folders.contains(&folder) {
-        std::fs::create_dir_all(&folder).map_err(|e| Error::io(&folder, e).to_string())?;
-        // the folders under DIR were made by this export, but a link that was already there could lead into a client
-        if let Some(client) = client_folder_above(&target, saved) {
+        // the deepest existing folder is resolved and checked before anything is made: a link that was already there could lead into a client
+        if let Some(client) = ensure_out_folder(&folder, saved).map_err(|e| e.to_string())? {
             return Err(format!("{} is inside the client folder {}", target.display(), client.display()));
         }
         folders.insert(folder);
@@ -412,6 +411,71 @@ mod tests {
         assert_eq!(std::fs::read(out.path().join("M/ANI/a.ANI.json")).unwrap(), b"keep me");
         assert_eq!(files_under(out.path()), vec!["M/ANI/a.ANI.json", "M/ANI/b.ANI.json"]);
         assert_eq!(r.status(), format!("Exported 1 of 5 files to {} (4 failed)", out.path().display()));
+    }
+
+    /// Makes a link to a folder (a symlink on Unix, a junction on Windows); false, with the reason printed, when it cannot be made.
+    fn link_dir(target: &Path, link: &Path) -> bool {
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(target, link).is_ok()
+        }
+        #[cfg(windows)]
+        {
+            match std::process::Command::new("cmd").arg("/C").arg("mklink").arg("/J").arg(link).arg(target).output() {
+                Ok(o) if o.status.success() && link.exists() => true,
+                Ok(o) => {
+                    eprintln!("skipped: mklink /J failed: {}", String::from_utf8_lossy(&o.stdout));
+                    false
+                }
+                Err(e) => {
+                    eprintln!("skipped: mklink /J could not run: {e}");
+                    false
+                }
+            }
+        }
+    }
+
+    /// A fresh folder that can hold links: on Windows a junction needs NTFS (the scratch drive is exFAT), so the profile's temp folder is used.
+    fn link_home(tag: &str) -> PathBuf {
+        let base = if cfg!(windows) { std::env::var_os("LOCALAPPDATA").map(|p| PathBuf::from(p).join("Temp")).unwrap_or_else(std::env::temp_dir) } else { std::env::temp_dir() };
+        let d = base.join(format!("shaiya-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    fn drop_link(link: &Path) {
+        let _ = std::fs::remove_dir(link).or_else(|_| std::fs::remove_file(link));
+    }
+
+    #[test]
+    fn a_folder_export_through_a_link_into_a_client_makes_no_folder() {
+        let arm = shaiya_testkit::anim::arm_ani(30);
+        let (_c, a, items) = archive_of("t12-w8fix-link", &[("Monster/ANI/a.ANI", arm)]);
+        let client = shaiya_testkit::TempDir::new("t12-w8fix-client");
+        std::fs::write(client.path().join("data.sah"), b"x").unwrap();
+        let sub = client.path().join("data");
+        std::fs::create_dir_all(&sub).unwrap();
+        let home = link_home("tk-link");
+        let j = home.join("J");
+        if link_dir(&sub, &j) {
+            // DIR = J/new: the up-front check sees through the link, and so does the worker
+            assert!(folder_refusal(&j.join("new"), None, &[]).is_some());
+            let r = run_folder(&a, &items, &j.join("new"), &[], &shaiya_core::Job::silent());
+            assert!(r.written == 0 && r.failed.len() == 1 && r.failed[0].1.contains("is inside the client folder"), "{r:?}");
+            assert_eq!(std::fs::read_dir(&sub).unwrap().count(), 0, "nothing was made in the client");
+            drop_link(&j);
+        }
+        // a link that is already inside DIR
+        let dir = home.join("dir");
+        std::fs::create_dir_all(&dir).unwrap();
+        if link_dir(client.path(), &dir.join("Monster")) {
+            let r = run_folder(&a, &items, &dir, &[], &shaiya_core::Job::silent());
+            assert!(r.written == 0 && r.failed.len() == 1, "{r:?}");
+            assert_eq!(std::fs::read_dir(client.path()).unwrap().count(), 2, "the client is unchanged");
+            drop_link(&dir.join("Monster"));
+        }
+        let _ = std::fs::remove_dir_all(&home);
     }
 
     #[test]

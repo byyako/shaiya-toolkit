@@ -13,7 +13,7 @@ use shaiya_clientdata::mani::{ManiValue, MANI_FIELDS, MANI_SIZE};
 use shaiya_clientdata::modeljson::{self, JsonError, ModelFormat, MAX_JSON_BYTES, MAX_MODEL_BYTES};
 use shaiya_clientdata::mesh3de::De3Layout;
 use shaiya_clientdata::{Ani, C3dc, Mani, Mesh3de, Mesh3do, Vani};
-use shaiya_core::fs::{client_folder_above, same_file, write_atomic_checked};
+use shaiya_core::fs::{client_folder_above, client_folder_for_new, ensure_out_folder, same_file, write_atomic_checked};
 use shaiya_core::glob::{Filter, Pattern};
 use shaiya_core::{Error, Result};
 use std::cell::Cell;
@@ -298,7 +298,7 @@ pub fn run(ctx: &Ctx, cmd: &Cmd, job: &shaiya_core::Job) -> i32 {
         Cmd::Validate(a) => describe(ctx, a, true).map_err(Fail::from),
         Cmd::Compare(a) => compare(ctx, a).map_err(Fail::from),
         Cmd::Export(a) => export(ctx, a, job),
-        Cmd::Diff(a) => diff(ctx, a).map_err(Fail::from),
+        Cmd::Diff(a) => diff(ctx, a, job).map_err(Fail::from),
         Cmd::Import(a) => import(ctx, a),
         Cmd::Edit(a) => edit(ctx, a),
     };
@@ -972,7 +972,7 @@ fn diff_side(ctx: &Ctx, name: &str, from: Option<&str>) -> Result<Ani> {
     read_ani(name, &bytes)
 }
 
-fn diff(ctx: &Ctx, a: &DiffArgs) -> Result<i32> {
+fn diff(ctx: &Ctx, a: &DiffArgs, job: &shaiya_core::Job) -> Result<i32> {
     let from_b = a.from_b.as_deref().or(a.from.as_deref());
     let (ani_a, ani_b) = match (diff_side(ctx, &a.a, a.from.as_deref()), diff_side(ctx, &a.b, from_b)) {
         (Ok(x), Ok(y)) => (x, y),
@@ -988,7 +988,7 @@ fn diff(ctx: &Ctx, a: &DiffArgs) -> Result<i32> {
             return Ok(3);
         }
     };
-    let d = shaiya_clientdata::anim::diff(&ani_a, &ani_b);
+    let d = shaiya_clientdata::anim::diff_with(&ani_a, &ani_b, &mut || job.check().is_err()).ok_or(Error::Cancelled)?;
     if ctx.json {
         let bones: Vec<Value> = d
             .bones
@@ -1145,7 +1145,7 @@ fn json_target(dir: &Path, rel: &str) -> PathBuf {
 fn export_dir(ctx: &Ctx, a: &ExportArgs, dir: &Path, job: &shaiya_core::Job) -> Res {
     let saved: Vec<PathBuf> = crate::config::load_clients(ctx.data_dir.as_deref())?.into_iter().map(|c| c.path).collect();
     // before anything is read: DIR must not be (inside) a client folder, and must be a folder or not exist yet
-    if let Some(client) = client_folder_above(&dir.join("x"), &saved) {
+    if let Some(client) = client_folder_for_new(dir, &saved) {
         return Err(Error::Refused(format!("{} is inside the client folder {}: write it elsewhere and put it in with Replace or archive replace", dir.display(), client.display())).into());
     }
     if dir.exists() && !dir.is_dir() {
@@ -1222,10 +1222,11 @@ fn export_entry(
     };
     let folder = target.parent().map(Path::to_path_buf).unwrap_or_else(|| dir.to_path_buf());
     if !folders_checked.contains(&folder) {
-        std::fs::create_dir_all(&folder).map_err(|x| input(Error::io(&folder, x).to_string()))?;
-        // the folders under DIR are made by this run, but a link that was already there could lead into a client
-        if let Some(client) = client_folder_above(&target, saved) {
-            return Err((format!("{} is inside the client folder {}", target.display(), client.display()), Why::Safety));
+        // the deepest existing folder is resolved and checked before anything is made: a link that was already there could lead into a client
+        match ensure_out_folder(&folder, saved) {
+            Ok(None) => {}
+            Ok(Some(client)) => return Err((format!("{} is inside the client folder {}", target.display(), client.display()), Why::Safety)),
+            Err(x) => return Err((x.to_string(), Why::Safety)),
         }
         folders_checked.insert(folder);
     }

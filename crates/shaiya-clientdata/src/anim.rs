@@ -483,8 +483,12 @@ pub fn pose(ani: &Ani, locals: &[Mat4], t: f32) -> Vec<Mat4> {
 
 // ---- the pose difference ----------------------------------------------------------------------------------------------------------
 
-/// Most keys [`diff`] samples: a longer range is sampled with a stride so that no more than this many poses are computed per animation.
+/// Most strided keys [`diff`] samples: a longer range is sampled with a stride so that no more than this many poses are computed per
+/// animation (the end key is always added, so at most one more).
 pub const DIFF_SAMPLES_MAX: i64 = 100_000;
+/// The work budget of [`diff`]: sampled keys times compared bones stay at or under this (about 2e7 bone poses) by a larger stride, so a file
+/// with many bones is sampled at fewer keys (never fewer than 2 strided keys plus the end key).
+pub const DIFF_WORK_MAX: i64 = 20_000_000;
 /// A bone differs when its world rotation turns by more than this many degrees at some sampled key (below it is float noise).
 pub const DIFF_ANGLE_EPSILON_DEG: f32 = 1e-3;
 /// A bone differs when its world position moves by more than this many units at some sampled key.
@@ -554,19 +558,29 @@ fn pose_distance(a: &Mat4, b: &Mat4) -> (f32, f32) {
 }
 
 /// Compares two animations: [`rig_check`] (`a` as candidate), both end keys, and for every bone both files have the world pose from [`pose`]
-/// at every integer key from the smaller first field (or 0) to the larger end key (with a stride over [`DIFF_SAMPLES_MAX`] keys). A bone is
+/// at every integer key from the smaller first field (or 0) to the larger end key (with a stride over [`DIFF_SAMPLES_MAX`] keys, and over
+/// [`DIFF_WORK_MAX`] keys times bones; the end key is always sampled). A bone is
 /// listed when its pose differs by more than [`DIFF_ANGLE_EPSILON_DEG`] or [`DIFF_OFFSET_EPSILON`] at some sampled key, largest turn first
 /// (then largest offset, then bone index). Swapping the files swaps the pairs and keeps every number.
 pub fn diff(a: &Ani, b: &Ani) -> AniDiff {
+    diff_with(a, b, &mut || false).expect("a diff that is never cancelled ends")
+}
+
+/// [`diff`] with a cancel check once per sampled key: `cancel` returning true ends it with `None`.
+pub fn diff_with(a: &Ani, b: &Ani, cancel: &mut dyn FnMut() -> bool) -> Option<AniDiff> {
     let skeleton = rig_check(a, b);
     let start = i64::from(a.first_field.min(b.first_field).min(0));
     let end = i64::from(a.end_key.max(b.end_key)).max(start);
-    let stride = ((end - start + 1) / DIFF_SAMPLES_MAX).max(0) + 1;
-    let (la, lb) = (locals(a), locals(b));
     let n = a.bones.len().min(b.bones.len());
+    let samples = DIFF_SAMPLES_MAX.min((DIFF_WORK_MAX / (n.max(1) as i64)).max(2));
+    let stride = ((end - start + 1) / samples).max(0) + 1;
+    let (la, lb) = (locals(a), locals(b));
     let mut max: Vec<(f32, f32)> = vec![(0.0, 0.0); n];
     let mut key = start;
     loop {
+        if cancel() {
+            return None;
+        }
         let (pa, pb) = (pose(a, &la, key as f32), pose(b, &lb, key as f32));
         for (i, m) in max.iter_mut().enumerate() {
             let (angle, offset) = pose_distance(&pa[i], &pb[i]);
@@ -586,7 +600,7 @@ pub fn diff(a: &Ani, b: &Ani) -> AniDiff {
         .map(|(bone, (max_angle_deg, max_offset))| BoneDiff { bone, max_angle_deg, max_offset, keys: (count(&a.bones[bone]), count(&b.bones[bone])) })
         .collect();
     bones.sort_by(|x, y| y.max_angle_deg.total_cmp(&x.max_angle_deg).then(y.max_offset.total_cmp(&x.max_offset)).then(x.bone.cmp(&y.bone)));
-    AniDiff { skeleton, end_key: (a.end_key, b.end_key), bones }
+    Some(AniDiff { skeleton, end_key: (a.end_key, b.end_key), bones })
 }
 
 // ---- kinds and rigs -----------------------------------------------------------------------------------------------------------------
@@ -1067,6 +1081,37 @@ mod diff_tests {
         let d = diff(&a, &c);
         assert_eq!(d.skeleton, vec![RigDiff::BoneCount { candidate: 3, target: 2 }]);
         assert!(d.bones.is_empty(), "only the bones both files have are compared");
+    }
+
+    #[test]
+    fn diff_with_stops_when_cancelled_and_checks_once_per_sample() {
+        let a = parse(&arm_ani(30)).unwrap();
+        let mut calls = 0;
+        assert_eq!(diff_with(&a, &a, &mut || { calls += 1; false }).map(|d| d.is_identical()), Some(true));
+        assert_eq!(calls, 31, "one check per whole key 0..=30");
+        let mut calls = 0;
+        assert!(diff_with(&a, &a, &mut || { calls += 1; calls == 5 }).is_none());
+        assert_eq!(calls, 5, "it stops at the first cancel");
+    }
+
+    #[test]
+    fn diff_samples_at_most_the_key_cap_and_the_bone_work_budget() {
+        use shaiya_testkit::anim::{ani_bytes, identity_bits, BoneSpec};
+        let build = |end_key: i32, n: usize| {
+            let bones: Vec<BoneSpec> = (0..n).map(|_| BoneSpec { parent: -1, matrix: identity_bits(), rot: Vec::new(), trans: Vec::new() }).collect();
+            parse(&ani_bytes(0, end_key, &bones)).unwrap()
+        };
+        // one bone, a very long range: at most DIFF_SAMPLES_MAX + 1 keys (the end key is always added)
+        let a = build(300_000, 1);
+        let mut calls = 0;
+        diff_with(&a, &a, &mut || { calls += 1; false }).unwrap();
+        assert!(calls as i64 <= DIFF_SAMPLES_MAX + 1 && calls > 1000, "{calls}");
+        // many bones: keys x bones stays under the work budget (plus one end key)
+        let bones = 2_000;
+        let b = build(100_000, bones);
+        let mut calls = 0;
+        diff_with(&b, &b, &mut || { calls += 1; false }).unwrap();
+        assert!((calls as i64 - 1) * bones as i64 <= DIFF_WORK_MAX && calls > 100, "{calls}");
     }
 
     #[test]

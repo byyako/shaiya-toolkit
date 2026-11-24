@@ -69,7 +69,7 @@ pub fn run(archive: &Archive, path: &str, tool: &Tool, job: &shaiya_core::Job) -
     }
     let bytes = output.try_to_bytes().map_err(refused)?;
     job.check()?;
-    let diff = anim::diff(&input, &output);
+    let diff = anim::diff_with(&input, &output, &mut || job.check().is_err()).ok_or(Error::Cancelled)?;
     Ok(Edited { input, output, bytes, diff })
 }
 
@@ -317,7 +317,13 @@ impl AnimEdit {
         };
         let flat: String = self.path.chars().map(|c| if c == '/' || c == '\\' || c == ':' { '_' } else { c }).collect();
         let file = dir.join(flat);
-        match std::fs::create_dir_all(&dir).map_err(|x| Error::io(&dir, x)).and_then(|_| write_checked(&file, &e)) {
+        let saved: Vec<PathBuf> = cx.shell.shared().clients.iter().map(|c| PathBuf::from(&c.path)).collect();
+        let made = match shaiya_core::fs::ensure_out_folder(&dir, &saved) {
+            Ok(None) => write_checked(&file, &e),
+            Ok(Some(client)) => Err(Error::Refused(format!("{} is inside the client folder {}", dir.display(), client.display()))),
+            Err(x) => Err(x),
+        };
+        match made {
             Ok(()) => Some(file),
             Err(err) => {
                 cx.shell.error("Queue failed", &err);
