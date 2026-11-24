@@ -3,6 +3,7 @@
 //! procedure as the command line (`shaiya_archive::edit`, `shaiya_patch::apply_with`), after a confirmation.
 
 pub mod anim_compare;
+pub mod anim_edit;
 pub mod anim_view;
 pub mod apply_tab;
 pub mod archive_view;

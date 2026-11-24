@@ -4,6 +4,7 @@
 //! in memory: nothing here writes a file.
 
 pub mod anim;
+pub mod animedit;
 pub mod area_txt;
 pub mod dg;
 pub mod error;

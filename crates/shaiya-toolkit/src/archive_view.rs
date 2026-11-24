@@ -582,6 +582,8 @@ pub struct ArchiveView {
     folder_exports: crate::export_json::FolderExports,
     /// The "Compare with..." window of one `.ANI` (see `anim_compare`).
     anim_compare: Option<crate::anim_compare::AnimCompare>,
+    /// The "Edit animation..." window of one `.ANI` (see `anim_edit`).
+    anim_edit: Option<crate::anim_edit::AnimEdit>,
     /// The "Rig" filter inside `Character/<race>/ANI`: an index into `anim::RIGS`.
     pub rig: Option<usize>,
     apply: ApplyFlow,
@@ -692,6 +694,7 @@ impl ArchiveView {
             json_exports: Default::default(),
             folder_exports: Default::default(),
             anim_compare: None,
+            anim_edit: None,
             rig: None,
             apply: ApplyFlow::Idle,
             confirm_rows: Vec::new(),
@@ -760,6 +763,7 @@ impl ArchiveView {
         self.compare = None;
         self.folder_exports.cancel();
         self.anim_compare = None;
+        self.anim_edit = None;
     }
 
     /// Opens a saved client folder (changes are possible) or any archive file (read only), as a task.
@@ -879,6 +883,9 @@ impl ArchiveView {
             self.status_line = line;
         }
         if let Some(c) = &mut self.anim_compare {
+            c.poll(cx);
+        }
+        if let Some(c) = &mut self.anim_edit {
             c.poll(cx);
         }
         self.poll_check(cx);
@@ -1920,6 +1927,62 @@ impl ArchiveView {
         self.anim_compare = Some(crate::anim_compare::AnimCompare::new(path, a, siblings, clients));
     }
 
+    /// Opens the "Edit animation..." window for the `.ANI` in row `row`.
+    fn open_edit(&mut self, row: usize) {
+        let Some(l) = &self.loaded else { return };
+        let (Some(a), Some(r)) = (l.archive.clone(), l.rows.get(row)) else { return };
+        let path = r.path.clone();
+        let mut siblings: Vec<String> = l.files_in(r.folder()).iter().map(|&i| &l.rows[i]).filter(|x| !x.shadowed && is_ani_path(&x.path) && x.path != path).map(|x| x.path.clone()).collect();
+        siblings.sort_by_key(|p| lower_key(p));
+        self.anim_edit = Some(crate::anim_edit::AnimEdit::new(path, a, siblings, l.client_dir.clone()));
+    }
+
+    /// Test hook: "Edit animation..." for the `.ANI` at `path` with `tool` chosen (the worker starts at once).
+    #[doc(hidden)]
+    pub fn edit_ani_with(&mut self, path: &str, tool: crate::anim_edit::Tool, cx: &mut ToolkitCx<'_>) {
+        let Some(i) = self.find_row(path) else { return };
+        self.open_edit(i);
+        if let Some(c) = &mut self.anim_edit {
+            c.set_tool(&tool);
+            c.start(tool, cx);
+        }
+    }
+
+    /// The window of "Edit animation...", when open.
+    #[doc(hidden)]
+    pub fn anim_edit(&self) -> Option<&crate::anim_edit::AnimEdit> {
+        self.anim_edit.as_ref()
+    }
+
+    #[doc(hidden)]
+    pub fn anim_edit_mut(&mut self) -> Option<&mut crate::anim_edit::AnimEdit> {
+        self.anim_edit.as_mut()
+    }
+
+    /// Whether the row menu of the file at `path` offers "Edit animation..." (an `.ANI` with the `data.saf` open).
+    #[doc(hidden)]
+    pub fn offers_edit(&self, path: &str) -> bool {
+        self.offers_compare(path)
+    }
+
+    /// Test hook: "Queue as replacement" in the open edit window (the staged file goes through the replace checks).
+    #[doc(hidden)]
+    pub fn queue_ani_edit(&mut self, cx: &mut ToolkitCx<'_>) {
+        if let Some(c) = &mut self.anim_edit {
+            c.want_queue();
+        }
+        self.finish_ani_edit_queue(cx);
+    }
+
+    fn finish_ani_edit_queue(&mut self, cx: &mut ToolkitCx<'_>) {
+        let Some(c) = &mut self.anim_edit else { return };
+        let Some(file) = c.take_queue(cx) else { return };
+        let path = c.path().to_string();
+        if let Some(i) = self.find_row(&path) {
+            self.replace_with_file(i, file, cx);
+        }
+    }
+
     /// Test hook: "Compare with..." for the `.ANI` at `path`, choosing `other` and pressing Compare.
     #[doc(hidden)]
     pub fn compare_ani_with(&mut self, path: &str, other: crate::anim_compare::Other, cx: &mut ToolkitCx<'_>) {
@@ -2167,6 +2230,7 @@ enum Act {
     ExportJson(usize),
     ExportFolderJson(usize),
     CompareAni(usize),
+    EditAni(usize),
     PlayAnimation(String),
     AddFiles,
     QueueRemove,
@@ -2564,8 +2628,12 @@ impl ArchiveView {
                                 ("Decrypt to file...", MenuChoice::Decrypt),
                                 ("Export as JSON...", MenuChoice::ExportJson),
                                 ("Compare with...", MenuChoice::CompareWith),
+                                ("Edit animation...", MenuChoice::EditAnimation),
                             ] {
                                 if matches!(choice, MenuChoice::ExportJson) && !matches!(v, ViewRow::File(i) if l.archive.is_some() && crate::export_json::is_model_path(&l.rows[i].path)) {
+                                    continue;
+                                }
+                                if matches!(choice, MenuChoice::EditAnimation) && !matches!(v, ViewRow::File(i) if l.archive.is_some() && is_ani_path(&l.rows[i].path)) {
                                     continue;
                                 }
                                 if matches!(choice, MenuChoice::CompareWith) && !matches!(v, ViewRow::File(i) if l.archive.is_some() && is_ani_path(&l.rows[i].path)) {
@@ -2640,6 +2708,11 @@ impl ArchiveView {
                 MenuChoice::CompareWith => {
                     if let ViewRow::File(i) = self.view[vi] {
                         acts.push(Act::CompareAni(i));
+                    }
+                }
+                MenuChoice::EditAnimation => {
+                    if let ViewRow::File(i) = self.view[vi] {
+                        acts.push(Act::EditAni(i));
                     }
                 }
                 MenuChoice::ExportFolderJson => {
@@ -2871,6 +2944,13 @@ impl ArchiveView {
                 self.anim_compare = None;
             }
         }
+        if let Some(c) = &mut self.anim_edit {
+            c.draw(&ctx, cx);
+            if !c.open {
+                self.anim_edit = None;
+            }
+        }
+        self.finish_ani_edit_queue(cx);
         // Replace with a file that looks broken
         if let Some((items, findings)) = self.replace_ask.take() {
             let c = Confirm {
@@ -3253,6 +3333,7 @@ impl ArchiveView {
                     }
                 }
                 Act::CompareAni(i) => self.open_compare(i, cx),
+                Act::EditAni(i) => self.open_edit(i),
                 Act::PlayAnimation(path) => self.play_animation_on_mesh(&path, cx),
                 Act::ExportJson(i) => {
                     let name = self.loaded.as_ref().and_then(|l| l.rows.get(i)).map(|r| r.name().to_string());
@@ -3374,6 +3455,7 @@ enum MenuChoice {
     ExportJson,
     ExportFolderJson,
     CompareWith,
+    EditAnimation,
 }
 
 /// What the Archive tab asks the app frame to do on its behalf.

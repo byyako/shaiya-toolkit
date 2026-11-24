@@ -395,7 +395,7 @@ pub fn locals(ani: &Ani) -> Vec<Mat4> {
         .collect()
 }
 
-fn slerp(a: [f32; 4], b: [f32; 4], f: f32) -> [f32; 4] {
+pub(crate) fn slerp(a: [f32; 4], b: [f32; 4], f: f32) -> [f32; 4] {
     let mut dot: f32 = a.iter().zip(&b).map(|(x, y)| x * y).sum();
     let mut b = b;
     if dot < 0.0 {
@@ -421,7 +421,7 @@ fn slerp(a: [f32; 4], b: [f32; 4], f: f32) -> [f32; 4] {
 
 /// Where `t` falls in a track of `n >= 1` keys: `Ok((k, f))` between keys `k` and `k + 1`, `Err(k)` when key `k` holds (before the first
 /// key, at or after the last, or two equal keys).
-fn segment(key: impl Fn(usize) -> i32, n: usize, t: f32) -> std::result::Result<(usize, f32), usize> {
+pub(crate) fn segment(key: impl Fn(usize) -> i32, n: usize, t: f32) -> std::result::Result<(usize, f32), usize> {
     if t <= key(0) as f32 {
         return Err(0);
     }

@@ -44,7 +44,7 @@ pub struct Shown {
     pub diff: AniDiff,
 }
 
-fn read_ani(archive: &Archive, path: &str, label: &str) -> Result<Ani> {
+pub(crate) fn read_ani(archive: &Archive, path: &str, label: &str) -> Result<Ani> {
     let entry = archive.index().get(path).ok_or_else(|| Error::io(path, std::io::Error::new(std::io::ErrorKind::NotFound, format!("not in {label}"))))?;
     if u64::from(entry.length) > MAX_MODEL_BYTES {
         return Err(Error::format(path, None, format!("{} bytes is over the {MAX_MODEL_BYTES}-byte limit for a model file", entry.length)));

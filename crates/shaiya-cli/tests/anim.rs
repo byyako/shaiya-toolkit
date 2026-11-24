@@ -1383,3 +1383,96 @@ fn export_and_import_of_us_client_files_give_the_same_bytes() {
         println!("{path}: {} bytes, {} bytes of JSON", want.len(), std::fs::metadata(&json_file).unwrap().len());
     }
 }
+
+// ---- edit (T12 W9) ----------------------------------------------------------------------------------------------------------------
+
+#[test]
+fn edit_retime_writes_a_file_that_passes_compare() {
+    let w = world();
+    let d = w.tmp.path().join("e");
+    write(&d.join("a.ANI"), &arm_ani(30));
+    let o = sh(&w.data, &["anim", "edit", "retime", p(&d.join("a.ANI")), "--factor", "2", "-o", p(&d.join("slow.ANI"))]);
+    assert_eq!(code(&o), 0, "{}", err(&o));
+    assert!(out(&o).contains("end key 30 -> 60 (1.00 s -> 2.00 s)"), "{}", out(&o));
+    let o = sh(&w.data, &["anim", "compare", p(&d.join("slow.ANI")), p(&d.join("a.ANI"))]);
+    assert_eq!(code(&o), 0, "{}", out(&o));
+    let v = json(&sh(&w.data, &["anim", "info", p(&d.join("slow.ANI")), "--json"]));
+    assert_eq!(v["files"][0]["end_key"], 60);
+    // --seconds says the same thing as the matching factor
+    let o = sh(&w.data, &["anim", "edit", "retime", p(&d.join("a.ANI")), "--seconds", "2", "-o", p(&d.join("two.ANI")), "--json"]);
+    assert_eq!(code(&o), 0, "{}", err(&o));
+    let v = json(&o);
+    assert_eq!((v["written"].clone(), v["tool"].clone(), v["end_key"]["after"].clone()), (true.into(), "retime".into(), 60.into()), "{v}");
+    assert_eq!(std::fs::read(d.join("two.ANI")).unwrap(), std::fs::read(d.join("slow.ANI")).unwrap());
+    // trim and copy-track write files that pass too
+    let o = sh(&w.data, &["anim", "edit", "trim", p(&d.join("a.ANI")), "--start", "10", "--end", "20", "-o", p(&d.join("cut.ANI"))]);
+    assert_eq!(code(&o), 0, "{}", err(&o));
+    assert_eq!(code(&sh(&w.data, &["anim", "compare", p(&d.join("cut.ANI")), p(&d.join("a.ANI"))])), 0);
+    let o = sh(&w.data, &["anim", "edit", "copy-track", p(&d.join("a.ANI")), "--source", p(&d.join("slow.ANI")), "--bones", "1", "--rotation", "-o", p(&d.join("mix.ANI"))]);
+    assert_eq!(code(&o), 0, "{}", err(&o));
+    assert_eq!(code(&sh(&w.data, &["anim", "compare", p(&d.join("mix.ANI")), p(&d.join("a.ANI"))])), 0);
+    // from an archive
+    let c = client_with(&w, "ec", &[("Monster/ANI/A.ANI", arm_ani(30))]);
+    let o = sh(&w.data, &["anim", "edit", "retime", "Monster/ANI/A.ANI", "--from", p(&c), "--factor", "0.5", "-o", p(&d.join("fast.ANI"))]);
+    assert_eq!(code(&o), 0, "{}", err(&o));
+    assert!(out(&o).contains("end key 30 -> 15"), "{}", out(&o));
+}
+
+fn sh_owned(data: &Path, args: &[String]) -> std::process::Output {
+    let refs: Vec<&str> = args.iter().map(String::as_str).collect();
+    sh(data, &refs)
+}
+
+#[test]
+fn edit_outputs_follow_the_import_rules() {
+    let w = world();
+    let d = w.tmp.path().join("r");
+    write(&d.join("a.ANI"), &arm_ani(30));
+    let a_path = d.join("a.ANI");
+    let a = p(&a_path);
+    fn retime_args<'a>(a: &'a str, out: &'a str) -> Vec<&'a str> {
+        vec!["anim", "edit", "retime", a, "--factor", "2", "-o", out]
+    }
+    let base = |out: &str| retime_args(a, out).into_iter().map(str::to_string).collect::<Vec<String>>();
+    // exists: 4, kept; --force replaces
+    write(&d.join("x.ANI"), b"old");
+    assert_eq!(code(&sh_owned(&w.data, &base(p(&d.join("x.ANI"))))), 4);
+    assert_eq!(std::fs::read(d.join("x.ANI")).unwrap(), b"old");
+    let mut forced = base(p(&d.join("x.ANI")));
+    forced.push("--force".to_string());
+    assert_eq!(code(&sh_owned(&w.data, &forced)), 0);
+    assert_ne!(std::fs::read(d.join("x.ANI")).unwrap(), b"old");
+    // the same file as IN: 4, even with --force
+    let mut same = base(a);
+    same.push("--force".to_string());
+    assert_eq!(code(&sh_owned(&w.data, &same)), 4);
+    assert_eq!(std::fs::read(a).unwrap(), arm_ani(30));
+    // inside a client folder: 4, nothing made
+    let o = sh_owned(&w.data, &base(p(&w.client.join("new.ANI"))));
+    assert_eq!(code(&o), 4, "{}", err(&o));
+    assert!(!w.client.join("new.ANI").exists());
+    // a folder that does not exist: 3
+    assert_eq!(code(&sh_owned(&w.data, &base(p(&d.join("nope").join("y.ANI"))))), 3);
+    // a bad argument: 2, nothing written
+    for args in [
+        vec!["anim", "edit", "retime", a, "--factor", "0", "-o", p(&d.join("z.ANI"))],
+        vec!["anim", "edit", "retime", a, "--factor", "11", "-o", p(&d.join("z.ANI"))],
+        vec!["anim", "edit", "trim", a, "--start", "20", "--end", "10", "-o", p(&d.join("z.ANI"))],
+        vec!["anim", "edit", "copy-track", a, "--source", a, "--bones", "1", "-o", p(&d.join("z.ANI"))],
+        vec!["anim", "edit", "copy-track", a, "--source", a, "--bones", "9", "--rotation", "-o", p(&d.join("z.ANI"))],
+    ] {
+        assert_eq!(code(&sh(&w.data, &args)), 2, "{args:?}");
+    }
+    // a trim outside the animation does not pass: 1, nothing written
+    let o = sh(&w.data, &["anim", "edit", "trim", a, "--start", "10", "--end", "99", "-o", p(&d.join("z.ANI"))]);
+    assert_eq!(code(&o), 1, "{}", err(&o));
+    assert!(out(&o).contains("nothing written") && !d.join("z.ANI").exists());
+    // another skeleton as the source: 1, nothing written
+    write(&d.join("long.ANI"), &long_chain(4, 0.0));
+    let o = sh(&w.data, &["anim", "edit", "copy-track", a, "--source", p(&d.join("long.ANI")), "--all", "--rotation", "-o", p(&d.join("z.ANI"))]);
+    assert_eq!(code(&o), 1, "{}", err(&o));
+    assert!(err(&o).contains("do not have the same skeleton") && !d.join("z.ANI").exists(), "{}", err(&o));
+    // not an .ANI or not readable: 3
+    write(&d.join("n.txt"), b"x");
+    assert_eq!(code(&sh(&w.data, &["anim", "edit", "retime", p(&d.join("n.txt")), "--factor", "2", "-o", p(&d.join("z.ANI"))])), 3);
+}

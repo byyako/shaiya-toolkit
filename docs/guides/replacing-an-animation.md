@@ -98,6 +98,16 @@ puts `data.sah` and `data.saf` back byte for byte. See [undo and recovery](undo-
 
 Queue the replacement in the Archive tab and press **Make patch...**, or use `shaiya patch build`, then sign and publish as in [make a patch](make-a-patch.md). Players apply the patch the usual way and can roll it back.
 
+## Retime, trim or copy tracks
+
+Three tools make a new `.ANI` from one that exists, without editing JSON. Each result must pass the same check as `compare` against the file it was made from (same skeleton, same first field, no validation error), or nothing is written.
+
+- **Retime** makes the animation longer or shorter: `shaiya anim edit retime huwm_117_x.ANI --from "@us" --factor 0.5 -o fast.ANI` (a factor from 0.1 to 10), or `--seconds 2` for a length. Every bone that has a track is sampled again at each whole key of the new length, so no two keys collide; keys that a straight line (for rotations, a slerp) reproduces within 1e-5 are dropped.
+- **Trim** keeps a part: `shaiya anim edit trim huwm_117_x.ANI --from "@us" --start 10 --end 40 -o short.ANI` keeps keys 10 to 40 and moves them to the file's first field. A part outside the animation is refused.
+- **Copy tracks** takes the rotation and/or translation tracks of some bones from another animation: `shaiya anim edit copy-track a.ANI --source b.ANI --bones 3,4,5 --rotation -o mixed.ANI`. Both files need the same skeleton and first field, or it is refused with the differences.
+
+The outputs follow the rules of `import`: a new file (`--force` replaces one), never inside a client folder. In Shaiya Toolkit, right-click an `.ANI` and choose **Edit animation...**: the window shows the result as you change the settings, **Save as new file...** writes it, and **Queue as replacement** adds it to the queued changes like Replace with file. All of this is validated offline against the toolkit's own pose rules; how the game plays an edited file has not been tested.
+
 ## Compare two animations
 
 To see how your animation differs from the one it replaces, or how two animations of a rig differ, compare their poses:

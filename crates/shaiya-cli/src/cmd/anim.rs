@@ -6,6 +6,7 @@ use crate::output::print_json;
 use crate::Ctx;
 use serde_json::{json, Value};
 use shaiya_archive::Archive;
+use shaiya_clientdata::animedit::{self, Tracks};
 use shaiya_clientdata::anim::{passes, rig_check, rig_of, same_skeleton, validate, AniIssue, RigDiff, Severity};
 use shaiya_clientdata::mesh3dc::C3dcLayout;
 use shaiya_clientdata::mani::{ManiValue, MANI_FIELDS, MANI_SIZE};
@@ -68,6 +69,93 @@ pub enum Cmd {
     ///
     /// Example: shaiya anim import wave.json -o new.ani --like "character/human/ani/huwm_117_x.ani" --from "@us"
     Import(ImportArgs),
+    /// Retime, trim or copy tracks of an .ANI into a new file (`edit retime`, `edit trim`, `edit copy-track`)
+    ///
+    /// Each tool reads IN (a file, or with --from its path in the archive), makes a new animation and writes it to -o only when it passes the
+    /// same check as `compare` against IN (same skeleton, same first field, no validation error); exit 1 and nothing written otherwise. The
+    /// output rules are those of `import`: a new file (an existing one only with --force), never inside a client folder, never IN itself
+    /// (exit 4). Exit 2 for a bad argument. Validated offline; the game's playback is not tested.
+    ///
+    /// Example: shaiya anim edit retime character/human/ani/huwm_117_x.ani --from "@us" --factor 0.5 -o slow.ani
+    Edit(EditArgs),
+}
+
+#[derive(clap::Args)]
+pub struct EditArgs {
+    #[command(subcommand)]
+    pub tool: EditTool,
+}
+
+#[derive(clap::Subcommand)]
+pub enum EditTool {
+    /// Make the animation F times as long (0.1 to 10), or S seconds long: the poses are sampled at every whole key of the new range
+    Retime(RetimeArgs),
+    /// Keep the keys START to END (first field <= START < END <= end key) and move them to the first field
+    Trim(TrimArgs),
+    /// Copy the rotation and/or translation tracks of some bones from SRC into IN (both need the same skeleton and first field)
+    CopyTrack(CopyTrackArgs),
+}
+
+/// What every `edit` tool takes: the input, where it is read from, the output.
+#[derive(clap::Args)]
+pub struct EditIo {
+    /// The .ANI to edit: a file on disk, or with --from its path in the archive
+    #[arg(value_name = "IN")]
+    pub input: String,
+    /// Read IN (and the --source file) from this archive (a client folder, a .sah file or @name)
+    #[arg(long, value_name = "ARCHIVE")]
+    pub from: Option<String>,
+    /// The file to write (a new file; an existing one only with --force)
+    #[arg(short = 'o', long = "out", value_name = "OUT")]
+    pub out: PathBuf,
+    /// Replace an existing output
+    #[arg(long)]
+    pub force: bool,
+}
+
+#[derive(clap::Args)]
+pub struct RetimeArgs {
+    #[command(flatten)]
+    pub io: EditIo,
+    /// The new length as a multiple of the old (0.1 to 10; 2 = twice as long)
+    #[arg(long, value_name = "F", allow_hyphen_values = true, conflicts_with = "seconds", required_unless_present = "seconds")]
+    pub factor: Option<f32>,
+    /// The new length in seconds (30 keys are one second), instead of --factor
+    #[arg(long, value_name = "S", allow_hyphen_values = true)]
+    pub seconds: Option<f32>,
+}
+
+#[derive(clap::Args)]
+pub struct TrimArgs {
+    #[command(flatten)]
+    pub io: EditIo,
+    /// The first key to keep
+    #[arg(long, value_name = "K", allow_hyphen_values = true)]
+    pub start: i32,
+    /// The last key to keep
+    #[arg(long, value_name = "K", allow_hyphen_values = true)]
+    pub end: i32,
+}
+
+#[derive(clap::Args)]
+pub struct CopyTrackArgs {
+    #[command(flatten)]
+    pub io: EditIo,
+    /// The .ANI the tracks come from: a file, or with --from its path in the archive
+    #[arg(long, value_name = "SRC")]
+    pub source: String,
+    /// The bones to copy, as a comma separated list of bone numbers (0 is the first bone)
+    #[arg(long, value_name = "LIST", value_delimiter = ',', conflicts_with = "all", required_unless_present = "all")]
+    pub bones: Vec<usize>,
+    /// Copy every bone
+    #[arg(long)]
+    pub all: bool,
+    /// Copy the rotation tracks
+    #[arg(long)]
+    pub rotation: bool,
+    /// Copy the translation tracks
+    #[arg(long)]
+    pub translation: bool,
 }
 
 #[derive(clap::Args)]
@@ -212,6 +300,7 @@ pub fn run(ctx: &Ctx, cmd: &Cmd, job: &shaiya_core::Job) -> i32 {
         Cmd::Export(a) => export(ctx, a, job),
         Cmd::Diff(a) => diff(ctx, a).map_err(Fail::from),
         Cmd::Import(a) => import(ctx, a),
+        Cmd::Edit(a) => edit(ctx, a),
     };
     match r {
         Ok(code) => code,
@@ -1280,6 +1369,148 @@ fn import(ctx: &Ctx, a: &ImportArgs) -> Res {
     } else {
         let mut w = out();
         outln!(w, "wrote {}: {}, {} bytes", a.out.display(), format.label(), num(bytes.len() as u64));
+        let _ = w.flush();
+    }
+    Ok(0)
+}
+
+// ---- edit -------------------------------------------------------------------------------------------------------------------------
+
+fn seconds_of(ani: &Ani) -> f32 {
+    (ani.end_key as f32 - ani.first_field as f32) / 30.0
+}
+
+/// `edit retime`, `edit trim` and `edit copy-track`: the usage checks, the output checks of `import`, the tool, the rig check against IN, the
+/// atomic write with a read-back that must read as an .ANI that passes again.
+fn edit(ctx: &Ctx, a: &EditArgs) -> Res {
+    let (io, name) = match &a.tool {
+        EditTool::Retime(x) => (&x.io, "retime"),
+        EditTool::Trim(x) => (&x.io, "trim"),
+        EditTool::CopyTrack(x) => (&x.io, "copy-track"),
+    };
+    // arguments first (exit 2), before anything is read
+    match &a.tool {
+        EditTool::Retime(x) => {
+            if let Some(f) = x.factor {
+                if !f.is_finite() || !(animedit::RETIME_MIN..=animedit::RETIME_MAX).contains(&f) {
+                    return Err(Fail::Usage(format!("--factor must be a number from {} to {}", animedit::RETIME_MIN, animedit::RETIME_MAX)));
+                }
+            }
+            if x.seconds.is_some_and(|s| !s.is_finite() || s <= 0.0) {
+                return Err(Fail::Usage("--seconds must be a number above 0".to_string()));
+            }
+        }
+        EditTool::Trim(x) => {
+            if x.start >= x.end {
+                return Err(Fail::Usage("--start must be below --end".to_string()));
+            }
+        }
+        EditTool::CopyTrack(x) => {
+            if !x.rotation && !x.translation {
+                return Err(Fail::Usage("give --rotation, --translation or both".to_string()));
+            }
+        }
+    }
+    let ani_only = |n: &str| if has_ext(n, &["ani"]) { Ok(()) } else { Err(Error::format(n, None, "not an .ANI file")) };
+    ani_only(&io.input)?;
+    let in_path = match &io.from {
+        None => Some(resolve(ctx, &io.input)?),
+        Some(_) => None,
+    };
+    let src_name = if let EditTool::CopyTrack(x) = &a.tool { Some(x.source.as_str()) } else { None };
+    if let Some(s) = src_name {
+        ani_only(s)?;
+    }
+    let src_path = match (src_name, &io.from) {
+        (Some(s), None) => Some(resolve(ctx, s)?),
+        _ => None,
+    };
+    let protected: Vec<&Path> = in_path.iter().chain(src_path.iter()).map(|p| p.as_path()).collect();
+    check_output(ctx, &io.out, io.force, &protected)?;
+
+    let input_bytes = read_target(ctx, &io.input, io.from.as_deref())?;
+    let input = read_ani(&io.input, &input_bytes)?;
+    let made = match &a.tool {
+        EditTool::Retime(x) => {
+            let factor = match (x.factor, x.seconds) {
+                (Some(f), _) => Ok(f),
+                (None, Some(s)) => animedit::factor_for_seconds(&input, s),
+                (None, None) => unreachable!("clap requires one of them"),
+            };
+            factor.and_then(|f| animedit::retime(&input, f))
+        }
+        EditTool::Trim(x) => animedit::trim(&input, x.start, x.end),
+        EditTool::CopyTrack(x) => {
+            let src_bytes = read_target(ctx, &x.source, io.from.as_deref())?;
+            let source = read_ani(&x.source, &src_bytes)?;
+            let bones: Vec<usize> = if x.all { (0..input.bones.len()).collect() } else { x.bones.clone() };
+            if let Some(b) = bones.iter().find(|&&b| b >= input.bones.len()) {
+                return Err(Fail::Usage(format!("bone {b} does not exist: {} has {} bones", io.input, input.bones.len())));
+            }
+            animedit::copy_tracks(&input, &source, &bones, Tracks { rotation: x.rotation, translation: x.translation })
+        }
+    };
+    let out_ani = match made {
+        Ok(o) => o,
+        Err(e) => {
+            let why = match e {
+                shaiya_clientdata::Error::Format { what, .. } => what,
+                other => other.to_string(),
+            };
+            if ctx.json {
+                print_json(&json!({"input": io.input, "tool": name, "written": false, "error": why}));
+            } else {
+                eprintln!("{}: {why}", io.input);
+                let mut w = out();
+                outln!(w, "nothing written");
+                let _ = w.flush();
+            }
+            return Ok(1);
+        }
+    };
+    let bytes = out_ani.try_to_bytes().map_err(|e| Fail::Bug(e.to_string()))?;
+    if !passes(&out_ani, &input) {
+        return Err(Fail::Bug("the edited animation does not pass against its input".to_string()));
+    }
+    let out_name = file_name(&io.out);
+    let bug = Cell::new(false);
+    let same = same_bytes_check(&bytes, &bug);
+    let check = |temp: &Path| -> Result<()> {
+        same(temp)?;
+        let back = std::fs::read(temp).map_err(|e| Error::io(temp, e))?;
+        if !Ani::parse(&back, &out_name).is_ok_and(|c| passes(&c, &input)) {
+            bug.set(true);
+            return Err(Error::Refused("the file written does not pass the rig check".to_string()));
+        }
+        Ok(())
+    };
+    if let Err(e) = write_atomic_checked(&io.out, &bytes, &check) {
+        return Err(if bug.get() { Fail::Bug(e.to_string()) } else { e.into() });
+    }
+    if ctx.json {
+        print_json(&json!({
+            "input": io.input,
+            "tool": name,
+            "out": io.out.display().to_string(),
+            "bytes": bytes.len(),
+            "written": true,
+            "passes": true,
+            "end_key": {"before": input.end_key, "after": out_ani.end_key},
+        }));
+    } else {
+        let mut w = out();
+        outln!(
+            w,
+            "wrote {}: {} of {}, end key {} -> {} ({:.2} s -> {:.2} s), {} bytes",
+            io.out.display(),
+            name,
+            io.input,
+            input.end_key,
+            out_ani.end_key,
+            seconds_of(&input),
+            seconds_of(&out_ani),
+            num(bytes.len() as u64)
+        );
         let _ = w.flush();
     }
     Ok(0)

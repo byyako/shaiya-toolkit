@@ -3688,3 +3688,76 @@ fn the_rig_filter_shows_only_that_rig() {
     w.h.frames(3);
     assert_eq!(shown(&w).len(), 5, "an elf rig does not filter the human folder");
 }
+
+// ---- T12 W9: edit animation ------------------------------------------------------------------------------------------------------
+
+fn edit_done(w: &mut World) -> bool {
+    w.h.wait_until(WAIT, |h| h.app.app.archive.anim_edit().is_some_and(|c| !c.is_running() && c.current().is_some()))
+}
+
+#[test]
+fn editing_an_animation_saves_a_new_file() {
+    let mut w = rig_world("t12-w9-edit");
+    assert!(w.h.app.app.archive.offers_edit(ANI_PATH) && !w.h.app.app.archive.offers_edit("Character/Human/ANI/notes.txt"));
+    let arm = shaiya_testkit::anim::arm_ani(60);
+    let input = shaiya_clientdata::Ani::parse(&arm, "arm").unwrap();
+    with_cx(&mut w.h, |app, cx| app.archive.edit_ani_with(ANI_PATH, shaiya_toolkit::anim_edit::Tool::Retime { factor: 2.0 }, cx));
+    assert!(edit_done(&mut w), "the edit ends");
+    w.h.frames(3);
+    assert!(w.h.text().contains("Edit animation") && w.h.text().contains("End key 60 -> 120"), "{}", w.h.text());
+    let out_dir = TempDir::new("t12-w9-edit-out");
+    let out = out_dir.path().join("slow.ANI");
+    with_cx(&mut w.h, |app, cx| app.archive.anim_edit_mut().unwrap().save_new(out.clone(), cx));
+    assert!(w.h.wait_until(WAIT, |h| !h.app.app.archive.anim_edit().unwrap().is_saving()));
+    w.h.frames(2);
+    let saved = shaiya_clientdata::Ani::parse(&std::fs::read(&out).expect("the file was written"), "slow").unwrap();
+    assert_eq!(saved.end_key, 120);
+    assert!(shaiya_clientdata::anim::passes(&saved, &input), "the file passes against the original");
+    // an existing file is kept, a name without .ANI and a place inside a client are refused; nothing is made
+    let before = std::fs::read(&out).unwrap();
+    with_cx(&mut w.h, |app, cx| app.archive.anim_edit_mut().unwrap().save_new(out.clone(), cx));
+    w.h.frames(3);
+    assert_eq!(std::fs::read(&out).unwrap(), before);
+    let bad = out_dir.path().join("slow.txt");
+    with_cx(&mut w.h, |app, cx| app.archive.anim_edit_mut().unwrap().save_new(bad.clone(), cx));
+    let inside = w.client.path().join("new.ANI");
+    with_cx(&mut w.h, |app, cx| app.archive.anim_edit_mut().unwrap().save_new(inside.clone(), cx));
+    w.h.frames(3);
+    assert!(!bad.exists() && !inside.exists());
+    // a trim that is outside the file shows the reason and offers nothing to save
+    with_cx(&mut w.h, |app, cx| app.archive.edit_ani_with(ANI_PATH, shaiya_toolkit::anim_edit::Tool::Trim { start: 10, end: 99 }, cx));
+    assert!(w.h.wait_until(WAIT, |h| h.app.app.archive.anim_edit().is_some_and(|c| !c.is_running() && c.result.is_some())));
+    let e = w.h.app.app.archive.anim_edit().and_then(|c| c.result.clone()).expect("a result").expect_err("refused");
+    assert!(e.contains("start < end"), "{e}");
+    assert!(w.h.app.app.archive.anim_edit().unwrap().current().is_none());
+    // a trim inside it works, and the source of copy tracks is another animation of the folder
+    with_cx(&mut w.h, |app, cx| app.archive.edit_ani_with(ANI_PATH, shaiya_toolkit::anim_edit::Tool::Trim { start: 10, end: 40 }, cx));
+    assert!(edit_done(&mut w));
+    assert_eq!(w.h.app.app.archive.anim_edit().unwrap().current().unwrap().output.end_key, 30);
+    let tool = shaiya_toolkit::anim_edit::Tool::CopyTrack { source: "Character/Human/ANI/huwm_118_test.ANI".into(), bones: vec![1], rotation: true, translation: false };
+    with_cx(&mut w.h, |app, cx| app.archive.edit_ani_with(ANI_PATH, tool, cx));
+    assert!(edit_done(&mut w));
+    assert_eq!(w.h.app.app.archive.anim_edit().unwrap().current().unwrap().output, input, "the same animation copied over itself changes nothing");
+}
+
+#[test]
+fn queue_as_replacement_adds_one_pending_change_and_writes_nothing() {
+    let mut w = rig_world("t12-w9-queue");
+    let files = |w: &World| (std::fs::read(w.client.path().join("data.sah")).unwrap(), std::fs::read(w.client.path().join("data.saf")).unwrap());
+    let before = files(&w);
+    with_cx(&mut w.h, |app, cx| app.archive.edit_ani_with(ANI_PATH, shaiya_toolkit::anim_edit::Tool::Retime { factor: 0.5 }, cx));
+    assert!(edit_done(&mut w));
+    assert!(w.h.app.app.archive.pending.is_empty());
+    with_cx(&mut w.h, |app, cx| app.archive.queue_ani_edit(cx));
+    assert!(w.h.wait_until(WAIT, |h| !h.app.app.archive.pending.is_empty()), "the replacement is queued after its checks");
+    w.h.frames(3);
+    let pending = w.h.app.app.archive.pending.clone();
+    assert_eq!(pending.len(), 1, "{pending:?}");
+    assert_eq!(pending[0].path, ANI_PATH);
+    let shaiya_toolkit::archive_view::PendingKind::Put { source, replaces, .. } = &pending[0].kind else { panic!("not a put: {pending:?}") };
+    assert!(*replaces);
+    let staged = shaiya_clientdata::Ani::parse(&std::fs::read(source).unwrap(), "staged").unwrap();
+    assert_eq!(staged.end_key, 30, "the queued file is the edited animation");
+    assert!(source.starts_with(&w.data_path) && !source.starts_with(w.client.path()), "staged in the Toolkit's data folder, not in a client");
+    assert_eq!(files(&w), before, "nothing was written to the client");
+}
