@@ -98,6 +98,9 @@ nav:
       - Building motion (.MANI): formats/mani.md
       - .3DO meshes: formats/3do.md
       - Effect meshes (.3DE): formats/3de.md
+      - Character part lists (.MLT): formats/mlt.md
+      - Monster part lists (.MON): formats/mon.md
+      - Item model lists (.ITM): formats/itm.md
       - Textures: formats/textures.md
       - sysmsg and map names: formats/sysmsg.md
       - TacticsZone.zon: formats/tacticszone-zon.md

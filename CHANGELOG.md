@@ -4,6 +4,19 @@ All notable changes are listed here, newest first. The format follows [Keep a Ch
 
 ## [Unreleased]
 
+### shaiya (CLI)
+
+- `shaiya info` names `.MLT`, `.MON` and `.ITM` list files with their counts (for example "MLT list, N records, N mesh names, N texture names"); a list that starts with another episode's signature is reported as unknown with the reason "a layout of another episode, not read". Validated offline on synthetic files.
+
+### Libraries
+
+- `shaiya-clientdata`: the new `modellist` module reads the list files `.MLT`, `.MON` and `.ITM` to the last byte (`Mlt`, `Mon`, `Itm`), keeps names as raw bytes and numbers as read, refuses another episode's signature with a reason and checks every count and name length before allocating. On US EP4.5, all 112 `.MLT` (2,176 records), 16 `.MON` (785 records, 2,005 parts) and 17 `.ITM` (1,540 records) files read and write back byte for byte (validated offline); the eight other matrix clients are index only.
+- `cargo xtask guard` also refuses tracked files ending `.mlt`, `.mon` and `.itm`.
+
+### Documentation
+
+- New format pages [.MLT](docs/formats/mlt.md), [.MON](docs/formats/mon.md) and [.ITM](docs/formats/itm.md) (layout, evidence per field, "Verified on"); the [.3DC](docs/formats/3dc.md) page says the mesh names no texture; the version matrix has six new rows (index counts on all nine clients, contents on `us-108`).
+
 ### Fixed
 
 - The opt-in tests of the SVMap crates (`shaiya-svmap`, `shaiya-svmap-tools`, `shaiya-svmap-editor`) now read `SHAIYA_CLIENT`, `SHAIYA_SCRATCH` and `SVMAP_ORIGINALS` through the same helpers as every other crate, so a variable listed in `SHAIYA_OPTIN_REQUIRE` makes a test fail instead of skip. Test-only change.

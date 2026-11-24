@@ -323,3 +323,33 @@ fn c3do_json_round_trip() {
 fn c3de_json_round_trip_or_refused() {
     check(Cap::C3deJson);
 }
+
+#[test]
+fn mlt_index_count() {
+    check(Cap::MltIndexCount);
+}
+
+#[test]
+fn mlt_round_trip() {
+    check(Cap::MltRoundTrip);
+}
+
+#[test]
+fn mon_index_count() {
+    check(Cap::MonIndexCount);
+}
+
+#[test]
+fn mon_round_trip() {
+    check(Cap::MonRoundTrip);
+}
+
+#[test]
+fn itm_index_count() {
+    check(Cap::ItmIndexCount);
+}
+
+#[test]
+fn itm_round_trip() {
+    check(Cap::ItmRoundTrip);
+}

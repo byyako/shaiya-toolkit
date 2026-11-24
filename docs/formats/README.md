@@ -29,6 +29,9 @@ Every file format the toolkit reads or writes has a page here. A page says what 
 | Building motion (`.MANI`) | [mani.md](mani.md) | `shaiya-clientdata`: `Mani::parse`; `shaiya anim export`; Shaiya Toolkit's Archive tab shows its fields, `shaiya anim info` describes it; every field meaning is inferred | `shaiya anim import` (from the toolkit's JSON); `Mani::to_bytes` builds bytes in memory for the tests | US EP4.5: 23 of 23 (108 bytes each) read and write back byte for byte; the nine indexes list only 108-byte files; the eight other matrix clients are index only (files counted, none read) |
 | `.3DO` meshes | [3do.md](3do.md) | `shaiya-clientdata`: `Mesh3do::parse`; `shaiya anim export`; Shaiya Toolkit's Archive tab previews it (the one file with frames plays), `shaiya anim info` describes it; the frame rate is inferred | `shaiya anim import` (from the toolkit's JSON); `Mesh3do::to_bytes` builds bytes in memory for the tests | US EP4.5: 271 of 271 read to the last byte and write back byte for byte (one file has frames); the eight other matrix clients are index only (files counted, none read) |
 | Effect meshes (`.3DE`) | [3de.md](3de.md) | `shaiya-clientdata`: `Mesh3de::parse`; `shaiya anim export`; Shaiya Toolkit's Archive tab previews it (frames are listed, not played), `shaiya anim info` describes it; two layouts, the frame fields are inferred | `shaiya anim import` (from the toolkit's JSON); `Mesh3de::to_bytes` builds bytes in memory for the tests | US EP4.5: 467 of 469 read to the last byte and write back byte for byte, 2 are refused (named on the page); the eight other matrix clients are index only (files counted, none read) |
+| Character part lists (`.MLT`) | [mlt.md](mlt.md) | `shaiya-clientdata`: `Mlt::parse`; `shaiya info` names it with its counts | not written | US EP4.5: 112 of 112 read to the last byte and write back byte for byte; the eight other matrix clients are index only (files counted, none read) |
+| Monster part lists (`.MON`) | [mon.md](mon.md) | `shaiya-clientdata`: `Mon::parse`; `shaiya info` names it with its counts | not written | US EP4.5: 16 of 16 read to the last byte and write back byte for byte; the eight other matrix clients are index only (files counted, none read) |
+| Item model lists (`.ITM`) | [itm.md](itm.md) | `shaiya-clientdata`: `Itm::parse`; `shaiya info` names it with its counts | not written | US EP4.5: 17 of 17 read to the last byte and write back byte for byte; the eight other matrix clients are index only (files counted, none read) |
 | Textures (DDS, TGA) | [textures.md](textures.md) | `shaiya-clientdata`, the Archive tab's preview, the checks before files go in | the editor writes light maps, masks and a minimap for new maps | US EP4.5; the orientation of the minimap and the chunk layout of a blank field were not checked in the game |
 | `sysmsg-uni.txt` and map names | [sysmsg.md](sysmsg.md) | `shaiya-clientdata`: the editor, `shaiya svmap` | not written | US EP4.5 patch 108; text for 47 of 47 ids on every matrix client that has the file, 44 on `cn-ep4` |
 | `TacticsZone.zon` | [tacticszone-zon.md](tacticszone-zon.md) | `shaiya-clientdata`: the editor | not written | US EP4.5: 35 areas to the last byte |
@@ -45,9 +48,6 @@ These extensions are in the archives of the nine matrix clients and no page cove
 | `.EFT` | 446 | 423 to 969 | 9 | 0.5.0 effects |
 | `.SEFF` | 4 | 4 to 5 | 9 | 0.5.0 effects |
 | `.FX` | 0 | 0 to 6 | 2 | 0.5.0 effects |
-| `.MLT` | 112 | 112 to 134 | 9 | not planned |
-| `.ITM` | 17 | 17 | 9 | not planned |
-| `.MON` | 16 | 16 to 17 | 9 | not planned |
 | `.ALT` | 16 | 16 to 19 | 9 | not planned |
 | `.WAV` | 1,019 | 1,019 to 1,679 | 9 | not planned |
 | `.BMP` | 29 | 24 to 209 | 9 | not planned |
@@ -75,6 +75,6 @@ These extensions are in the archives of the nine matrix clients and no page cove
 
 Two extensions are only partly covered. `.TXT` (35 files in `us-108`, 33 to 567): `world/<id>.txt` is [area-txt.md](area-txt.md) and `sysmsg-uni.txt` is [sysmsg.md](sysmsg.md); no other text file has a page. `.SData` (8 files in `us-108`, 8 to 71): the four tables above and the [wrapper](sdata-wrapper.md) are documented; every other table is shown as hex, except NpcSkill, which a skill layout reads ([version matrix](../version-matrix.md)).
 
-The extensions that have a page are `.DDS` and `.TGA` ([textures.md](textures.md)), `.SMOD`, `.WLD`, `.DG`, `.ZON`, `.ANI`, `.3DC`, `.VANI`, `.MANI`, `.3DO` and `.3DE` (first table). `.SVMAP` is the server's file ([svmap.md](svmap.md)); four matrix clients also hold some in their archives (56, 5, 98 and 16 files).
+The extensions that have a page are `.DDS` and `.TGA` ([textures.md](textures.md)), `.SMOD`, `.WLD`, `.DG`, `.ZON`, `.ANI`, `.3DC`, `.VANI`, `.MANI`, `.3DO`, `.3DE`, `.MLT`, `.MON` and `.ITM` (first table). `.SVMAP` is the server's file ([svmap.md](svmap.md)); four matrix clients also hold some in their archives (56, 5, 98 and 16 files).
 
 A format moves from this table to the first one when it has a page with a "Verified on" paragraph and the toolkit reads it. [Editing these docs](../dev/docs-site.md) says how pages are added.

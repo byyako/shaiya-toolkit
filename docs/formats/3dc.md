@@ -2,6 +2,8 @@
 
 `.3DC` files are skinned meshes: vertices that each follow one or two bones of a skeleton, plus the triangles between them. They live in the `3DC` folders of the archive (for example `Character/<race>/3DC`, `Monster/3DC`). The bones are the ones of an animation (`.ANI`, see [ani.md](ani.md)); the format has no bone names, so a mesh and an animation are matched by bone index.
 
+The file names no texture (the name is empty in 2,429 of the 2,431 `.3DC` files of `us-108`; validated offline by `every_list_file_of_the_us_client_reads_and_writes_back`): the list files do, see [`.MLT`](mlt.md), [`.MON`](mon.md) and [`.ITM`](itm.md).
+
 All numbers are little-endian and there is no header. A file is read only when it ends exactly after the last face.
 
 ## Layouts as read

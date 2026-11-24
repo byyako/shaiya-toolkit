@@ -100,7 +100,7 @@ Item.SData  SData, SEED-encrypted, plaintext 4,512,768 bytes, checksum OK
 game.exe  Windows program (x86), linked 2010-04-26 03:12:44 UTC, 3,203,072 bytes
 ```
 
-Kinds: SAH index, SAF data (with the file count and live bytes from a `.sah` next to it), SData (SEED-encrypted, checksum checked; or plain), patch (archive files, loose files, removals, whether a `.sig` sits next to it), patch signature, Windows program (machine and link time), unknown (the first 16 bytes). A damaged file is reported with a `problem:` line, not a failure; files over 512 MiB are not decrypted for the checksum check.
+Kinds: SAH index, SAF data (with the file count and live bytes from a `.sah` next to it), SData (SEED-encrypted, checksum checked; or plain), patch (archive files, loose files, removals, whether a `.sig` sits next to it), patch signature, model lists (a file named `.mlt`, `.mon` or `.itm` is read as that list: `MLT list, N records, ...`; one that starts with another signature, such as `MO4`, is unknown with a `problem:` line saying it is a layout of another episode, not read), Windows program (machine and link time), unknown (the first 16 bytes). A damaged file is reported with a `problem:` line, not a failure; files over 512 MiB are not decrypted for the checksum check.
 
 `--hash` adds a `sha256 <64 hex digits>` line per file and runs with progress.
 

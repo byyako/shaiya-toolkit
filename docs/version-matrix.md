@@ -56,6 +56,12 @@ Client ids: `us-108` (US patch level 108), and the eight test clients `ru-ep3`, 
 | `.3DE` files the index lists (index only: the number is the visible `.3DE` files of the index; no contents were read on the eight test clients) | OK 469 | OK 640 | OK 718 | OK 756 | OK 708 | OK 892 | OK 925 | OK 1,344 | OK 611 |
 | `Mesh3de::parse` reads a `.3DE` with exactly one of its two layouts and `to_bytes` gives it back byte for byte; any other file is refused with the reason (the number is the files that read) | OK 467 of 469 (2 refused, named on the format page) | n/a | n/a | n/a | n/a | n/a | n/a | n/a | n/a |
 | `modeljson::export` then `import` gives every `.3DE` the reader reads back byte for byte; the files it refuses stay refused (the number is the files that came back) | OK 467 of 469 (2 refused, named on the format page) | n/a | n/a | n/a | n/a | n/a | n/a | n/a | n/a |
+| `.MLT` files the index lists (index only: the number is the visible `.MLT` files of the index; no contents were read on the eight test clients) | OK 112 | OK 112 | OK 112 | OK 112 | OK 112 | OK 125 | OK 133 | OK 134 | OK 112 |
+| `Mlt::parse` reads every `.MLT` to the last byte and `to_bytes` gives it back byte for byte | OK 112 | n/a | n/a | n/a | n/a | n/a | n/a | n/a | n/a |
+| `.MON` files the index lists (index only: the number is the visible `.MON` files of the index; no contents were read on the eight test clients) | OK 16 | OK 16 | OK 16 | OK 16 | OK 16 | OK 16 | OK 16 | OK 17 | OK 16 |
+| `Mon::parse` reads every `.MON` to the last byte and `to_bytes` gives it back byte for byte | OK 16 | n/a | n/a | n/a | n/a | n/a | n/a | n/a | n/a |
+| `.ITM` files the index lists (index only: the number is the visible `.ITM` files of the index; no contents were read on the eight test clients) | OK 17 | OK 17 | OK 17 | OK 17 | OK 17 | OK 17 | OK 17 | OK 17 | OK 17 |
+| `Itm::parse` reads every `.ITM` to the last byte and `to_bytes` gives it back byte for byte | OK 17 | n/a | n/a | n/a | n/a | n/a | n/a | n/a | n/a |
 
 Reading the table:
 
@@ -86,6 +92,7 @@ Reading the table:
 - The `.3DO` rows work the same way as the `.ANI` rows: the first counts the `.3DO` files each client's index lists (no contents read); the second reads every `.3DO` on `us-108` (US EP4.5) to the last byte and is `n/a` on the eight test clients (no `data.saf` in the test set; index only). Only one file of `us-108` has frames. Whether a later episode's `.3DO` files read is not checked. See [3do.md](formats/3do.md).
 - The `.3DE` rows: the first counts the `.3DE` files each client's index lists (no contents read). The second reads every `.3DE` on `us-108` (US EP4.5) with exactly one of its two layouts: 467 of the 469 files read and write back byte for byte, and the other 2 (`004.3de` and `Deathknight007.3DE`) follow neither layout and are refused with the reason, never half-read; the cell is `OK` because nothing else failed. It is `n/a` on the eight test clients (index only). Whether a later episode's `.3DE` files read is not checked. See [3de.md](formats/3de.md).
 - The JSON rows (`.ANI`, `.3DC`, `.VANI`, `.MANI`, `.3DO`, `.3DE`) read every file of that kind on `us-108` (US EP4.5), export it with `modeljson::export` and import the text with `modeljson::import`; the cell is `OK` when every file comes back byte for byte (validated offline). They are `n/a` on the eight test clients (no `data.saf` in the test set; index only). For `.3DE` the 2 files the reader refuses must be refused by the export too. See the format pages.
+- The list-file rows (`.MLT`, `.MON`, `.ITM`) work the same way as the `.3DO` rows: the first of each pair counts the files each client's index lists (no contents read); the second reads every file of that kind on `us-108` (US EP4.5) to the last byte and writes it back byte for byte (112 `.MLT`, 16 `.MON` and 17 `.ITM`; validated offline). They are `n/a` on the eight test clients (index only). See [mlt.md](formats/mlt.md), [mon.md](formats/mon.md) and [itm.md](formats/itm.md).
 
 ## SVMap Editor and `shaiya svmap`
 

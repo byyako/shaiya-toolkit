@@ -1,4 +1,4 @@
-//! Identify a Shaiya file and describe it: SAH index, SAF data, SData (SEED-encrypted or plain), patch, patch signature, Windows
+//! Identify a Shaiya file and describe it: SAH index, SAF data, SData (SEED-encrypted or plain), patch, patch signature, model list (`.MLT`, `.MON`, `.ITM`), Windows
 //! program. Detection is by content first, name second. Malformed input gives a `problems` entry, not a failure, unless the file cannot
 //! be read at all.
 
@@ -29,6 +29,12 @@ pub enum Kind {
     Patch,
     PatchSignature,
     Pe,
+    /// A `.MLT` character list.
+    Mlt,
+    /// A `.MON` monster list.
+    Mon,
+    /// An `.ITM` item list.
+    Itm,
     Unknown,
 }
 
@@ -43,6 +49,9 @@ pub enum Details {
     Patch { files: usize, loose: usize, removals: usize, signature_file: bool },
     PatchSignature { hex_len: usize },
     Pe { machine: u16, machine_name: &'static str, timestamp: u32, timestamp_utc: String },
+    /// A model list file: records, and the mesh and texture names it lists (`.MLT`, `.ITM`) or the parts of its records (`.MON`); zeros
+    /// when the file did not read (a problem line says why).
+    List { records: usize, meshes: usize, textures: usize, parts: usize },
     /// First 16 bytes.
     Unknown { magic_hex: String },
 }
@@ -200,6 +209,16 @@ pub fn describe(i: &Info) -> String {
         Details::Pe { machine_name, timestamp_utc, .. } => {
             format!("Windows program ({machine_name}), linked {} UTC, {size} bytes", timestamp_utc.replace('T', " ").trim_end_matches('Z'))
         }
+        Details::List { records, meshes, textures, parts } => match i.kind {
+            Kind::Mon => format!("MON list, {}, {}, {size} bytes", counted(*records as u64, "record", "records"), counted(*parts as u64, "part", "parts")),
+            _ => format!(
+                "{} list, {}, {}, {}, {size} bytes",
+                if i.kind == Kind::Mlt { "MLT" } else { "ITM" },
+                counted(*records as u64, "record", "records"),
+                counted(*meshes as u64, "mesh name", "mesh names"),
+                counted(*textures as u64, "texture name", "texture names")
+            ),
+        },
         Details::Unknown { magic_hex } => format!("Unknown file type, starts with {magic_hex}, {size} bytes"),
     }
 }
@@ -232,6 +251,8 @@ pub fn inspect(path: &Path, opts: &Options, job: &Job) -> Result<Info> {
     } else if let Some((machine, timestamp)) = pe_header(&head) {
         let details = Details::Pe { machine, machine_name: machine_name(machine), timestamp, timestamp_utc: utc_iso_unix(timestamp as i64) };
         (Kind::Pe, details)
+    } else if let Some(kind) = ["mlt", "mon", "itm"].into_iter().find(|e| has_ext(path, e)) {
+        list_details(path, size, &head, &name, kind, &mut problems)
     } else if has_ext(path, "saf") {
         saf_details(path, size, &mut problems)
     } else if name.to_ascii_lowercase().ends_with(".patch.sig") || (has_ext(path, "sig") && looks_like_hex_signature(&head)) {
@@ -252,6 +273,46 @@ pub fn inspect(path: &Path, opts: &Options, job: &Job) -> Result<Info> {
 
     let sha256 = if opts.hash { Some(to_hex(&sha256_file(path, job)?)) } else { None };
     Ok(Info { path: path.display().to_string(), size, kind, details, sha256, problems })
+}
+
+/// Lists are read whole; real ones are well under a megabyte.
+const LIST_LIMIT_BYTES: u64 = 64 << 20;
+
+/// A file named `.mlt`, `.mon` or `.itm`: read by its reader; a list of another episode (or any other file) is `Unknown` with the reason.
+fn list_details(path: &Path, size: u64, head: &[u8], name: &str, ext: &str, problems: &mut Vec<String>) -> (Kind, Details) {
+    use shaiya_clientdata::modellist::ListKind;
+    let (kind, want) = match ext {
+        "mlt" => (Kind::Mlt, ListKind::Mlt),
+        "mon" => (Kind::Mon, ListKind::Mon),
+        _ => (Kind::Itm, ListKind::Itm),
+    };
+    let zero = Details::List { records: 0, meshes: 0, textures: 0, parts: 0 };
+    let unknown = || Details::Unknown { magic_hex: to_hex(&head[..head.len().min(16)]) };
+    let read = if size > LIST_LIMIT_BYTES { Err(format!("{name} is over {} MiB: not read", LIST_LIMIT_BYTES >> 20)) } else { std::fs::read(path).map_err(|e| e.to_string()) };
+    let bytes = match read {
+        Ok(b) => b,
+        Err(e) => {
+            problems.push(e);
+            return (Kind::Unknown, unknown());
+        }
+    };
+    let parsed = match want {
+        ListKind::Mlt => shaiya_clientdata::Mlt::parse(&bytes, name).map(|m| Details::List { records: m.records.len(), meshes: m.meshes.len(), textures: m.textures.len(), parts: 0 }),
+        ListKind::Mon => shaiya_clientdata::Mon::parse(&bytes, name).map(|m| Details::List { records: m.records.len(), meshes: 0, textures: 0, parts: m.part_count() }),
+        ListKind::Itm => shaiya_clientdata::Itm::parse(&bytes, name).map(|m| Details::List { records: m.records.len(), meshes: m.models.len(), textures: m.textures.len(), parts: 0 }),
+    };
+    match parsed {
+        Ok(d) => (kind, d),
+        Err(e) => {
+            problems.push(e.to_string());
+            // a file that starts with the kind's signature is that kind, broken; any other start is not a list of this reader
+            if head.starts_with(want.signature()) {
+                (kind, zero)
+            } else {
+                (Kind::Unknown, unknown())
+            }
+        }
+    }
 }
 
 fn saf_details(path: &Path, size: u64, problems: &mut Vec<String>) -> (Kind, Details) {
@@ -498,6 +559,46 @@ mod tests {
         let m = info(&mz);
         assert_eq!(m.kind, Kind::Unknown);
         assert_eq!(m.problems.len(), 1);
+    }
+
+    #[test]
+    fn list_files_are_named_with_their_counts() {
+        use shaiya_testkit::lists::{itm_bytes, mlt_bytes, mon_bytes, ItmRec, MonRec};
+        let d = TempDir::new("inspect-lists");
+        let mlt = d.path().join("Player.MLT");
+        std::fs::write(&mlt, mlt_bytes(&["a.3DC", "b.3DC"], &["x.DDS"], &[(0, 0, 1), (1, 0, 0), (1, 0, 1)])).unwrap();
+        let m = info(&mlt);
+        assert_eq!(m.kind, Kind::Mlt);
+        assert!(m.problems.is_empty(), "{:?}", m.problems);
+        assert!(matches!(m.details, Details::List { records: 3, meshes: 2, textures: 1, parts: 0 }), "{:?}", m.details);
+        assert!(describe(&m).starts_with("MLT list, 3 records, 2 mesh names, 1 texture name, "), "{}", describe(&m));
+
+        let mon = d.path().join("mon.mon");
+        let rec = MonRec { name: "Wolf", flag: 1, slots: [""; 17], parts: &[("w.3DC", "w.DDS"), ("f.3DC", "")], size: 1.0, attachments: &[] };
+        std::fs::write(&mon, mon_bytes(&[rec])).unwrap();
+        let m = info(&mon);
+        assert_eq!(m.kind, Kind::Mon);
+        assert!(describe(&m).starts_with("MON list, 1 record, 2 parts, "), "{}", describe(&m));
+
+        let itm = d.path().join("Item.itm");
+        std::fs::write(&itm, itm_bytes(&["s.3DO"], &["s.DDS"], &[ItmRec { words: [0, 0, 0, 0, 0, 0], extra: None }])).unwrap();
+        let m = info(&itm);
+        assert_eq!(m.kind, Kind::Itm);
+        assert!(describe(&m).starts_with("ITM list, 1 record, 1 mesh name, 1 texture name, "), "{}", describe(&m));
+
+        // another episode's layout under the same name is unknown, with the reason
+        let other = d.path().join("other.mon");
+        std::fs::write(&other, b"MO4    ").unwrap();
+        let o = info(&other);
+        assert_eq!(o.kind, Kind::Unknown);
+        assert!(o.problems.iter().any(|p| p.contains("`MO4`: a layout of another episode, not read")), "{:?}", o.problems);
+        // a broken list of the right signature keeps its kind and says why
+        let cut = d.path().join("cut.mlt");
+        let bytes = mlt_bytes(&["a.3DC"], &[], &[(0, 0, 1)]);
+        std::fs::write(&cut, &bytes[..bytes.len() - 2]).unwrap();
+        let c = info(&cut);
+        assert_eq!(c.kind, Kind::Mlt);
+        assert_eq!(c.problems.len(), 1);
     }
 
     #[test]

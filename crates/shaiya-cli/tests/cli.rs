@@ -73,6 +73,26 @@ fn info_text_for_every_kind() {
 }
 
 #[test]
+fn info_names_the_three_list_kinds_with_counts() {
+    use shaiya_testkit::lists::{itm_bytes, mlt_bytes, mon_bytes, ItmRec, MonRec};
+    let d = TempDir::new("cli-info-lists");
+    let (mlt, mon, itm) = (d.path().join("a.mlt"), d.path().join("a.mon"), d.path().join("a.itm"));
+    std::fs::write(&mlt, mlt_bytes(&["a.3DC"], &["x.DDS", "y.DDS"], &[(0, 1, 1)])).unwrap();
+    let rec = MonRec { name: "Wolf", flag: 0, slots: [""; 17], parts: &[("w.3DC", "w.DDS")], size: 1.0, attachments: &[] };
+    std::fs::write(&mon, mon_bytes(&[rec])).unwrap();
+    std::fs::write(&itm, itm_bytes(&["s.3DO"], &["s.DDS"], &[ItmRec { words: [0; 6], extra: None }, ItmRec { words: [0, 0, 0, 0, 1, 0], extra: Some([0; 4]) }])).unwrap();
+    let o = with_paths(&["info"], &[&mlt, &mon, &itm]);
+    assert_eq!(o.status.code(), Some(0), "{}", text(&o.stderr));
+    let out = text(&o.stdout);
+    assert!(out.contains("MLT list, 1 record, 1 mesh name, 2 texture names"), "{out}");
+    assert!(out.contains("MON list, 1 record, 1 part"), "{out}");
+    assert!(out.contains("ITM list, 2 records, 1 mesh name, 1 texture name"), "{out}");
+    let o = with_paths(&["info", "--json"], &[&mon]);
+    let v: serde_json::Value = serde_json::from_slice(&o.stdout).unwrap();
+    assert_eq!((v["files"][0]["kind"].as_str(), v["files"][0]["details"]["parts"].as_u64()), (Some("mon"), Some(1)));
+}
+
+#[test]
 fn info_json_parses_and_hash_is_correct() {
     let s = samples();
     let o = with_paths(&["info", "--json", "--hash"], &[&s.seed, &s.exe]);

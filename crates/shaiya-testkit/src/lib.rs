@@ -3,6 +3,7 @@
 
 pub mod anim;
 pub mod demo;
+pub mod lists;
 pub use demo::demo_client;
 
 use std::path::{Path, PathBuf};
