@@ -579,6 +579,11 @@ pub struct ArchiveView {
     pub compare: Option<ComparePanel>,
     extract: Option<ExtractFlow>,
     json_exports: crate::export_json::JsonExports,
+    folder_exports: crate::export_json::FolderExports,
+    /// The "Compare with..." window of one `.ANI` (see `anim_compare`).
+    anim_compare: Option<crate::anim_compare::AnimCompare>,
+    /// The "Rig" filter inside `Character/<race>/ANI`: an index into `anim::RIGS`.
+    pub rig: Option<usize>,
     apply: ApplyFlow,
     /// The Changes / Writes / Undo / Game rows of the open confirmation (made once, when it was asked for, from the plan the write uses).
     confirm_rows: Rows,
@@ -608,6 +613,20 @@ fn has_sah_file(dir: &Path) -> bool {
 
 fn lower_key(path: &str) -> String {
     path.to_lowercase()
+}
+
+/// The indexes (into `anim::RIGS`) of the rigs of a `Character/<race>/ANI` folder (any letter case); none for every other folder.
+pub fn rig_choices(folder: &str) -> Vec<usize> {
+    let segs: Vec<&str> = folder.split('/').filter(|s| !s.is_empty()).collect();
+    if segs.len() != 3 || !segs[0].eq_ignore_ascii_case("character") || !segs[2].eq_ignore_ascii_case("ani") {
+        return Vec::new();
+    }
+    shaiya_clientdata::anim::RIGS.iter().enumerate().filter(|(_, (_, race))| race.eq_ignore_ascii_case(segs[1])).map(|(i, _)| i).collect()
+}
+
+/// Whether the archive path names an `.ANI` (any letter case).
+pub fn is_ani_path(path: &str) -> bool {
+    path.rsplit('/').next().and_then(|n| n.rsplit_once('.')).is_some_and(|(_, e)| e.eq_ignore_ascii_case("ani"))
 }
 
 fn escape_glob(s: &str) -> String {
@@ -671,6 +690,9 @@ impl ArchiveView {
             compare: None,
             extract: None,
             json_exports: Default::default(),
+            folder_exports: Default::default(),
+            anim_compare: None,
+            rig: None,
             apply: ApplyFlow::Idle,
             confirm_rows: Vec::new(),
             discard_asked: false,
@@ -736,6 +758,8 @@ impl ArchiveView {
         }
         self.check = None;
         self.compare = None;
+        self.folder_exports.cancel();
+        self.anim_compare = None;
     }
 
     /// Opens a saved client folder (changes are possible) or any archive file (read only), as a task.
@@ -850,6 +874,12 @@ impl ArchiveView {
         self.poll_extract(cx);
         if let Some(line) = self.json_exports.poll(cx) {
             self.status_line = line;
+        }
+        if let Some(line) = self.folder_exports.poll(cx) {
+            self.status_line = line;
+        }
+        if let Some(c) = &mut self.anim_compare {
+            c.poll(cx);
         }
         self.poll_check(cx);
         self.poll_compare(cx);
@@ -1389,9 +1419,19 @@ impl ArchiveView {
 
     // ---------------------------------------------------------------------------------------- filtering and view
 
+
+    /// The rig the "Rig" box filters by in the folder now shown (a rig of that `Character/<race>/ANI` folder's race), if any.
+    pub fn active_rig(&self) -> Option<usize> {
+        self.rig.filter(|i| rig_choices(&self.folder).contains(i))
+    }
+
+    /// Test hook and what the "Rig" box does: filters the `Character/<race>/ANI` folder shown to the rig `prefix` (`None`: all rigs).
+    pub fn set_rig_filter(&mut self, prefix: Option<&str>) {
+        self.rig = prefix.and_then(|p| shaiya_clientdata::anim::RIGS.iter().position(|(name, _)| name.eq_ignore_ascii_case(p)));
+    }
     fn filter_stamp(&self) -> String {
         format!(
-            "{}|{}|{}|{:?}|{}|{}|{:?}|{}|{}|{}",
+            "{}|{}|{}|{:?}|{}|{}|{:?}|{}|{}|{}|{:?}",
             self.folder,
             self.search,
             self.show_shadowed,
@@ -1401,7 +1441,8 @@ impl ArchiveView {
             self.sort_key,
             self.sort_desc,
             self.loaded.as_ref().map(|l| l.rows.len()).unwrap_or(0),
-            self.loaded.as_ref().map(|l| l.sah.display().to_string()).unwrap_or_default()
+            self.loaded.as_ref().map(|l| l.sah.display().to_string()).unwrap_or_default(),
+            self.active_rig()
         )
     }
 
@@ -1455,9 +1496,13 @@ impl ArchiveView {
                     self.view.push(ViewRow::Folder(c));
                 }
             }
+            let rig = self.active_rig().map(|i| shaiya_clientdata::anim::RIGS[i]);
             for &i in l.files_in(&self.folder) {
                 let r = &l.rows[i];
                 if (r.shadowed && !self.show_shadowed) || !ok_size(r.entry.length) || !self.type_ok(&r.ext()) {
+                    continue;
+                }
+                if rig.is_some() && shaiya_clientdata::anim::rig_of(&r.path).rig != rig {
                     continue;
                 }
                 files.push(i);
@@ -1525,6 +1570,12 @@ impl ArchiveView {
     }
 
     fn start_preview(&mut self, row: usize, cx: &mut ToolkitCx<'_>) {
+        self.start_preview_on(row, None, cx);
+    }
+
+    /// Starts the preview of `row`; `mesh` is the mesh choice of an `.ANI` preview to use instead of the default for a row that was not
+    /// the open one.
+    fn start_preview_on(&mut self, row: usize, mesh: Option<MeshChoice>, cx: &mut ToolkitCx<'_>) {
         if let Some(h) = &self.preview.handle {
             h.cancel();
         }
@@ -1533,6 +1584,9 @@ impl ArchiveView {
             self.preview.anim_mesh = MeshChoice::Default;
             self.preview.texture_pick = 0;
             self.preview.player = AnimPlayer { looping: cx.settings.preview_loop, show_bones: cx.settings.preview_bones, speed: cx.settings.preview_speed, ..AnimPlayer::default() };
+        }
+        if let Some(m) = mesh {
+            self.preview.anim_mesh = m;
         }
         self.preview.controls.load(crate::preview_controls::view_of(cx.settings.preview_view));
         self.preview.fit = cx.settings.preview_fit;
@@ -1557,6 +1611,21 @@ impl ArchiveView {
     /// The kind of the current preview ("image", "text", "sdata", "hex", "empty", "failed"), once it is ready.
     pub fn preview_kind(&self) -> Option<&'static str> {
         self.preview.data.as_ref().map(|d| d.kind())
+    }
+
+    /// What the "Animation" box of a `.3DC` preview does: opens the `.ANI` at `ani_path` and draws it on the open mesh. Nothing happens when
+    /// there is no such `.ANI` row or no mesh preview is open.
+    pub fn play_animation_on_mesh(&mut self, ani_path: &str, cx: &mut ToolkitCx<'_>) {
+        let Some(mesh) = self.preview.row.and_then(|r| self.loaded.as_ref()?.rows.get(r)).map(|r| r.path.clone()) else { return };
+        let Some(i) = self.find_row(ani_path) else { return };
+        let folder = self.loaded.as_ref().map(|l| l.rows[i].folder().to_string()).unwrap_or_default();
+        if self.search.is_empty() {
+            self.folder = folder;
+        }
+        self.selected.clear();
+        self.selected.insert(i);
+        self.anchor = Some(i);
+        self.start_preview_on(i, Some(MeshChoice::One(mesh)), cx);
     }
 
     /// Draws the open `.ANI` on another choice of meshes (what the Mesh box does): the preview restarts with it.
@@ -1796,6 +1865,83 @@ impl ArchiveView {
         self.json_exports.is_running()
     }
 
+    /// The model files (one of the six formats) under the archive folder `folder` (every depth, shadowed copies left out), by path.
+    pub fn model_files_under(&self, folder: &str) -> Vec<(String, shaiya_archive::Entry)> {
+        let Some(l) = &self.loaded else { return Vec::new() };
+        let prefix = format!("{}/", lower_key(folder.trim_matches('/')));
+        let mut v: Vec<(String, shaiya_archive::Entry)> = l
+            .rows
+            .iter()
+            .filter(|r| !r.shadowed && (prefix == "/" || r.lower.starts_with(&prefix)) && crate::export_json::is_model_path(&r.path))
+            .map(|r| (r.path.clone(), r.entry.clone()))
+            .collect();
+        v.sort_by_key(|(p, _)| lower_key(p));
+        v
+    }
+
+    /// "Export folder as JSON...": every model file under the archive folder `folder` is written as `<path>.json` under `out`, on a worker
+    /// (an output that exists is kept and listed). Refused with a message, before anything is read, when `out` is inside a client folder.
+    pub fn export_folder_json_to(&mut self, folder: &str, out: PathBuf, cx: &mut ToolkitCx<'_>) {
+        let Some(l) = &self.loaded else { return };
+        let Some(a) = l.archive.clone() else { return };
+        let dir = l.client_dir.clone();
+        let items = self.model_files_under(folder);
+        if items.is_empty() {
+            cx.shell.status(format!("No model files under {}", if folder.is_empty() { "the archive" } else { folder }));
+            return;
+        }
+        self.folder_exports.start(a, items, out, dir.as_deref(), cx);
+    }
+
+    #[doc(hidden)]
+    pub fn is_exporting_folder(&self) -> bool {
+        self.folder_exports.is_running()
+    }
+
+    /// Asks the running folder export to stop after the file it is on.
+    pub fn cancel_folder_export(&self) {
+        self.folder_exports.cancel();
+    }
+
+    /// The report of the last folder export that ended.
+    pub fn folder_export_report(&self) -> Option<&crate::export_json::FolderReport> {
+        self.folder_exports.last.as_ref()
+    }
+
+    /// Opens the "Compare with..." window for the `.ANI` in row `row`.
+    fn open_compare(&mut self, row: usize, cx: &ToolkitCx<'_>) {
+        let Some(l) = &self.loaded else { return };
+        let (Some(a), Some(r)) = (l.archive.clone(), l.rows.get(row)) else { return };
+        let path = r.path.clone();
+        let mut siblings: Vec<String> = l.files_in(r.folder()).iter().map(|&i| &l.rows[i]).filter(|x| !x.shadowed && is_ani_path(&x.path) && x.path != path).map(|x| x.path.clone()).collect();
+        siblings.sort_by_key(|p| lower_key(p));
+        let open_dir = l.client_dir.clone();
+        let clients: Vec<(String, PathBuf)> = cx.shell.shared().clients.iter().map(|c| (c.name.clone(), PathBuf::from(&c.path))).filter(|(_, d)| has_sah_file(d) && Some(d) != open_dir.as_ref()).collect();
+        self.anim_compare = Some(crate::anim_compare::AnimCompare::new(path, a, siblings, clients));
+    }
+
+    /// Test hook: "Compare with..." for the `.ANI` at `path`, choosing `other` and pressing Compare.
+    #[doc(hidden)]
+    pub fn compare_ani_with(&mut self, path: &str, other: crate::anim_compare::Other, cx: &mut ToolkitCx<'_>) {
+        let Some(i) = self.find_row(path) else { return };
+        self.open_compare(i, cx);
+        if let Some(c) = &mut self.anim_compare {
+            c.start(other, cx);
+        }
+    }
+
+    /// The window of "Compare with...", when open.
+    #[doc(hidden)]
+    pub fn anim_compare(&self) -> Option<&crate::anim_compare::AnimCompare> {
+        self.anim_compare.as_ref()
+    }
+
+    /// Whether the row menu of the file at `path` offers "Compare with..." (an `.ANI` with the `data.saf` open).
+    #[doc(hidden)]
+    pub fn offers_compare(&self, path: &str) -> bool {
+        self.loaded.as_ref().is_some_and(|l| l.archive.is_some()) && is_ani_path(path) && self.find_row(path).is_some()
+    }
+
     pub fn is_extracting(&self) -> bool {
         matches!(self.extract, Some(ExtractFlow::Running(_)) | Some(ExtractFlow::Planning(..)))
     }
@@ -2019,6 +2165,9 @@ enum Act {
     Open(String),
     Extract { all: bool, flat: bool },
     ExportJson(usize),
+    ExportFolderJson(usize),
+    CompareAni(usize),
+    PlayAnimation(String),
     AddFiles,
     QueueRemove,
     CopyPaths,
@@ -2191,6 +2340,22 @@ impl ArchiveView {
             }
             for (i, (name, _)) in TYPE_CHIPS.iter().enumerate() {
                 ui.toggle_value(&mut self.types[i], *name);
+            }
+            let rigs = if self.search.is_empty() { rig_choices(&self.folder) } else { Vec::new() };
+            if !rigs.is_empty() {
+                let current = self.active_rig();
+                let mut pick = current;
+                egui::ComboBox::from_id_salt("toolkit-rig-filter")
+                    .selected_text(format!("Rig: {}", current.map_or("all", |i| shaiya_clientdata::anim::RIGS[i].0)))
+                    .show_ui(ui, |ui| {
+                        ui.selectable_value(&mut pick, None, "all");
+                        for i in rigs {
+                            ui.selectable_value(&mut pick, Some(i), shaiya_clientdata::anim::RIGS[i].0);
+                        }
+                    });
+                if pick != current {
+                    self.rig = pick;
+                }
             }
             ui.add(egui::TextEdit::singleline(&mut self.min_size).desired_width(52.0).hint_text("min"));
             ui.add(egui::TextEdit::singleline(&mut self.max_size).desired_width(52.0).hint_text("max"));
@@ -2398,8 +2563,12 @@ impl ArchiveView {
                                 ("Remove", MenuChoice::Remove),
                                 ("Decrypt to file...", MenuChoice::Decrypt),
                                 ("Export as JSON...", MenuChoice::ExportJson),
+                                ("Compare with...", MenuChoice::CompareWith),
                             ] {
                                 if matches!(choice, MenuChoice::ExportJson) && !matches!(v, ViewRow::File(i) if l.archive.is_some() && crate::export_json::is_model_path(&l.rows[i].path)) {
+                                    continue;
+                                }
+                                if matches!(choice, MenuChoice::CompareWith) && !matches!(v, ViewRow::File(i) if l.archive.is_some() && is_ani_path(&l.rows[i].path)) {
                                     continue;
                                 }
                                 if ui.button(label).clicked() {
@@ -2407,9 +2576,15 @@ impl ArchiveView {
                                     ui.close();
                                 }
                             }
-                        } else if ui.button("Open").clicked() {
-                            open = Some(path.clone());
-                            ui.close();
+                        } else {
+                            if ui.button("Open").clicked() {
+                                open = Some(path.clone());
+                                ui.close();
+                            }
+                            if l.archive.is_some() && ui.button("Export folder as JSON...").clicked() {
+                                menu = Some((vi, MenuChoice::ExportFolderJson));
+                                ui.close();
+                            }
                         }
                     });
                     ui.add_sized([cols[1], 20.0], egui::Label::new(size));
@@ -2460,6 +2635,16 @@ impl ArchiveView {
                 MenuChoice::ExportJson => {
                     if let ViewRow::File(i) = self.view[vi] {
                         acts.push(Act::ExportJson(i));
+                    }
+                }
+                MenuChoice::CompareWith => {
+                    if let ViewRow::File(i) = self.view[vi] {
+                        acts.push(Act::CompareAni(i));
+                    }
+                }
+                MenuChoice::ExportFolderJson => {
+                    if let ViewRow::Folder(n) = self.view[vi] {
+                        acts.push(Act::ExportFolderJson(n));
                     }
                 }
             }
@@ -2531,7 +2716,7 @@ impl ArchiveView {
                 cx.settings.preview_speed = self.preview.player.speed;
             }
             Some(data @ PreviewData::Fields { .. }) => anim_view::draw_fields(ui, &pal, data),
-            Some(PreviewData::Model { header, missing, see_through, invisible, notes, texture, rgba, .. }) => {
+            Some(PreviewData::Model { header, missing, see_through, invisible, notes, texture, animations, rgba, .. }) => {
                 ui.label(header);
                 if let Some(t) = texture {
                     ui.label(RichText::new(&t.line).color(pal.weak));
@@ -2550,6 +2735,19 @@ impl ArchiveView {
                 }
                 if switch && textures_switch(&mut self.preview.textured, ui, cx) {
                     acts.push(Act::Open("texture-choice".into()));
+                }
+                if !animations.is_empty() {
+                    let mut chosen: Option<String> = None;
+                    egui::ComboBox::from_id_salt("toolkit-mesh-animation").selected_text("Animation: play on this mesh").show_ui(ui, |ui| {
+                        for p in animations {
+                            if ui.selectable_label(false, preview::file_name(p)).on_hover_text(p).clicked() {
+                                chosen = Some(p.clone());
+                            }
+                        }
+                    });
+                    if let Some(p) = chosen {
+                        acts.push(Act::PlayAnimation(p));
+                    }
                 }
                 for note in notes {
                     ui.label(RichText::new(note).color(pal.weak));
@@ -2666,6 +2864,13 @@ impl ArchiveView {
     fn draw_dialogs(&mut self, ui: &mut egui::Ui, cx: &mut ToolkitCx<'_>, requests: &mut Vec<TabRequest>) {
         let ctx = ui.ctx().clone();
         self.poll_replace_checks(cx);
+        self.folder_exports.draw_failures(&ctx);
+        if let Some(c) = &mut self.anim_compare {
+            c.draw(&ctx, cx);
+            if !c.open {
+                self.anim_compare = None;
+            }
+        }
         // Replace with a file that looks broken
         if let Some((items, findings)) = self.replace_ask.take() {
             let c = Confirm {
@@ -3039,6 +3244,16 @@ impl ArchiveView {
                         self.begin_extract(dir, all, false, flat, cx);
                     }
                 }
+                Act::ExportFolderJson(n) => {
+                    let folder = self.loaded.as_ref().and_then(|l| l.tree.nodes.get(n)).map(|nd| nd.path.clone());
+                    if let Some(folder) = folder {
+                        if let Some(out) = cx.shell.pick_folder("export-folder-json") {
+                            self.export_folder_json_to(&folder, out, cx);
+                        }
+                    }
+                }
+                Act::CompareAni(i) => self.open_compare(i, cx),
+                Act::PlayAnimation(path) => self.play_animation_on_mesh(&path, cx),
                 Act::ExportJson(i) => {
                     let name = self.loaded.as_ref().and_then(|l| l.rows.get(i)).map(|r| r.name().to_string());
                     if let Some(out) = name.and_then(|n| cx.shell.save_file("export-json", &crate::export_json::default_name(&n), &[("JSON", &["json"])])) {
@@ -3157,6 +3372,8 @@ enum MenuChoice {
     Remove,
     Decrypt,
     ExportJson,
+    ExportFolderJson,
+    CompareWith,
 }
 
 /// What the Archive tab asks the app frame to do on its behalf.

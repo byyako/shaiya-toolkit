@@ -1062,6 +1062,220 @@ fn help_lists_export_and_import() {
     assert!(out(&o).contains("export any of them to JSON and import it back"), "{}", out(&o));
 }
 
+// ---- export --out-dir and diff ----------------------------------------------------------------------------------------------------
+
+/// A client folder with two animations, a mesh and a texture-like file under `Monster`.
+fn monster_client(w: &World) -> PathBuf {
+    client_with(
+        w,
+        "mc",
+        &[("Monster/ANI/Mob_A_Att1.ANI", chain(0)), ("Monster/ANI/Mob_B_Att1.ANI", arm_ani(30)), ("Monster/3DC/Mob_A.3DC", arm_mesh_3dc()), ("Monster/DDS/Mob_A.dds", b"DDS fake".to_vec())],
+    )
+}
+
+fn files_under(d: &Path) -> Vec<String> {
+    fn walk(base: &Path, dir: &Path, v: &mut Vec<String>) {
+        for e in std::fs::read_dir(dir).unwrap().flatten() {
+            let path = e.path();
+            if path.is_dir() {
+                walk(base, &path, v);
+            } else {
+                v.push(path.strip_prefix(base).unwrap().to_string_lossy().replace('\\', "/"));
+            }
+        }
+    }
+    let mut v = Vec::new();
+    if d.exists() {
+        walk(d, d, &mut v);
+    }
+    v.sort();
+    v
+}
+
+#[test]
+fn export_out_dir_writes_one_json_per_file_under_the_archive_folders() {
+    let w = world();
+    let c = monster_client(&w);
+    let dir = w.tmp.path().join("json-out");
+    let o = sh(&w.data, &["anim", "export", "Monster/", "--from", p(&c), "--out-dir", p(&dir)]);
+    assert_eq!(code(&o), 0, "{}", err(&o));
+    assert!(out(&o).trim_end().ends_with("wrote 3 of 3 (0 failed)"), "{}", out(&o));
+    assert_eq!(files_under(&dir), vec!["Monster/3DC/Mob_A.3DC.json", "Monster/ANI/Mob_A_Att1.ANI.json", "Monster/ANI/Mob_B_Att1.ANI.json"], "the .dds is not a model file");
+    // each file is the same JSON `-o` gives, with the archive path as its source
+    let one = w.tmp.path().join("one.json");
+    let o = sh(&w.data, &["anim", "export", "Monster/ANI/Mob_B_Att1.ANI", "--from", p(&c), "-o", p(&one)]);
+    assert_eq!(code(&o), 0, "{}", err(&o));
+    assert_eq!(std::fs::read(&one).unwrap(), std::fs::read(dir.join("Monster/ANI/Mob_B_Att1.ANI.json")).unwrap());
+    let text = std::fs::read_to_string(dir.join("Monster/3DC/Mob_A.3DC.json")).unwrap();
+    assert!(text.contains("\"Monster/3DC/Mob_A.3DC\"") && !text.contains(p(w.tmp.path())), "the source is the archive path, no folder of this machine");
+    // disk inputs: a folder keeps its inner paths, a named file is written under its file name
+    let src = w.tmp.path().join("src");
+    write(&src.join("inner/arm.ANI"), &arm_ani(30));
+    write(&src.join("top.3dc"), &arm_mesh_3dc());
+    let named = w.tmp.path().join("elsewhere").join("solo.ANI");
+    write(&named, &arm_ani(10));
+    let dir2 = w.tmp.path().join("json2");
+    let o = sh(&w.data, &["anim", "export", p(&src), p(&named), "--out-dir", p(&dir2)]);
+    assert_eq!(code(&o), 0, "{}", err(&o));
+    assert_eq!(files_under(&dir2), vec!["inner/arm.ANI.json", "solo.ANI.json", "top.3dc.json"]);
+    // the JSON report
+    let dir3 = w.tmp.path().join("json3");
+    let v = json(&sh(&w.data, &["anim", "export", "Monster/ANI/*", "--from", p(&c), "--out-dir", p(&dir3), "--json"]));
+    assert_eq!(v["written"].as_array().unwrap().len(), 2, "{v}");
+    assert!(v["failed"].as_array().unwrap().is_empty(), "{v}");
+}
+
+#[test]
+fn export_out_dir_inside_a_client_folder_exits_4_and_reads_nothing() {
+    let w = world();
+    let c = monster_client(&w);
+    let before = snapshot(&c);
+    for dir in [c.join("out"), c.join("deeper").join("out")] {
+        let o = sh(&w.data, &["anim", "export", "Monster/", "--from", p(&c), "--out-dir", p(&dir)]);
+        assert_eq!(code(&o), 4, "{}", err(&o));
+        assert!(err(&o).contains("is inside the client folder"), "{}", err(&o));
+        assert!(!dir.exists());
+    }
+    // the folder is checked before the archive is opened: an archive that cannot be opened is not even reached
+    let cf = w.tmp.path().join("cf");
+    std::fs::create_dir_all(&cf).unwrap();
+    write(&cf.join("data.SAH"), b"x");
+    let o = sh(&w.data, &["anim", "export", "*", "--from", p(&w.tmp.path().join("no-such-archive")), "--out-dir", p(&cf.join("o"))]);
+    assert_eq!(code(&o), 4, "{}", err(&o));
+    assert!(!cf.join("o").exists());
+    assert_eq!(snapshot(&c), before);
+}
+
+#[test]
+fn export_out_dir_keeps_existing_files_without_force() {
+    let w = world();
+    let c = monster_client(&w);
+    let dir = w.tmp.path().join("json-out");
+    write(&dir.join("Monster/ANI/Mob_A_Att1.ANI.json"), b"keep me");
+    let o = sh(&w.data, &["anim", "export", "Monster/", "--from", p(&c), "--out-dir", p(&dir)]);
+    assert_eq!(code(&o), 4, "{}", err(&o));
+    assert!(out(&o).contains("wrote 2 of 3 (1 failed)"), "{}", out(&o));
+    assert!(err(&o).contains("Mob_A_Att1.ANI: FAILED:") && err(&o).contains("exists; use --force"), "{}", err(&o));
+    assert_eq!(std::fs::read(dir.join("Monster/ANI/Mob_A_Att1.ANI.json")).unwrap(), b"keep me");
+    assert_eq!(files_under(&dir).len(), 3, "the other two were written");
+    let o = sh(&w.data, &["anim", "export", "Monster/", "--from", p(&c), "--out-dir", p(&dir), "--force"]);
+    assert_eq!(code(&o), 0, "{}", err(&o));
+    assert_ne!(std::fs::read(dir.join("Monster/ANI/Mob_A_Att1.ANI.json")).unwrap(), b"keep me");
+}
+
+#[test]
+fn a_file_that_does_not_read_is_reported_and_the_others_written() {
+    let w = world();
+    let mut cut = arm_ani(30);
+    cut.truncate(cut.len() - 3);
+    let c = client_with(&w, "bc", &[("Monster/ANI/A_good.ANI", arm_ani(30)), ("Monster/ANI/B_cut.ANI", cut), ("Monster/ANI/C_good.ANI", chain(0))]);
+    let dir = w.tmp.path().join("o");
+    let o = sh(&w.data, &["anim", "export", "Monster/", "--from", p(&c), "--out-dir", p(&dir)]);
+    assert_eq!(code(&o), 3, "{}", err(&o));
+    assert!(out(&o).contains("wrote 2 of 3 (1 failed)") && err(&o).contains("B_cut.ANI: FAILED:"), "{}{}", out(&o), err(&o));
+    assert_eq!(files_under(&dir), vec!["Monster/ANI/A_good.ANI.json", "Monster/ANI/C_good.ANI.json"]);
+    let v = json(&sh(&w.data, &["anim", "export", "Monster/", "--from", p(&c), "--out-dir", p(&w.tmp.path().join("o2")), "--json"]));
+    assert_eq!(v["written"].as_array().unwrap().len(), 2);
+    assert_eq!(v["failed"][0]["input"], "Monster/ANI/B_cut.ANI", "{v}");
+    assert!(v["failed"][0]["reason"].as_str().is_some_and(|r| !r.is_empty()), "{v}");
+    // names the archive writers refuse, or that would make DIR look like a client folder, are reported, not written
+    let c2 = client_with(&w, "nc", &[("data.sah/x.ANI", arm_ani(30)), ("bad.shaiya-tmp/z.ANI", arm_ani(30)), ("ok/y.ANI", arm_ani(30))]);
+    let d2 = w.tmp.path().join("o3");
+    let o = sh(&w.data, &["anim", "export", "*", "--from", p(&c2), "--out-dir", p(&d2)]);
+    assert_eq!(code(&o), 3, "{}{}", out(&o), err(&o));
+    assert_eq!(files_under(&d2), vec!["ok/y.ANI.json"]);
+}
+
+#[test]
+fn more_than_one_input_needs_out_dir_exit_2() {
+    let w = world();
+    let d = w.tmp.path().join("m");
+    write(&d.join("a.ANI"), &arm_ani(30));
+    write(&d.join("b.ANI"), &arm_ani(30));
+    let o = sh(&w.data, &["anim", "export", p(&d.join("a.ANI")), p(&d.join("b.ANI")), "-o", p(&d.join("x.json"))]);
+    assert_eq!(code(&o), 2, "{}", err(&o));
+    assert!(err(&o).contains("--out-dir"), "{}", err(&o));
+    let o = sh(&w.data, &["anim", "export", p(&d.join("a.ANI")), "-o", p(&d.join("x.json")), "--out-dir", p(&d.join("o"))]);
+    assert_eq!(code(&o), 2, "{}", err(&o));
+    let o = sh(&w.data, &["anim", "export", p(&d.join("a.ANI"))]);
+    assert_eq!(code(&o), 2, "{}", err(&o));
+    assert_eq!(files_under(&d), vec!["a.ANI", "b.ANI"]);
+}
+
+/// The three-bone arm with the second bone turned to the quaternion `(0, 0, sin, cos)` at the last key.
+fn arm_turned(sin: f32, cos: f32, end_key: i32) -> Vec<u8> {
+    let b = |parent: i32, y: f32, rot: Vec<(i32, [f32; 4])>| BoneSpec { parent, matrix: translation_bits(0.0, y, 0.0), rot, trans: Vec::new() };
+    ani_bytes(0, end_key, &[b(-1, 0.0, Vec::new()), b(0, 1.0, vec![(0, [0.0, 0.0, 0.0, 1.0]), (end_key, [0.0, 0.0, sin, cos])]), b(1, 2.0, Vec::new())])
+}
+
+#[test]
+fn diff_of_a_file_with_itself_exits_0() {
+    let w = world();
+    let d = w.tmp.path().join("d");
+    write(&d.join("a.ANI"), &arm_ani(30));
+    let o = sh(&w.data, &["anim", "diff", p(&d.join("a.ANI")), p(&d.join("a.ANI"))]);
+    assert_eq!(code(&o), 0, "{}", err(&o));
+    assert!(out(&o).starts_with("identical:"), "{}", out(&o));
+    let v = json(&sh(&w.data, &["anim", "diff", p(&d.join("a.ANI")), p(&d.join("a.ANI")), "--json"]));
+    assert_eq!(v["identical"], true);
+    assert!(v["bones"].as_array().unwrap().is_empty() && v["skeleton"].as_array().unwrap().is_empty(), "{v}");
+    // the same file read from an archive and from disk
+    let c = client_with(&w, "dc", &[("Monster/ANI/A.ANI", arm_ani(30))]);
+    let o = sh(&w.data, &["anim", "diff", "Monster/ANI/A.ANI", "Monster/ANI/A.ANI", "--from", p(&c)]);
+    assert_eq!(code(&o), 0, "{}", err(&o));
+    let o = sh(&w.data, &["anim", "diff", p(&d.join("a.ANI")), "Monster/ANI/A.ANI", "--from-b", p(&c)]);
+    assert_eq!(code(&o), 0, "{}", err(&o));
+}
+
+#[test]
+fn diff_names_the_changed_bone_and_its_angle_exits_1() {
+    let w = world();
+    let d = w.tmp.path().join("d");
+    write(&d.join("a.ANI"), &arm_ani(30));
+    let half = std::f32::consts::FRAC_PI_8;
+    write(&d.join("b.ANI"), &arm_turned(half.sin(), half.cos(), 30));
+    let o = sh(&w.data, &["anim", "diff", p(&d.join("a.ANI")), p(&d.join("b.ANI"))]);
+    assert_eq!(code(&o), 1, "{}", err(&o));
+    let t = out(&o);
+    assert!(t.contains("2 bones differ in pose") && t.contains("bone 1: up to 45.00 degrees") && t.contains("bone 2: up to 45.00 degrees"), "{t}");
+    assert!(!t.contains("bone 0:"), "{t}");
+    let v = json(&sh(&w.data, &["anim", "diff", p(&d.join("a.ANI")), p(&d.join("b.ANI")), "--json"]));
+    assert_eq!(v["identical"], false);
+    assert_eq!(v["bones"][0]["bone"], 2, "the bone that moves farthest comes first at equal turns: {v}");
+    assert!((v["bones"][1]["max_angle_deg"].as_f64().unwrap() - 45.0).abs() < 0.01, "{v}");
+    // a longer animation with the same poses is a difference too
+    write(&d.join("c.ANI"), &arm_ani(60));
+    let o = sh(&w.data, &["anim", "diff", p(&d.join("a.ANI")), p(&d.join("c.ANI"))]);
+    assert_eq!(code(&o), 1, "{}", err(&o));
+    assert!(out(&o).contains("end key differs: A 30, B 60"), "{}", out(&o));
+    // unreadable and not-an-ANI inputs are exit 3
+    write(&d.join("cut.ANI"), &arm_ani(30)[..20]);
+    let o = sh(&w.data, &["anim", "diff", p(&d.join("a.ANI")), p(&d.join("cut.ANI"))]);
+    assert_eq!(code(&o), 3, "{}", err(&o));
+    write(&d.join("notes.txt"), b"x");
+    assert_eq!(code(&sh(&w.data, &["anim", "diff", p(&d.join("a.ANI")), p(&d.join("notes.txt"))])), 3);
+}
+
+#[test]
+fn diff_of_two_skeletons_lists_the_rig_differences() {
+    let w = world();
+    let d = w.tmp.path().join("d");
+    write(&d.join("a.ANI"), &chain(0));
+    // another bone count
+    write(&d.join("two.ANI"), &ani_bytes(0, 30, &[bone(-1, 0.0), bone(0, 1.0)]));
+    let o = sh(&w.data, &["anim", "diff", p(&d.join("a.ANI")), p(&d.join("two.ANI"))]);
+    assert_eq!(code(&o), 1, "{}", err(&o));
+    assert!(out(&o).contains("the skeletons differ:") && out(&o).contains("bone count: A 3, B 2"), "{}", out(&o));
+    // another parent and another reference matrix, and a first field
+    write(&d.join("b.ANI"), &ani_bytes(-1, 30, &[bone(-1, 0.0), bone(-1, 1.0), bone(1, 5.0)]));
+    let o = sh(&w.data, &["anim", "diff", p(&d.join("a.ANI")), p(&d.join("b.ANI"))]);
+    assert_eq!(code(&o), 1, "{}", err(&o));
+    let t = out(&o);
+    assert!(t.contains("bone 1: parent is 0 in A, -1 in B") && t.contains("bone 2: reference matrix differs") && t.contains("first field differs: A 0, B -1"), "{t}");
+    let v = json(&sh(&w.data, &["anim", "diff", p(&d.join("a.ANI")), p(&d.join("b.ANI")), "--json"]));
+    assert!(v["skeleton"].as_array().unwrap().iter().any(|x| x["kind"] == "parent" && x["bone"] == 1), "{v}");
+}
+
 // ---- opt-in: a real client (read only; outputs go to SHAIYA_SCRATCH) ---------------------------------------------------------------
 
 #[test]

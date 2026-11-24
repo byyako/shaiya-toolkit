@@ -98,6 +98,18 @@ puts `data.sah` and `data.saf` back byte for byte. See [undo and recovery](undo-
 
 Queue the replacement in the Archive tab and press **Make patch...**, or use `shaiya patch build`, then sign and publish as in [make a patch](make-a-patch.md). Players apply the patch the usual way and can roll it back.
 
+## Compare two animations
+
+To see how your animation differs from the one it replaces, or how two animations of a rig differ, compare their poses:
+
+```
+shaiya anim diff my.ANI "Character/Human/ANI/huwm_117_x.ANI" --from-b "@mymod"
+```
+
+`A` is the first file and `B` the second (each a file on disk, or with `--from` / `--from-b` a path in an archive). The command prints `identical: ...` and exits 0, or lists what differs and exits 1: the skeleton (bone count, parents, reference matrices) and the first field the way `compare` does, the end keys, and the bones whose pose differs, largest turn first, with the largest turn in degrees and the largest move in units over all keys, and how many keys each file has for the bone. It compares the toolkit's own computation of the poses (the same one the player uses); it says nothing about what the game does with either file. A difference in the skeleton means the game would not take the file as a replacement in the same way `compare` says.
+
+In Shaiya Toolkit, right-click an `.ANI` in the Archive tab and choose **Compare with...**: pick another `.ANI` of the same folder, or "the same file in" another saved client (that client's archive is opened read-only), and press **Compare**. To export a whole folder of animations as JSON at once (to diff or edit them as text), right-click the folder and choose **Export folder as JSON...**, or use `shaiya anim export "Character/Human/ANI/" --from "@us" --out-dir json-out`. In a `Character/<race>/ANI` folder the **Rig** box shows the animations of one rig only, and a `.3DC` mesh's **Animation** box plays any animation of its rig on it.
+
 ## What was seen in the game
 
 Seen in the game (US EP4.5): basic playback of one replaced victory emote on the `huwm` rig (the human male Fighter); everything else is validated offline only.

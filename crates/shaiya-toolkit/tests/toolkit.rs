@@ -3492,3 +3492,199 @@ fn save_frame_of_a_still_model_writes_its_picture() {
     assert!(w.h.wait_until(WAIT, |h| !h.app.app.archive.is_saving_frame()));
     assert_eq!(shaiya_toolkit::preview_controls::png_size(&std::fs::read(&out).unwrap()), Some((pw, ph)));
 }
+
+// ------------------------------------------------------------------------------------------------ T12 W8: batch export, compare, rig filter
+
+/// `ani_world` plus more animations of two rigs, so a folder holds several model files.
+fn rig_world(tag: &str) -> World {
+    let mut w = world(tag);
+    let arm = shaiya_testkit::anim::arm_ani(60);
+    SahBuilder::new(0)
+        .file(b"Character/Human/ANI/huwm_117_test.ANI", &arm)
+        .file(b"Character/Human/ANI/huwm_118_test.ANI", &arm)
+        .file(b"Character/Human/ANI/huwf_001_test.ANI", &arm)
+        .file(b"Character/Human/ANI/huwf_002_test.ANI", &arm)
+        .file(b"Character/Human/ANI/notes.txt", b"not a model")
+        .file(b"Character/Human/3DC/huwm_torso001.3DC", &shaiya_testkit::anim::arm_mesh_3dc())
+        .write_to(w.client.path());
+    w.h.frames(2);
+    let dir = w.client_dir();
+    with_cx(&mut w.h, |app, cx| app.add_client("US test", &dir, true, cx)).unwrap();
+    assert!(w.h.wait_until(WAIT, |h| h.app.app.archive.is_open()), "the archive opens");
+    w.h.frames(2);
+    w
+}
+
+fn folder_export_done(w: &mut World) -> bool {
+    w.h.wait_until(WAIT, |h| !h.app.app.archive.is_exporting_folder())
+}
+
+fn json_files_under(d: &std::path::Path) -> Vec<String> {
+    fn walk(base: &std::path::Path, dir: &std::path::Path, v: &mut Vec<String>) {
+        for e in std::fs::read_dir(dir).into_iter().flatten().flatten() {
+            let p = e.path();
+            if p.is_dir() {
+                walk(base, &p, v);
+            } else {
+                v.push(p.strip_prefix(base).unwrap().to_string_lossy().replace('\\', "/"));
+            }
+        }
+    }
+    let mut v = Vec::new();
+    walk(d, d, &mut v);
+    v.sort();
+    v
+}
+
+#[test]
+fn exporting_a_folder_writes_every_model_file_as_json() {
+    let mut w = rig_world("t12-w8-folder");
+    let out = TempDir::new("t12-w8-folder-out");
+    let dir = out.path().join("json");
+    with_cx(&mut w.h, |app, cx| app.archive.export_folder_json_to("Character/Human", dir.clone(), cx));
+    assert!(folder_export_done(&mut w));
+    w.h.frames(2);
+    let r = w.h.app.app.archive.folder_export_report().expect("a report").clone();
+    assert_eq!((r.written, r.total, r.failed.len(), r.cancelled), (5, 5, 0, false), "{r:?}");
+    assert_eq!(
+        json_files_under(&dir),
+        vec![
+            "Character/Human/3DC/huwm_torso001.3DC.json",
+            "Character/Human/ANI/huwf_001_test.ANI.json",
+            "Character/Human/ANI/huwf_002_test.ANI.json",
+            "Character/Human/ANI/huwm_117_test.ANI.json",
+            "Character/Human/ANI/huwm_118_test.ANI.json",
+        ],
+        "the text file is not a model file"
+    );
+    assert!(w.h.app.app.archive.status_line.starts_with("Exported 5 of 5 files to "), "{}", w.h.app.app.archive.status_line);
+    // each file is the JSON of the single export, with the archive path as its source
+    let one = out.path().join("one.json");
+    with_cx(&mut w.h, |app, cx| app.archive.select_path(ANI_PATH, cx));
+    assert!(preview_ready(&mut w.h));
+    with_cx(&mut w.h, |app, cx| app.archive.export_json_to(&one, cx));
+    assert!(export_done(&mut w));
+    assert_eq!(std::fs::read(&one).unwrap(), std::fs::read(dir.join("Character/Human/ANI/huwm_117_test.ANI.json")).unwrap());
+    // a second run keeps what is there and lists every file as failed
+    with_cx(&mut w.h, |app, cx| app.archive.export_folder_json_to("Character/Human/ANI", dir.clone(), cx));
+    assert!(folder_export_done(&mut w));
+    w.h.frames(3);
+    let r = w.h.app.app.archive.folder_export_report().expect("a report").clone();
+    assert_eq!((r.written, r.total, r.failed.len()), (0, 4, 4), "{r:?}");
+    assert!(r.failed.iter().all(|(_, why)| why.contains("exists and is kept")), "{r:?}");
+    assert!(w.h.text().contains("Export failures"), "the failure list window opens: {}", w.h.text());
+}
+
+#[test]
+fn a_folder_export_into_a_client_is_refused_and_starts_nothing() {
+    let mut w = rig_world("t12-w8-folder-refuse");
+    let inside = w.client_dir().join("out");
+    with_cx(&mut w.h, |app, cx| app.archive.export_folder_json_to("Character/Human", inside.clone(), cx));
+    assert!(!w.h.app.app.archive.is_exporting_folder() && !inside.exists());
+    let d = w.h.app.shell.banner_details().expect("the error is shown").to_string();
+    assert!(d.contains("Choose a folder outside the client"), "{d}");
+}
+
+#[test]
+fn the_folder_export_can_be_cancelled_and_counts_what_was_written() {
+    let mut w = rig_world("t12-w8-folder-cancel");
+    let out = TempDir::new("t12-w8-folder-cancel-out");
+    let dir = out.path().join("json");
+    // hold the export at its first progress report (after the first file): it cannot finish before the cancel below
+    w.h.app.shell.tasks().hold_progress();
+    with_cx(&mut w.h, |app, cx| app.archive.export_folder_json_to("Character/Human", dir.clone(), cx));
+    assert!(w.h.wait_until(WAIT, |h| h.app.shell.tasks().views().iter().any(|v| v.title.starts_with("Export") && v.done > 0)), "the export started");
+    w.h.app.app.archive.cancel_folder_export();
+    w.h.app.shell.tasks().release_progress();
+    assert!(folder_export_done(&mut w));
+    w.h.frames(2);
+    let r = w.h.app.app.archive.folder_export_report().expect("a report").clone();
+    assert!(r.cancelled && r.written == 1 && r.total == 5, "{r:?}");
+    assert_eq!(json_files_under(&dir).len(), 1, "exactly the counted file is on disk");
+    assert!(w.h.app.app.archive.status_line.starts_with("Export cancelled: wrote 1 of 5 files to "), "{}", w.h.app.app.archive.status_line);
+}
+
+#[test]
+fn comparing_with_another_client_reads_the_same_path_there() {
+    let mut w = rig_world("t12-w8-compare");
+    // another client holds the same path with the second bone turned half as far
+    let half = std::f32::consts::FRAC_PI_8;
+    let b = |parent: i32, y: f32, rot: Vec<(i32, [f32; 4])>| shaiya_testkit::anim::BoneSpec { parent, matrix: shaiya_testkit::anim::translation_bits(0.0, y, 0.0), rot, trans: Vec::new() };
+    let other_ani = shaiya_testkit::anim::ani_bytes(0, 60, &[b(-1, 0.0, Vec::new()), b(0, 1.0, vec![(0, [0.0, 0.0, 0.0, 1.0]), (60, [0.0, 0.0, half.sin(), half.cos()])]), b(1, 2.0, Vec::new())]);
+    let other = client_of("t12-w8-compare-other", &[(ANI_PATH, &other_ani)]);
+    add_saved(&mut w, "EU other", other.path());
+    assert!(w.h.app.app.archive.offers_compare(ANI_PATH), "the row menu offers it for an .ANI");
+    assert!(!w.h.app.app.archive.offers_compare("Character/Human/ANI/notes.txt"));
+    let dir = other.path().to_path_buf();
+    with_cx(&mut w.h, |app, cx| app.archive.compare_ani_with(ANI_PATH, shaiya_toolkit::anim_compare::Other::Client { name: "EU other".into(), dir }, cx));
+    assert!(w.h.wait_until(WAIT, |h| h.app.app.archive.anim_compare().is_some_and(|c| !c.is_running() && c.result.is_some())), "the comparison ends");
+    w.h.frames(3);
+    let shown = w.h.app.app.archive.anim_compare().and_then(|c| c.result.clone()).expect("a result").expect("it reads");
+    assert_eq!(shown.a, ANI_PATH);
+    assert!(shown.b.ends_with("in EU other"), "{}", shown.b);
+    let bones: Vec<usize> = shown.diff.bones.iter().map(|b| b.bone).collect();
+    assert_eq!(bones, vec![2, 1], "{:?}", shown.diff);
+    assert!((shown.diff.bones[1].max_angle_deg - 45.0).abs() < 0.01);
+    let t = w.h.text();
+    assert!(t.contains("Compare animation") && t.contains("2 bones differ in pose"), "{t}");
+    // a client that has no such file says so, and another .ANI of this archive can be chosen too
+    let none = client_of("t12-w8-compare-none", &[("x.txt", b"x")]);
+    add_saved(&mut w, "No file", none.path());
+    let dir = none.path().to_path_buf();
+    with_cx(&mut w.h, |app, cx| app.archive.compare_ani_with(ANI_PATH, shaiya_toolkit::anim_compare::Other::Client { name: "No file".into(), dir }, cx));
+    assert!(w.h.wait_until(WAIT, |h| h.app.app.archive.anim_compare().is_some_and(|c| !c.is_running() && c.result.is_some())));
+    let e = w.h.app.app.archive.anim_compare().and_then(|c| c.result.clone()).expect("a result").expect_err("not there");
+    assert!(e.contains("not in No file"), "{e}");
+    with_cx(&mut w.h, |app, cx| app.archive.compare_ani_with(ANI_PATH, shaiya_toolkit::anim_compare::Other::File("Character/Human/ANI/huwm_118_test.ANI".into()), cx));
+    assert!(w.h.wait_until(WAIT, |h| h.app.app.archive.anim_compare().is_some_and(|c| !c.is_running() && c.result.is_some())));
+    let same = w.h.app.app.archive.anim_compare().and_then(|c| c.result.clone()).expect("a result").expect("it reads");
+    assert!(same.diff.is_identical(), "{:?}", same.diff);
+}
+
+#[test]
+fn the_animation_combo_plays_a_chosen_animation_on_the_mesh() {
+    let mut w = rig_world("t12-w8-anim-combo");
+    let mesh = "Character/Human/3DC/huwm_torso001.3DC";
+    with_cx(&mut w.h, |app, cx| app.archive.select_path(mesh, cx));
+    assert!(preview_ready(&mut w.h));
+    w.h.frames(3);
+    let Some(shaiya_toolkit::preview::PreviewData::Model { animations, .. }) = w.h.app.app.archive.preview_data() else { panic!("not a mesh preview") };
+    assert_eq!(animations, &vec!["Character/Human/ANI/huwm_117_test.ANI".to_string(), "Character/Human/ANI/huwm_118_test.ANI".to_string()], "only the rig of this mesh");
+    assert!(w.h.text().contains("Animation: play on this mesh"), "{}", w.h.text());
+    with_cx(&mut w.h, |app, cx| app.archive.play_animation_on_mesh("Character/Human/ANI/huwm_118_test.ANI", cx));
+    assert!(preview_ready(&mut w.h));
+    w.h.frames(3);
+    let Some(shaiya_toolkit::preview::PreviewData::Anim { mesh: chosen, frames, .. }) = w.h.app.app.archive.preview_data() else { panic!("not an animation preview") };
+    assert_eq!(chosen, &shaiya_toolkit::preview::MeshChoice::One(mesh.to_string()));
+    assert!(!frames.frames.is_empty());
+    assert!(w.h.text().contains("huwm_118_test.ANI"), "{}", w.h.text());
+}
+
+#[test]
+fn the_rig_filter_shows_only_that_rig() {
+    let mut w = rig_world("t12-w8-rig");
+    with_cx(&mut w.h, |app, _| app.archive.enter_folder("Character/Human/ANI"));
+    w.h.frames(3);
+    let shown = |w: &World| w.h.app.app.archive.shown_paths().into_iter().map(|p| p.rsplit('/').next().unwrap().to_string()).collect::<Vec<_>>();
+    assert_eq!(shown(&w).len(), 5, "{:?}", shown(&w));
+    assert!(w.h.text().contains("Rig: all"), "the box is shown in an ANI folder: {}", w.h.text());
+    w.h.app.app.archive.set_rig_filter(Some("huwf"));
+    w.h.frames(3);
+    assert_eq!(shown(&w), vec!["huwf_001_test.ANI", "huwf_002_test.ANI"]);
+    assert!(w.h.text().contains("Rig: huwf"), "{}", w.h.text());
+    w.h.app.app.archive.set_rig_filter(Some("huwm"));
+    w.h.frames(3);
+    assert_eq!(shown(&w), vec!["huwm_117_test.ANI", "huwm_118_test.ANI"]);
+    // another folder: the box is gone and the filter does not apply
+    with_cx(&mut w.h, |app, _| app.archive.enter_folder("Character/Human/3DC"));
+    w.h.frames(3);
+    assert_eq!(shown(&w), vec!["huwm_torso001.3DC"]);
+    assert!(!w.h.text().contains("Rig: "), "{}", w.h.text());
+    // a rig of another race is not offered in this race's folder
+    assert_eq!(shaiya_toolkit::archive_view::rig_choices("character/human/ani").len(), 4);
+    assert!(shaiya_toolkit::archive_view::rig_choices("Character/Human/3DC").is_empty());
+    w.h.app.app.archive.set_rig_filter(Some("elmr"));
+    with_cx(&mut w.h, |app, _| app.archive.enter_folder("Character/Human/ANI"));
+    w.h.frames(3);
+    assert_eq!(shown(&w).len(), 5, "an elf rig does not filter the human folder");
+}

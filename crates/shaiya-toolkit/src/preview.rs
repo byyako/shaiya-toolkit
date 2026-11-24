@@ -37,7 +37,8 @@ pub enum PreviewData {
     /// A `.3DC` skinned mesh uses the same variant: its rest pose in plain grey (`missing`, `see_through`, `invisible` are empty and
     /// `notes` says what the picture is).
     /// `texture` is set for a `.3DC` a list file names textures for (the line and the choice).
-    Model { header: String, missing: Vec<String>, see_through: Vec<String>, invisible: Vec<String>, notes: Vec<String>, texture: Option<TextureInfo>, width: u32, height: u32, rgba: Vec<u8> },
+    /// `animations` (a `.3DC` only) are the `.ANI` files of the same rig that have enough bones for the mesh, in name order, at most 64.
+    Model { header: String, missing: Vec<String>, see_through: Vec<String>, invisible: Vec<String>, notes: Vec<String>, texture: Option<TextureInfo>, animations: Vec<String>, width: u32, height: u32, rgba: Vec<u8> },
     /// An `.ANI` skeletal animation with its pre-rendered frames (rendered on the worker thread; the UI only swaps one texture).
     Anim {
         header: Vec<String>,
@@ -252,7 +253,7 @@ pub fn model_preview(src: &dyn FileSource, data: &[u8], path: &str, job: &Job) -
         Some(pic) => (pic.width as u32, pic.height as u32, pic.rgba),
         None => (0, 0, Vec::new()),
     };
-    Ok(PreviewData::Model { header, missing: p.missing, see_through: p.see_through, invisible: p.invisible, notes: Vec::new(), texture: None, width, height, rgba })
+    Ok(PreviewData::Model { header, missing: p.missing, see_through: p.see_through, invisible: p.invisible, notes: Vec::new(), texture: None, animations: Vec::new(), width, height, rgba })
 }
 
 /// The `.3DC` files that suit the animation at `ani_path`, by names only (no list file is read): the folder next to the `ANI` folder
@@ -481,6 +482,16 @@ pub fn anim_preview(src: &dyn FileSource, data: &[u8], path: &str, mesh: &MeshCh
     Ok(PreviewData::Anim { header, issues, bones, end_key: ani.end_key, frames, mesh, mesh_choices, notes, rate: 30.0, unit: "key" })
 }
 
+/// The `.ANI` files of the same rig as the skinned mesh at `path` that have enough bones for it (see [`shaiya_clientdata::meshpick::animations_for`]);
+/// each candidate's bone count is read from its first ten bytes. A cloak has none.
+fn animations_of(src: &dyn FileSource, path: &str, mesh: &shaiya_clientdata::C3dc, job: &Job) -> Vec<String> {
+    let paths: Vec<String> = src.paths().into_iter().filter(|p| ext_of(p) == "ani").collect();
+    shaiya_clientdata::meshpick::animations_for(&paths, path, MeshInfo::of(mesh), &mut |p| {
+        job.check().ok()?;
+        shaiya_clientdata::anim::bone_count_in_header(&src.read_range(p, 0, 10).ok()?)
+    })
+}
+
 /// The preview of a `.3DC` from its bytes: the first mesh at rest with the texture the list files name for it (the one `look` chooses;
 /// plain grey with a note when none is named, it is not in the archive, or textures are off), with the wire. A file that does not read
 /// (or is ambiguous) is an error (the caller shows it as Failed).
@@ -533,7 +544,8 @@ pub fn c3dc_preview(src: &dyn FileSource, data: &[u8], path: &str, textures: &Te
         Some(p) => (p.width as u32, p.height as u32, p.rgba),
         None => (0, 0, Vec::new()),
     };
-    Ok(PreviewData::Model { header, missing: Vec::new(), see_through: Vec::new(), invisible: Vec::new(), notes, texture, width, height, rgba })
+    let animations = animations_of(src, path, &c, job);
+    Ok(PreviewData::Model { header, missing: Vec::new(), see_through: Vec::new(), invisible: Vec::new(), notes, texture, animations, width, height, rgba })
 }
 
 /// Builds the preview of the file `path` of `src` (the path decides what it should be, the bytes can overrule). `text_all`: read up to

@@ -152,7 +152,7 @@ pub fn m3do_preview(src: &dyn FileSource, data: &[u8], path: &str, textures: &Te
     let mut picked = pick_3do(src, path, &m.texture_name(), textures, look, job)?;
     if m.frames.is_empty() {
         let (width, height, rgba) = rest_with(src, &mut picked, &m.vertices.iter().map(|x| (x.pos, x.uv)).collect::<Vec<_>>(), &m.faces, look.view, job)?;
-        return Ok(PreviewData::Model { header: first, missing: Vec::new(), see_through: Vec::new(), invisible: Vec::new(), notes: picked.notes, texture: None, width, height, rgba });
+        return Ok(PreviewData::Model { header: first, missing: Vec::new(), see_through: Vec::new(), invisible: Vec::new(), notes: picked.notes, texture: None, animations: Vec::new(), width, height, rgba });
     }
     let positive = m.frame_rate > 0;
     let rate = if positive { m.frame_rate as f32 } else { FALLBACK_RATE };
@@ -221,7 +221,7 @@ pub fn m3de_preview(src: &dyn FileSource, data: &[u8], path: &str, textures: &Te
     let Some(block) = block else {
         let (width, height, rgba) = rest_with(src, &mut picked, &m.vertices.iter().map(|x| (x.pos, x.uv)).collect::<Vec<_>>(), &m.faces, look.view, job)?;
         notes.extend(picked.notes);
-        return Ok(PreviewData::Model { header, missing: Vec::new(), see_through: Vec::new(), invisible: Vec::new(), notes, texture: None, width, height, rgba });
+        return Ok(PreviewData::Model { header, missing: Vec::new(), see_through: Vec::new(), invisible: Vec::new(), notes, texture: None, animations: Vec::new(), width, height, rgba });
     };
     let items = [MorphItem { texture: picked.path.clone().unwrap_or_default(), faces: &m.faces, uv: m.vertices.iter().map(|x| x.uv).collect() }];
     let made = render::morph_frames_with(&items, &[picked.alpha], block.frames.len(), look.view, &mut |_, f| block.frames[f].vertices.iter().map(|x| x.delta).collect(), &mut |name| image_at(src, job, name), &mut || job.check().is_err()).ok_or_else(cancelled)?;

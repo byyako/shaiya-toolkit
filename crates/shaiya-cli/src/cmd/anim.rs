@@ -44,8 +44,22 @@ pub enum Cmd {
     /// compared with the file before anything is written; an unedited JSON imports back to the same bytes. Exit 0 written, 2 -o does not end in
     /// .json, 3 the file does not read (or is over 128 MiB), 4 the output exists, is inside a client folder or is the input, 5 a bug.
     ///
-    /// Example: shaiya anim export "character/human/ani/huwm_117_x.ani" --from "@us" -o wave.json
+    /// With --out-dir DIR instead of -o, any number of files, folders or (with --from) patterns are exported, one `<path>.json` per model
+    /// file under DIR (folders are made; a path inside the archive stays a path under DIR). DIR is checked before anything is read: inside a
+    /// client folder it is exit 4. A file that does not read, or whose output exists (without --force), is reported and the rest go on; the
+    /// exit code at the end is 3 for a file that did not read, 4 for an output that exists or is refused, 5 for a bug, else 0. The last line
+    /// says `wrote N of M (K failed)`.
+    ///
+    /// Example: shaiya anim export "character/human/ani/*" --from "@us" --out-dir json-out
     Export(ExportArgs),
+    /// Compare the poses of two .ANI files: skeleton, end key and the bones whose pose differs
+    ///
+    /// A is the first file, B the second; each is a file on disk or, with --from (A) and --from-b (B, default: the same archive), its path in
+    /// an archive. The poses are sampled at every integer key up to the larger end key. Exit 0 when the skeletons, the end keys and the poses
+    /// are identical, 1 when anything differs, 3 when a file does not read.
+    ///
+    /// Example: shaiya anim diff character/human/ani/huwm_117_x.ani character/human/ani/huwm_118_x.ani --from "@us"
+    Diff(DiffArgs),
     /// Turn a JSON made by `export` back into a file (the format comes from the JSON, the -o extension must match)
     ///
     /// An .ANI needs --like: the file it will replace. It is written only when it passes the same check as `compare` (same skeleton, same first
@@ -81,18 +95,38 @@ pub struct CompareArgs {
 
 #[derive(clap::Args)]
 pub struct ExportArgs {
-    /// The file to export: a file on disk, or with --from its exact path in the archive (not a pattern)
-    #[arg(value_name = "INPUT")]
-    pub input: String,
+    /// With -o: the file to export, a file on disk or with --from its exact path in the archive (not a pattern). With --out-dir: files,
+    /// folders, or with --from patterns over the archive's files
+    #[arg(value_name = "INPUT", required = true)]
+    pub inputs: Vec<String>,
     /// Read INPUT from this archive (a client folder, a .sah file or @name)
     #[arg(long, value_name = "ARCHIVE")]
     pub from: Option<String>,
-    /// The JSON file to write (must end in .json)
+    /// The JSON file to write (must end in .json); one input only
     #[arg(short = 'o', long = "out", value_name = "OUT.json")]
-    pub out: PathBuf,
+    pub out: Option<PathBuf>,
+    /// A folder to write one `<path>.json` per model file into (instead of -o); never inside a client folder
+    #[arg(long, value_name = "DIR")]
+    pub out_dir: Option<PathBuf>,
     /// Replace an existing output
     #[arg(long)]
     pub force: bool,
+}
+
+#[derive(clap::Args)]
+pub struct DiffArgs {
+    /// The first .ANI: a file on disk, or with --from its path in the archive
+    #[arg(value_name = "A")]
+    pub a: String,
+    /// The second .ANI: a file on disk, or with --from-b (or --from) its path in the archive
+    #[arg(value_name = "B")]
+    pub b: String,
+    /// Read A (and B, unless --from-b is given) from this archive (a client folder, a .sah file or @name)
+    #[arg(long, value_name = "ARCHIVE")]
+    pub from: Option<String>,
+    /// Read B from this archive
+    #[arg(long, value_name = "ARCHIVE")]
+    pub from_b: Option<String>,
 }
 
 #[derive(clap::Args)]
@@ -170,12 +204,13 @@ fn json_failure(name: &str, e: JsonError) -> Fail {
     }
 }
 
-pub fn run(ctx: &Ctx, cmd: &Cmd, _job: &shaiya_core::Job) -> i32 {
+pub fn run(ctx: &Ctx, cmd: &Cmd, job: &shaiya_core::Job) -> i32 {
     let r: Res = match cmd {
         Cmd::Info(a) => describe(ctx, a, false).map_err(Fail::from),
         Cmd::Validate(a) => describe(ctx, a, true).map_err(Fail::from),
         Cmd::Compare(a) => compare(ctx, a).map_err(Fail::from),
-        Cmd::Export(a) => export(ctx, a),
+        Cmd::Export(a) => export(ctx, a, job),
+        Cmd::Diff(a) => diff(ctx, a).map_err(Fail::from),
         Cmd::Import(a) => import(ctx, a),
     };
     match r {
@@ -246,6 +281,9 @@ enum Origin {
 struct Entry {
     name: String,
     origin: Origin,
+    /// The path the entry has under an `--out-dir`: its archive path, its path inside a searched folder, or the file name of a file named
+    /// on the command line (never a folder path of the machine).
+    rel: String,
 }
 
 struct Inputs {
@@ -315,7 +353,7 @@ fn collect(ctx: &Ctx, a: &InfoArgs, exts: &[&str]) -> Result<Inputs> {
             let filter = Filter::from_args(&patterns, &[], None, None)?;
             for f in archive.index().visible() {
                 if filter.matches(&f.path, f.entry.length as u64) && has_ext(&f.path, exts) {
-                    entries.push(Entry { name: f.path, origin: Origin::Archive });
+                    entries.push(Entry { rel: f.path.replace('\\', "/"), name: f.path, origin: Origin::Archive });
                 }
             }
             Ok(Inputs { entries, archive: Some(archive), failed: Vec::new() })
@@ -330,11 +368,11 @@ fn collect(ctx: &Ctx, a: &InfoArgs, exts: &[&str]) -> Result<Inputs> {
                     walk(&p, "", &mut found, &mut failed);
                     for (name, path) in found {
                         if filter.matches(&name, 0) {
-                            entries.push(Entry { name, origin: Origin::Disk(path) });
+                            entries.push(Entry { rel: name.clone(), name, origin: Origin::Disk(path) });
                         }
                     }
                 } else {
-                    entries.push(Entry { name: i.clone(), origin: Origin::Disk(p) });
+                    entries.push(Entry { rel: file_name(&p), name: i.clone(), origin: Origin::Disk(p) });
                 }
             }
             Ok(Inputs { entries, archive: None, failed })
@@ -834,6 +872,97 @@ fn print_rig_result(w: &mut impl Write, target_name: &str, candidate: &Ani, targ
     outln!(w, "{}", if ok { "passes" } else { "does not pass" });
 }
 
+// ---- diff -------------------------------------------------------------------------------------------------------------------------
+
+/// How many bones the text of `diff` lists before it says "and N more".
+const BONES_LISTED: usize = 20;
+
+fn diff_side(ctx: &Ctx, name: &str, from: Option<&str>) -> Result<Ani> {
+    check_ext(name, true)?;
+    let bytes = read_target(ctx, name, from)?;
+    read_ani(name, &bytes)
+}
+
+fn diff(ctx: &Ctx, a: &DiffArgs) -> Result<i32> {
+    let from_b = a.from_b.as_deref().or(a.from.as_deref());
+    let (ani_a, ani_b) = match (diff_side(ctx, &a.a, a.from.as_deref()), diff_side(ctx, &a.b, from_b)) {
+        (Ok(x), Ok(y)) => (x, y),
+        (x, y) => {
+            // both problems are told; the exit code is the first one's
+            let errors: Vec<Error> = [x.err(), y.err()].into_iter().flatten().collect();
+            if ctx.json {
+                print_json(&json!({"a": a.a, "b": a.b, "error": errors.iter().map(|e| e.to_string()).collect::<Vec<_>>().join("; ")}));
+            }
+            for e in &errors {
+                eprintln!("error: {e}");
+            }
+            return Ok(3);
+        }
+    };
+    let d = shaiya_clientdata::anim::diff(&ani_a, &ani_b);
+    if ctx.json {
+        let bones: Vec<Value> = d
+            .bones
+            .iter()
+            .map(|b| json!({"bone": b.bone, "max_angle_deg": b.max_angle_deg, "max_offset": b.max_offset, "keys": {"a": b.keys.0, "b": b.keys.1}}))
+            .collect();
+        print_json(&json!({
+            "a": a.a,
+            "b": a.b,
+            "identical": d.is_identical(),
+            "skeleton": d.skeleton.iter().map(diff_json).collect::<Vec<_>>(),
+            "end_key": {"a": d.end_key.0, "b": d.end_key.1},
+            "bones": bones,
+        }));
+        return Ok(i32::from(!d.is_identical()));
+    }
+    let mut w = out();
+    if d.is_identical() {
+        outln!(w, "identical: same skeleton, end key {}, and the same poses at every key", d.end_key.0);
+        let _ = w.flush();
+        return Ok(0);
+    }
+    type Is = fn(&RigDiff) -> bool;
+    let kinds: [(&str, Is); 3] =
+        [("bone count", |d| matches!(d, RigDiff::BoneCount { .. })), ("parent", |d| matches!(d, RigDiff::Parent { .. })), ("reference matrix", |d| matches!(d, RigDiff::Matrix { .. }))];
+    if !same_skeleton(&d.skeleton) {
+        outln!(w, "the skeletons differ:");
+    }
+    for (what, is) in kinds {
+        let list: Vec<&RigDiff> = d.skeleton.iter().filter(|x| is(x)).collect();
+        for x in list.iter().take(LISTED) {
+            match x {
+                RigDiff::BoneCount { candidate, target } => outln!(w, "  bone count: A {candidate}, B {target}"),
+                RigDiff::Parent { bone, candidate, target } => outln!(w, "  bone {bone}: parent is {candidate} in A, {target} in B"),
+                RigDiff::Matrix { bone } => outln!(w, "  bone {bone}: reference matrix differs"),
+                RigDiff::FirstField { .. } => {}
+            }
+        }
+        if list.len() > LISTED {
+            outln!(w, "  and {} more {what} differences", num((list.len() - LISTED) as u64));
+        }
+    }
+    if let Some((x, y)) = d.skeleton.iter().find_map(|x| if let RigDiff::FirstField { candidate, target } = x { Some((*candidate, *target)) } else { None }) {
+        outln!(w, "first field differs: A {x}, B {y} (inferred: the start key; not checked in the game)");
+    }
+    if d.end_key.0 != d.end_key.1 {
+        outln!(w, "end key differs: A {}, B {}", d.end_key.0, d.end_key.1);
+    }
+    if d.bones.is_empty() {
+        outln!(w, "no bone pose differs");
+    } else {
+        outln!(w, "{} differ in pose (largest turn first):", plural(d.bones.len(), "bone", "bones"));
+        for b in d.bones.iter().take(BONES_LISTED) {
+            outln!(w, "  bone {}: up to {:.2} degrees, {:.3} units ({} keys in A, {} in B)", b.bone, b.max_angle_deg, b.max_offset, b.keys.0, b.keys.1);
+        }
+        if d.bones.len() > BONES_LISTED {
+            outln!(w, "  and {} more", num((d.bones.len() - BONES_LISTED) as u64));
+        }
+    }
+    let _ = w.flush();
+    Ok(1)
+}
+
 // ---- export and import ------------------------------------------------------------------------------------------------------------
 
 const MODEL_NAMES: &str = ".ANI, .3DC, .VANI, .MANI, .3DO or .3DE";
@@ -879,42 +1008,183 @@ fn same_bytes_check<'a>(want: &'a [u8], bug: &'a Cell<bool>) -> impl Fn(&Path) -
     }
 }
 
-fn export(ctx: &Ctx, a: &ExportArgs) -> Res {
-    let Some(format) = ModelFormat::from_file_name(&a.input) else {
-        return Err(Error::format(&a.input, None, format!("not an {MODEL_NAMES} file")).into());
+fn export(ctx: &Ctx, a: &ExportArgs, job: &shaiya_core::Job) -> Res {
+    match (&a.out, &a.out_dir) {
+        (Some(_), Some(_)) => Err(Fail::Usage("-o and --out-dir cannot be used together".to_string())),
+        (None, None) => Err(Fail::Usage("give -o OUT.json (one input) or --out-dir DIR".to_string())),
+        (Some(out), None) => match a.inputs.as_slice() {
+            [input] => export_one(ctx, a, input, out),
+            _ => Err(Fail::Usage("more than one input needs --out-dir (-o names one file)".to_string())),
+        },
+        (None, Some(dir)) => export_dir(ctx, a, dir, job),
+    }
+}
+
+/// Why one file of an `--out-dir` export did not get written; the kind decides the exit code at the end (3, 4 or 5).
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum Why {
+    /// The file did not read, is not a model file, or its output name is refused: exit 3.
+    Input,
+    /// The output exists (without --force), is a second output of the same name or would land inside a client folder: exit 4.
+    Safety,
+    /// The self-check failed (a bug of ours): exit 5.
+    Bug,
+}
+
+impl Why {
+    fn code(self) -> i32 {
+        match self {
+            Why::Input => 3,
+            Why::Safety => 4,
+            Why::Bug => 5,
+        }
+    }
+}
+
+/// The path of the JSON of `rel` under `dir` (`rel` is already checked by `loose_name_problem`).
+fn json_target(dir: &Path, rel: &str) -> PathBuf {
+    let mut p = dir.to_path_buf();
+    for part in rel.split('/') {
+        p.push(part);
+    }
+    let mut name = p.file_name().map(|n| n.to_os_string()).unwrap_or_default();
+    name.push(".json");
+    p.set_file_name(name);
+    p
+}
+
+fn export_dir(ctx: &Ctx, a: &ExportArgs, dir: &Path, job: &shaiya_core::Job) -> Res {
+    let saved: Vec<PathBuf> = crate::config::load_clients(ctx.data_dir.as_deref())?.into_iter().map(|c| c.path).collect();
+    // before anything is read: DIR must not be (inside) a client folder, and must be a folder or not exist yet
+    if let Some(client) = client_folder_above(&dir.join("x"), &saved) {
+        return Err(Error::Refused(format!("{} is inside the client folder {}: write it elsewhere and put it in with Replace or archive replace", dir.display(), client.display())).into());
+    }
+    if dir.exists() && !dir.is_dir() {
+        return Err(Error::io(dir, std::io::Error::new(std::io::ErrorKind::AlreadyExists, "not a folder")).into());
+    }
+    let inputs = collect(ctx, &InfoArgs { inputs: a.inputs.clone(), from: a.from.clone() }, &INFO_EXTS)?;
+    job.total(Some(inputs.entries.len() as u64), shaiya_core::Unit::Files);
+    let mut written: Vec<String> = Vec::new();
+    let mut failed: Vec<(String, String, Why)> = inputs.failed.iter().map(|(p, why)| (p.clone(), why.clone(), Why::Input)).collect();
+    let mut taken: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut folders_checked: std::collections::HashSet<PathBuf> = std::collections::HashSet::new();
+    for e in &inputs.entries {
+        job.check()?;
+        match export_entry(&inputs, e, dir, a.force, &saved, &mut taken, &mut folders_checked) {
+            Ok(target) => written.push(target.display().to_string()),
+            Err((reason, why)) => failed.push((e.name.clone(), reason, why)),
+        }
+        job.advance(1);
+    }
+    let total = inputs.entries.len() + inputs.failed.len();
+    if ctx.json {
+        let list: Vec<Value> = failed.iter().map(|(input, reason, _)| json!({"input": input, "reason": reason})).collect();
+        print_json(&json!({ "written": written, "failed": list }));
+    } else {
+        let mut w = out();
+        outln!(w, "wrote {} of {total} ({} failed)", written.len(), failed.len());
+        let _ = w.flush();
+    }
+    for (input, reason, _) in &failed {
+        eprintln!("{input}: FAILED: {reason}");
+    }
+    if total == 0 {
+        note(ctx, "note: no .ANI, .3DC, .VANI, .MANI, .3DO or .3DE files found");
+    }
+    Ok(failed.iter().map(|(_, _, why)| why.code()).max().unwrap_or(0))
+}
+
+/// One file of an `--out-dir` export: checks, read, export, write. `Err` is the reason and its kind.
+fn export_entry(
+    inputs: &Inputs,
+    e: &Entry,
+    dir: &Path,
+    force: bool,
+    saved: &[PathBuf],
+    taken: &mut std::collections::HashSet<String>,
+    folders_checked: &mut std::collections::HashSet<PathBuf>,
+) -> std::result::Result<PathBuf, (String, Why)> {
+    let input = |m: String| (m, Why::Input);
+    let Some(format) = ModelFormat::from_file_name(&e.rel) else {
+        return Err(input(format!("not an {MODEL_NAMES} file")));
     };
-    if !has_ext(&a.out.to_string_lossy(), &["json"]) {
-        return Err(Fail::Usage(format!("{}: the output of export must end in .json", a.out.display())));
+    if let Some(problem) = shaiya_archive::edit::loose_name_problem(&e.rel) {
+        return Err(input(format!("not written: {problem}")));
+    }
+    if e.rel.split('/').any(|part| part.eq_ignore_ascii_case("data.sah")) {
+        return Err(input("not written: a path part named data.sah would make the output folder look like a client folder".to_string()));
+    }
+    let target = json_target(dir, &e.rel);
+    if !taken.insert(target.to_string_lossy().to_ascii_lowercase()) {
+        return Err(("another input of this run has the same output name".to_string(), Why::Safety));
+    }
+    if target.exists() && !force {
+        return Err((format!("{} exists; use --force to replace it", target.display()), Why::Safety));
+    }
+    let bytes = inputs.read(e).map_err(|x| input(x.to_string()))?;
+    let source = match &e.origin {
+        Origin::Archive => e.name.clone(),
+        Origin::Disk(p) => file_name(p),
+    };
+    let text = match modeljson::export(format, &bytes, &source) {
+        Ok(t) => t,
+        Err(x) if x.is_bug() => return Err((x.to_string(), Why::Bug)),
+        Err(x) => return Err(input(x.to_string())),
+    };
+    let folder = target.parent().map(Path::to_path_buf).unwrap_or_else(|| dir.to_path_buf());
+    if !folders_checked.contains(&folder) {
+        std::fs::create_dir_all(&folder).map_err(|x| input(Error::io(&folder, x).to_string()))?;
+        // the folders under DIR are made by this run, but a link that was already there could lead into a client
+        if let Some(client) = client_folder_above(&target, saved) {
+            return Err((format!("{} is inside the client folder {}", target.display(), client.display()), Why::Safety));
+        }
+        folders_checked.insert(folder);
+    }
+    let bug = Cell::new(false);
+    if let Err(x) = write_atomic_checked(&target, text.as_bytes(), &same_bytes_check(text.as_bytes(), &bug)) {
+        return Err((x.to_string(), if bug.get() { Why::Bug } else { Why::Safety }));
+    }
+    Ok(target)
+}
+
+fn export_one(ctx: &Ctx, a: &ExportArgs, input: &str, out_file: &Path) -> Res {
+    let from = a.from.as_deref();
+    let force = a.force;
+    let Some(format) = ModelFormat::from_file_name(input) else {
+        return Err(Error::format(input, None, format!("not an {MODEL_NAMES} file")).into());
+    };
+    if !has_ext(&out_file.to_string_lossy(), &["json"]) {
+        return Err(Fail::Usage(format!("{}: the output of export must end in .json", out_file.display())));
     }
     // the size is checked before the file is read; the output is checked before anything is read or written
-    let (bytes, source) = match &a.from {
+    let (bytes, source) = match from {
         Some(arch) => {
             let archive = open_full(ctx, arch)?;
-            check_entry(&archive, &a.input, true, MAX_MODEL_BYTES)?;
-            check_output(ctx, &a.out, a.force, &[])?;
-            (archive.read(&a.input)?, a.input.clone())
+            check_entry(&archive, input, true, MAX_MODEL_BYTES)?;
+            check_output(ctx, out_file, force, &[])?;
+            (archive.read(input)?, input.to_string())
         }
         None => {
-            let p = resolve(ctx, &a.input)?;
+            let p = resolve(ctx, input)?;
             let len = std::fs::metadata(&p).map_err(|e| Error::io(&p, e))?.len();
             if too_large(len, MAX_MODEL_BYTES) {
                 return Err(cap_error(Some(&p), MAX_MODEL_BYTES).into());
             }
-            check_output(ctx, &a.out, a.force, &[&p])?;
+            check_output(ctx, out_file, force, &[&p])?;
             let bytes = read_capped(&p, Some(&p), MAX_MODEL_BYTES)?;
             (bytes, file_name(&p))
         }
     };
-    let text = modeljson::export(format, &bytes, &source).map_err(|e| json_failure(&a.input, e))?;
+    let text = modeljson::export(format, &bytes, &source).map_err(|e| json_failure(input, e))?;
     let bug = Cell::new(false);
-    if let Err(e) = write_atomic_checked(&a.out, text.as_bytes(), &same_bytes_check(text.as_bytes(), &bug)) {
+    if let Err(e) = write_atomic_checked(out_file, text.as_bytes(), &same_bytes_check(text.as_bytes(), &bug)) {
         return Err(if bug.get() { Fail::Bug(e.to_string()) } else { e.into() });
     }
     if ctx.json {
-        print_json(&json!({ "input": a.input, "format": format.extension(), "schema": format.schema(), "out": a.out.display().to_string(), "bytes": text.len() }));
+        print_json(&json!({ "input": input, "format": format.extension(), "schema": format.schema(), "out": out_file.display().to_string(), "bytes": text.len() }));
     } else {
         let mut w = out();
-        outln!(w, "wrote {}: {} as {}, {} bytes of JSON", a.out.display(), format.label(), format.schema(), num(text.len() as u64));
+        outln!(w, "wrote {}: {} as {}, {} bytes of JSON", out_file.display(), format.label(), format.schema(), num(text.len() as u64));
         let _ = w.flush();
     }
     Ok(0)

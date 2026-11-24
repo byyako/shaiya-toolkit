@@ -45,6 +45,12 @@ pub struct Ani {
     pub bones: Vec<AniBone>,
 }
 
+/// The bone count a file's first ten bytes say (two `i32` fields, then the `u16` count), without reading the rest; `None` when `head` is
+/// shorter. The file may still fail [`Ani::parse`].
+pub fn bone_count_in_header(head: &[u8]) -> Option<usize> {
+    head.get(8..10).map(|b| usize::from(u16::from_le_bytes([b[0], b[1]])))
+}
+
 /// Smallest size of one bone in the file: parent, matrix, two counts.
 const BONE_MIN: usize = 4 + 64 + 4 + 4;
 pub(crate) const KEY_LIMIT: usize = 10_000_000;
@@ -475,6 +481,114 @@ pub fn pose(ani: &Ani, locals: &[Mat4], t: f32) -> Vec<Mat4> {
     world
 }
 
+// ---- the pose difference ----------------------------------------------------------------------------------------------------------
+
+/// Most keys [`diff`] samples: a longer range is sampled with a stride so that no more than this many poses are computed per animation.
+pub const DIFF_SAMPLES_MAX: i64 = 100_000;
+/// A bone differs when its world rotation turns by more than this many degrees at some sampled key (below it is float noise).
+pub const DIFF_ANGLE_EPSILON_DEG: f32 = 1e-3;
+/// A bone differs when its world position moves by more than this many units at some sampled key.
+pub const DIFF_OFFSET_EPSILON: f32 = 1e-4;
+
+/// How one bone's world pose differs between two animations over the sampled keys.
+#[derive(Clone, Debug, PartialEq)]
+pub struct BoneDiff {
+    pub bone: usize,
+    /// The largest turn between the two world rotations at any sampled key, in degrees (infinite when a pose is not finite on one side only).
+    pub max_angle_deg: f32,
+    /// The largest distance between the two world positions at any sampled key, in file units (infinite as above).
+    pub max_offset: f32,
+    /// Rotation plus translation keys of the bone in the first and in the second file.
+    pub keys: (usize, usize),
+}
+
+/// What differs between two animations: the skeleton and first field ([`rig_check`] with the first as candidate), the end keys and the
+/// bones whose poses differ, largest turn first.
+#[derive(Clone, Debug, PartialEq)]
+pub struct AniDiff {
+    pub skeleton: Vec<RigDiff>,
+    pub end_key: (i32, i32),
+    pub bones: Vec<BoneDiff>,
+}
+
+impl AniDiff {
+    /// True when nothing differs: the same skeleton and first field, the same end key and the same poses at every sampled key.
+    pub fn is_identical(&self) -> bool {
+        self.skeleton.is_empty() && self.end_key.0 == self.end_key.1 && self.bones.is_empty()
+    }
+}
+
+fn unit_rows(m: &Mat4) -> [[f32; 3]; 3] {
+    let mut r = [[0f32; 3]; 3];
+    for (i, row) in r.iter_mut().enumerate() {
+        let v = [m[i * 4], m[i * 4 + 1], m[i * 4 + 2]];
+        let n = (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt();
+        *row = if n > 0.0 { v.map(|c| c / n) } else { v };
+    }
+    r
+}
+
+/// The turn between the rotations of two world matrices (rows normalised, so a scale does not count) in degrees, and the distance between
+/// their positions. Equal bits give (0, 0); a non-finite value gives infinity.
+fn pose_distance(a: &Mat4, b: &Mat4) -> (f32, f32) {
+    if a.iter().zip(b).all(|(x, y)| x.to_bits() == y.to_bits()) {
+        return (0.0, 0.0);
+    }
+    if !a.iter().chain(b).all(|v| v.is_finite()) {
+        return (f32::INFINITY, f32::INFINITY);
+    }
+    let (ra, rb) = (unit_rows(a), unit_rows(b));
+    // M = Ra * Rb^T, in f64 so a tiny turn is not lost to rounding
+    let mut m = [[0f64; 3]; 3];
+    for (i, row) in m.iter_mut().enumerate() {
+        for (j, cell) in row.iter_mut().enumerate() {
+            *cell = (0..3).map(|k| f64::from(ra[i][k]) * f64::from(rb[j][k])).sum();
+        }
+    }
+    let axis = [m[1][2] - m[2][1], m[2][0] - m[0][2], m[0][1] - m[1][0]];
+    let sin2 = (axis[0] * axis[0] + axis[1] * axis[1] + axis[2] * axis[2]).sqrt();
+    let cos2 = m[0][0] + m[1][1] + m[2][2] - 1.0;
+    let angle = sin2.atan2(cos2).to_degrees() as f32;
+    let d = [a[12] - b[12], a[13] - b[13], a[14] - b[14]];
+    (angle, (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt())
+}
+
+/// Compares two animations: [`rig_check`] (`a` as candidate), both end keys, and for every bone both files have the world pose from [`pose`]
+/// at every integer key from the smaller first field (or 0) to the larger end key (with a stride over [`DIFF_SAMPLES_MAX`] keys). A bone is
+/// listed when its pose differs by more than [`DIFF_ANGLE_EPSILON_DEG`] or [`DIFF_OFFSET_EPSILON`] at some sampled key, largest turn first
+/// (then largest offset, then bone index). Swapping the files swaps the pairs and keeps every number.
+pub fn diff(a: &Ani, b: &Ani) -> AniDiff {
+    let skeleton = rig_check(a, b);
+    let start = i64::from(a.first_field.min(b.first_field).min(0));
+    let end = i64::from(a.end_key.max(b.end_key)).max(start);
+    let stride = ((end - start + 1) / DIFF_SAMPLES_MAX).max(0) + 1;
+    let (la, lb) = (locals(a), locals(b));
+    let n = a.bones.len().min(b.bones.len());
+    let mut max: Vec<(f32, f32)> = vec![(0.0, 0.0); n];
+    let mut key = start;
+    loop {
+        let (pa, pb) = (pose(a, &la, key as f32), pose(b, &lb, key as f32));
+        for (i, m) in max.iter_mut().enumerate() {
+            let (angle, offset) = pose_distance(&pa[i], &pb[i]);
+            m.0 = m.0.max(angle);
+            m.1 = m.1.max(offset);
+        }
+        if key >= end {
+            break;
+        }
+        key = (key + stride).min(end);
+    }
+    let count = |b: &AniBone| b.rot.len() + b.trans.len();
+    let mut bones: Vec<BoneDiff> = max
+        .into_iter()
+        .enumerate()
+        .filter(|(_, (angle, offset))| *angle > DIFF_ANGLE_EPSILON_DEG || *offset > DIFF_OFFSET_EPSILON)
+        .map(|(bone, (max_angle_deg, max_offset))| BoneDiff { bone, max_angle_deg, max_offset, keys: (count(&a.bones[bone]), count(&b.bones[bone])) })
+        .collect();
+    bones.sort_by(|x, y| y.max_angle_deg.total_cmp(&x.max_angle_deg).then(y.max_offset.total_cmp(&x.max_offset)).then(x.bone.cmp(&y.bone)));
+    AniDiff { skeleton, end_key: (a.end_key, b.end_key), bones }
+}
+
 // ---- kinds and rigs -----------------------------------------------------------------------------------------------------------------
 
 /// The 16 character rigs: the file-name prefix and the race folder it lives in.
@@ -877,5 +991,89 @@ mod pose_tests {
         let mut bad = IDENTITY;
         bad[3] = f32::NAN;
         assert!(mat_inverse(&bad).iter().all(|c| c.is_nan()));
+    }
+}
+
+#[cfg(test)]
+mod diff_tests {
+    use super::*;
+    use shaiya_testkit::anim::arm_ani;
+
+    const Q_ID: [f32; 4] = [0.0, 0.0, 0.0, 1.0];
+
+    fn near(a: f32, b: f32, tol: f32) -> bool {
+        (a - b).abs() <= tol
+    }
+
+    fn parse(d: &[u8]) -> Result<Ani> {
+        Ani::parse(d, "t.ani")
+    }
+
+    fn half_arm() -> Ani {
+        let a = parse(&arm_ani(30)).unwrap();
+        let mut b = a.clone();
+        let half = std::f32::consts::FRAC_PI_8;
+        b.bones[1].rot[1].q = [0.0, 0.0, half.sin(), half.cos()];
+        b
+    }
+
+    #[test]
+    fn diff_of_an_animation_with_itself_is_identical() {
+        let a = parse(&arm_ani(30)).unwrap();
+        let d = diff(&a, &a);
+        assert!(d.is_identical() && d.bones.is_empty() && d.skeleton.is_empty() && d.end_key == (30, 30));
+    }
+
+    #[test]
+    fn diff_names_the_turned_bone_and_its_children_largest_first() {
+        let a = parse(&arm_ani(30)).unwrap();
+        let d = diff(&a, &half_arm());
+        assert!(!d.is_identical());
+        let named: Vec<usize> = d.bones.iter().map(|b| b.bone).collect();
+        assert_eq!(named, vec![2, 1], "bone 0 does not move; the child with the larger offset comes first");
+        assert!(near(d.bones[1].max_angle_deg, 45.0, 0.01), "{:?}", d.bones[1]);
+        assert!(d.bones[1].max_offset < 1e-4 && d.bones[0].max_offset > 0.1);
+        assert_eq!(d.bones[1].keys, (2, 2));
+    }
+
+    #[test]
+    fn diff_is_symmetric_in_its_numbers() {
+        let a = parse(&arm_ani(30)).unwrap();
+        let mut b = half_arm();
+        b.end_key = 45;
+        b.bones[0].rot.push(RotKey { key: 3, q: Q_ID });
+        b.first_field = -1;
+        let (ab, ba) = (diff(&a, &b), diff(&b, &a));
+        assert_eq!(ab.end_key, (30, 45));
+        assert_eq!(ba.end_key, (45, 30));
+        assert_eq!(ab.bones.len(), ba.bones.len());
+        for (x, y) in ab.bones.iter().zip(&ba.bones) {
+            assert_eq!((x.bone, x.max_angle_deg.to_bits(), x.max_offset.to_bits()), (y.bone, y.max_angle_deg.to_bits(), y.max_offset.to_bits()));
+            assert_eq!(x.keys, (y.keys.1, y.keys.0));
+        }
+        assert_eq!(ab.skeleton, vec![RigDiff::FirstField { candidate: 0, target: -1 }]);
+        assert_eq!(ba.skeleton, vec![RigDiff::FirstField { candidate: -1, target: 0 }]);
+    }
+
+    #[test]
+    fn diff_lists_a_longer_animation_and_a_changed_skeleton() {
+        let a = parse(&arm_ani(30)).unwrap();
+        let mut b = a.clone();
+        b.end_key = 60;
+        let d = diff(&a, &b);
+        assert!(!d.is_identical() && d.bones.is_empty() && d.end_key == (30, 60), "same poses, other length");
+        let mut c = a.clone();
+        c.bones.pop();
+        let d = diff(&a, &c);
+        assert_eq!(d.skeleton, vec![RigDiff::BoneCount { candidate: 3, target: 2 }]);
+        assert!(d.bones.is_empty(), "only the bones both files have are compared");
+    }
+
+    #[test]
+    fn the_bone_count_is_read_from_the_first_ten_bytes() {
+        let bytes = arm_ani(30);
+        assert_eq!(bone_count_in_header(&bytes[..10]), Some(3));
+        assert_eq!(bone_count_in_header(&bytes), Some(parse(&bytes).unwrap().bones.len()));
+        assert_eq!(bone_count_in_header(&bytes[..9]), None);
     }
 }
