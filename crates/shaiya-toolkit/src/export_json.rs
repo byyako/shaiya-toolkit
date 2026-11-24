@@ -8,7 +8,7 @@
 use crate::ToolkitSettings;
 use shaiya_archive::{Archive, Entry};
 use shaiya_clientdata::modeljson::{self, ModelFormat, MAX_MODEL_BYTES};
-use shaiya_core::fs::{client_folder_above, client_folder_for_new, ensure_out_folder, write_atomic_checked};
+use shaiya_core::fs::{client_folder_above, client_folder_for_new, ensure_out_folder, out_key, out_name_problem, write_atomic_checked};
 use shaiya_core::{Error, Result};
 use shaiya_ui::{Cx, TaskHandle, TaskOutcome, TaskSpec};
 use std::path::{Path, PathBuf};
@@ -208,11 +208,11 @@ fn one_of_folder(archive: &Archive, entry: &Entry, path: &str, dir: &Path, saved
     if let Some(problem) = shaiya_archive::edit::loose_name_problem(&rel) {
         return Err(format!("not written: {problem}"));
     }
-    if rel.split('/').any(|part| part.eq_ignore_ascii_case("data.sah")) {
-        return Err("not written: a path part named data.sah would make the output folder look like a client folder".to_string());
+    if let Some(problem) = out_name_problem(&rel) {
+        return Err(format!("not written: {problem}"));
     }
     let target = folder_target(dir, &rel);
-    if !taken.insert(target.to_string_lossy().to_ascii_lowercase()) {
+    if !taken.insert(out_key(&target)) {
         return Err("another file of this export has the same output name".to_string());
     }
     if target.exists() {
@@ -229,10 +229,60 @@ fn one_of_folder(archive: &Archive, entry: &Entry, path: &str, dir: &Path, saved
     run(archive, entry, path, format, &target).map_err(|e| e.to_string())
 }
 
+/// The folders of the folder exports that are running anywhere in this process (every Archive tab): two exports into the same folder at
+/// once could each see "does not exist" and then replace the file the other just wrote.
+static DIRS_IN_USE: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+
+/// A claim on an output folder; it is released when the export (the worker that holds it) ends or is dropped.
+struct DirClaim(String);
+
+impl DirClaim {
+    /// The folder as one key: its deepest existing part resolved (links and letter case), the rest as typed.
+    fn key(dir: &Path) -> String {
+        let abs = if dir.is_absolute() { dir.to_path_buf() } else { std::env::current_dir().map(|c| c.join(dir)).unwrap_or_else(|_| dir.to_path_buf()) };
+        let mut rest: Vec<std::ffi::OsString> = Vec::new();
+        let mut base = abs.clone();
+        while !base.exists() {
+            match (base.file_name().map(|n| n.to_os_string()), base.parent().map(Path::to_path_buf)) {
+                (Some(n), Some(p)) => {
+                    rest.push(n);
+                    base = p;
+                }
+                _ => break,
+            }
+        }
+        let mut full = std::fs::canonicalize(&base).unwrap_or(base);
+        full.extend(rest.iter().rev());
+        out_key(&full)
+    }
+
+    /// `None` when another running export already holds `dir`.
+    fn take(dir: &Path) -> Option<DirClaim> {
+        let key = Self::key(dir);
+        let mut held = DIRS_IN_USE.lock().unwrap_or_else(|e| e.into_inner());
+        if held.contains(&key) {
+            return None;
+        }
+        held.push(key.clone());
+        Some(DirClaim(key))
+    }
+}
+
+impl Drop for DirClaim {
+    fn drop(&mut self) {
+        let mut held = DIRS_IN_USE.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(i) = held.iter().position(|k| k == &self.0) {
+            held.swap_remove(i);
+        }
+    }
+}
+
 /// The running folder export of one Archive tab (one at a time) and the last report.
 #[derive(Default)]
 pub(crate) struct FolderExports {
     running: Option<TaskHandle<FolderReport>>,
+    /// Where the worker leaves the report of a cancelled export (the task itself ends as cancelled, so Activity says so).
+    cancelled_report: Arc<std::sync::Mutex<Option<FolderReport>>>,
     dir: PathBuf,
     total: usize,
     /// The report of the last export that ended.
@@ -257,14 +307,28 @@ impl FolderExports {
             cx.shell.error("Export failed", &Error::Refused(text));
             return;
         }
+        let Some(claim) = DirClaim::take(&dir) else {
+            cx.shell.error("Export failed", &Error::Refused(format!("Another folder export into {} is running", dir.display())));
+            return;
+        };
         let mut all = saved;
         all.extend(client_dir.map(Path::to_path_buf));
         self.dir = dir.clone();
         self.total = items.len();
         self.last = None;
         self.show_failures = false;
+        let slot: Arc<std::sync::Mutex<Option<FolderReport>>> = Arc::default();
+        self.cancelled_report = slot.clone();
         let title = format!("Export {} as JSON", shaiya_inspect::counted(items.len() as u64, "file", "files"));
-        self.running = Some(cx.shell.tasks().spawn(TaskSpec { title, cancellable: true, exclusive: None }, move |job| Ok(run_folder(&archive, &items, &dir, &all, job))));
+        self.running = Some(cx.shell.tasks().spawn(TaskSpec { title, cancellable: true, exclusive: None }, move |job| {
+            let _claim = claim;
+            let report = run_folder(&archive, &items, &dir, &all, job);
+            if report.cancelled {
+                *slot.lock().unwrap_or_else(|e| e.into_inner()) = Some(report);
+                return Err(Error::Cancelled);
+            }
+            Ok(report)
+        }));
     }
 
     /// Finishes the export when it is done; returns the status line.
@@ -285,8 +349,17 @@ impl FolderExports {
                 None
             }
             TaskOutcome::Cancelled => {
-                // the worker reports a cancel as a report; this is a task that never started
-                let line = format!("Export cancelled; nothing was written to {}", self.dir.display());
+                // the worker leaves the report of a cancelled export (the files it wrote stay); without one the task never started
+                let report = self.cancelled_report.lock().unwrap_or_else(|e| e.into_inner()).take();
+                let line = match report {
+                    Some(report) => {
+                        let line = report.status();
+                        self.show_failures = !report.failed.is_empty();
+                        self.last = Some(report);
+                        line
+                    }
+                    None => format!("Export cancelled; nothing was written to {}", self.dir.display()),
+                };
                 cx.shell.status(line.clone());
                 Some(line)
             }
@@ -476,6 +549,19 @@ mod tests {
             drop_link(&dir.join("Monster"));
         }
         let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn a_second_export_into_the_same_folder_is_refused_until_the_first_ends() {
+        let d = shaiya_testkit::TempDir::new("t12-w8-claim");
+        let dir = d.path().join("json");
+        let first = DirClaim::take(&dir).expect("the first export takes the folder");
+        assert!(DirClaim::take(&dir).is_none(), "a folder that does not exist yet is claimed too");
+        assert!(DirClaim::take(&d.path().join("other")).is_some(), "another folder is free");
+        std::fs::create_dir_all(&dir).unwrap();
+        assert!(DirClaim::take(&dir).is_none(), "the same folder after it was made");
+        drop(first);
+        assert!(DirClaim::take(&dir).is_some(), "released when the first export ends");
     }
 
     #[test]

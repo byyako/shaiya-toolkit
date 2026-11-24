@@ -3496,6 +3496,14 @@ fn save_frame_of_a_still_model_writes_its_picture() {
 // ------------------------------------------------------------------------------------------------ T12 W8: batch export, compare, rig filter
 
 /// `ani_world` plus more animations of two rigs, so a folder holds several model files.
+/// The skeleton of `arm_ani(60)` with a different pose: bone 1 turns 45 degrees (not 90) over 60 keys and bone 0 moves along x.
+fn turned_arm() -> Vec<u8> {
+    use shaiya_testkit::anim::{ani_bytes, translation_bits, BoneSpec};
+    let half = std::f32::consts::FRAC_PI_8;
+    let bone = |parent: i32, y: f32, rot: Vec<(i32, [f32; 4])>, trans: Vec<(i32, [f32; 3])>| BoneSpec { parent, matrix: translation_bits(0.0, y, 0.0), rot, trans };
+    ani_bytes(0, 60, &[bone(-1, 0.0, Vec::new(), vec![(0, [0.0; 3]), (60, [5.0, 0.0, 0.0])]), bone(0, 1.0, vec![(0, [0.0, 0.0, 0.0, 1.0]), (60, [0.0, 0.0, half.sin(), half.cos()])], Vec::new()), bone(1, 2.0, Vec::new(), Vec::new())])
+}
+
 fn rig_world(tag: &str) -> World {
     let mut w = world(tag);
     let arm = shaiya_testkit::anim::arm_ani(60);
@@ -3503,7 +3511,7 @@ fn rig_world(tag: &str) -> World {
         .file(b"Character/Human/ANI/huwm_117_test.ANI", &arm)
         .file(b"Character/Human/ANI/huwm_118_test.ANI", &arm)
         .file(b"Character/Human/ANI/huwf_001_test.ANI", &arm)
-        .file(b"Character/Human/ANI/huwf_002_test.ANI", &arm)
+        .file(b"Character/Human/ANI/huwf_002_test.ANI", &turned_arm())
         .file(b"Character/Human/ANI/notes.txt", b"not a model")
         .file(b"Character/Human/3DC/huwm_torso001.3DC", &shaiya_testkit::anim::arm_mesh_3dc())
         .write_to(w.client.path());
@@ -3734,10 +3742,88 @@ fn editing_an_animation_saves_a_new_file() {
     with_cx(&mut w.h, |app, cx| app.archive.edit_ani_with(ANI_PATH, shaiya_toolkit::anim_edit::Tool::Trim { start: 10, end: 40 }, cx));
     assert!(edit_done(&mut w));
     assert_eq!(w.h.app.app.archive.anim_edit().unwrap().current().unwrap().output.end_key, 30);
-    let tool = shaiya_toolkit::anim_edit::Tool::CopyTrack { source: "Character/Human/ANI/huwm_118_test.ANI".into(), bones: vec![1], rotation: true, translation: false };
+    // copy tracks from another animation: bone 1's rotation becomes the source's, everything else is the input's, and the window says how
+    // many bones differ in pose (bones 1 and its child 2 turn differently; bone 0 does not move in the output)
+    let source = shaiya_clientdata::Ani::parse(&turned_arm(), "src").unwrap();
+    let tool = shaiya_toolkit::anim_edit::Tool::CopyTrack { source: "Character/Human/ANI/huwf_002_test.ANI".into(), bones: vec![1], rotation: true, translation: false };
     with_cx(&mut w.h, |app, cx| app.archive.edit_ani_with(ANI_PATH, tool, cx));
     assert!(edit_done(&mut w));
-    assert_eq!(w.h.app.app.archive.anim_edit().unwrap().current().unwrap().output, input, "the same animation copied over itself changes nothing");
+    w.h.frames(3);
+    let e = w.h.app.app.archive.anim_edit().unwrap().current().unwrap().clone();
+    assert_eq!(e.output.bones[1].rot, source.bones[1].rot, "bone 1's rotation is the source's");
+    assert_ne!(e.output.bones[1].rot, input.bones[1].rot, "and not the input's");
+    assert_eq!((&e.output.bones[0], &e.output.bones[2]), (&input.bones[0], &input.bones[2]), "the other bones are the input's");
+    assert_eq!(e.diff.bones.iter().map(|b| b.bone).collect::<Vec<_>>().len(), 2, "bones 1 and 2 differ in pose: {:?}", e.diff);
+    assert!(w.h.text().contains("2 bones differ in pose from the original"), "{}", w.h.text());
+    // copying the same animation over itself changes nothing, and says 0 bones differ
+    let same = shaiya_toolkit::anim_edit::Tool::CopyTrack { source: "Character/Human/ANI/huwm_118_test.ANI".into(), bones: vec![1], rotation: true, translation: false };
+    with_cx(&mut w.h, |app, cx| app.archive.edit_ani_with(ANI_PATH, same, cx));
+    assert!(edit_done(&mut w));
+    w.h.frames(3);
+    assert_eq!(w.h.app.app.archive.anim_edit().unwrap().current().unwrap().output, input);
+    assert!(w.h.text().contains("0 bones differ in pose from the original"), "{}", w.h.text());
+    // a trim that keeps the whole length says it too; one that changes the length has no pose to compare, so no such line
+    with_cx(&mut w.h, |app, cx| app.archive.edit_ani_with(ANI_PATH, shaiya_toolkit::anim_edit::Tool::Trim { start: 0, end: 60 }, cx));
+    assert!(edit_done(&mut w));
+    w.h.frames(3);
+    assert!(w.h.text().contains("0 bones differ in pose from the original"), "{}", w.h.text());
+    with_cx(&mut w.h, |app, cx| app.archive.edit_ani_with(ANI_PATH, shaiya_toolkit::anim_edit::Tool::Trim { start: 10, end: 40 }, cx));
+    assert!(edit_done(&mut w));
+    w.h.frames(3);
+    assert!(!w.h.text().contains("differ in pose from the original"), "{}", w.h.text());
+}
+
+#[test]
+fn changing_the_settings_cancels_the_running_edit_and_the_new_ones_follow() {
+    let mut w = rig_world("t12-w9fix-follow");
+    with_cx(&mut w.h, |app, cx| app.archive.edit_ani_with(ANI_PATH, shaiya_toolkit::anim_edit::Tool::Retime { factor: 2.0 }, cx));
+    // the person types another factor while the first is still held by the window: it is cancelled, not waited for
+    let next = shaiya_toolkit::anim_edit::Tool::Retime { factor: 0.5 };
+    with_cx(&mut w.h, |app, cx| {
+        let c = app.archive.anim_edit_mut().unwrap();
+        assert!(c.is_running());
+        c.set_tool(&next);
+        c.follow_settings(cx);
+        assert!(c.is_superseded(), "the running task was asked to stop");
+    });
+    assert!(edit_done(&mut w), "the new settings end with their own result");
+    let e = w.h.app.app.archive.anim_edit().unwrap().current().unwrap().clone();
+    assert_eq!(e.output.end_key, 30, "the result is the one of factor 0.5, not 2");
+    assert!(w.h.app.app.archive.anim_edit().unwrap().result.as_ref().is_some_and(|r| r.is_ok()), "no 'cancelled' left on screen");
+}
+
+#[test]
+fn queueing_twice_gives_each_change_its_own_staged_file_and_undo_finds_the_first_one_again() {
+    let mut w = rig_world("t12-w9fix-staged");
+    let staged = |w: &World| -> PathBuf {
+        let shaiya_toolkit::archive_view::PendingKind::Put { source, .. } = &w.h.app.app.archive.pending[0].kind else { panic!("not a put") };
+        source.clone()
+    };
+    with_cx(&mut w.h, |app, cx| app.archive.edit_ani_with(ANI_PATH, shaiya_toolkit::anim_edit::Tool::Retime { factor: 0.5 }, cx));
+    assert!(edit_done(&mut w));
+    with_cx(&mut w.h, |app, cx| app.archive.queue_ani_edit(cx));
+    assert!(w.h.wait_until(WAIT, |h| !h.app.app.archive.pending.is_empty()));
+    w.h.frames(3);
+    let first = staged(&w);
+    // the same path again with another edit: the queued change is replaced, in a file of its own
+    with_cx(&mut w.h, |app, cx| app.archive.edit_ani_with(ANI_PATH, shaiya_toolkit::anim_edit::Tool::Retime { factor: 2.0 }, cx));
+    assert!(edit_done(&mut w));
+    with_cx(&mut w.h, |app, cx| app.archive.queue_ani_edit(cx));
+    assert!(
+        w.h.wait_until(WAIT, |h| matches!(h.app.app.archive.pending.first().map(|p| &p.kind), Some(shaiya_toolkit::archive_view::PendingKind::Put { source, .. }) if *source != first)),
+        "the second edit is queued in another file"
+    );
+    w.h.frames(3);
+    let second = staged(&w);
+    assert_ne!(first, second);
+    let end_of = |f: &PathBuf| shaiya_clientdata::Ani::parse(&std::fs::read(f).unwrap(), "staged").unwrap().end_key;
+    assert_eq!((end_of(&first), end_of(&second)), (30, 120), "each file holds its own edit; the second did not overwrite the first");
+    // undoing the second queue brings the first change back: its file still holds the first edit's bytes
+    assert!(w.h.app.app.archive.undo());
+    assert_eq!(staged(&w), first);
+    assert_eq!(end_of(&first), 30, "the file the first change points to is the first edit");
+    // nothing is written to the client, and the staged files are in the Toolkit's data folder
+    assert!(first.starts_with(&w.data_path) && second.starts_with(&w.data_path) && !first.starts_with(w.client.path()));
 }
 
 #[test]

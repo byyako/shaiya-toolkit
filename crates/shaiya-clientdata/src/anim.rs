@@ -1083,6 +1083,39 @@ mod diff_tests {
         assert!(d.bones.is_empty(), "only the bones both files have are compared");
     }
 
+    /// Bone 1 turns to `end_deg` degrees about z at key 30 (bone 0 carries the translation track `trans`).
+    fn turned_to(end_deg: f64, trans: Vec<(i32, [f32; 3])>) -> Ani {
+        use shaiya_testkit::anim::{ani_bytes, translation_bits, BoneSpec};
+        let q = |deg: f64| {
+            let h = deg.to_radians() * 0.5;
+            [0.0, 0.0, h.sin() as f32, h.cos() as f32]
+        };
+        let bone = |parent: i32, y: f32, rot: Vec<(i32, [f32; 4])>, trans: Vec<(i32, [f32; 3])>| BoneSpec { parent, matrix: translation_bits(0.0, y, 0.0), rot, trans };
+        parse(&ani_bytes(0, 30, &[bone(-1, 0.0, Vec::new(), trans), bone(0, 0.0, vec![(0, q(0.0)), (30, q(end_deg))], Vec::new())])).unwrap()
+    }
+
+    #[test]
+    fn diff_lists_a_turn_above_0_001_degrees_and_not_one_below() {
+        let a = turned_to(90.0, Vec::new());
+        assert!(diff(&a, &turned_to(90.0005, Vec::new())).bones.is_empty(), "a turn of 0.0005 degrees is float noise");
+        let d = diff(&a, &turned_to(90.002, Vec::new()));
+        assert_eq!(d.bones.iter().map(|b| b.bone).collect::<Vec<_>>(), vec![1], "{d:?}");
+        assert!(near(d.bones[0].max_angle_deg, 0.002, 0.0005), "{:?}", d.bones[0]);
+        assert_eq!((DIFF_ANGLE_EPSILON_DEG, DIFF_OFFSET_EPSILON), (1e-3, 1e-4));
+    }
+
+    #[test]
+    fn diff_lists_a_move_above_0_0001_units_and_not_one_below() {
+        let track = |x: f32| vec![(0, [0.0, 0.0, 0.0]), (30, [x, 0.0, 0.0])];
+        let a = turned_to(0.0, track(1.0));
+        assert!(diff(&a, &turned_to(0.0, track(1.00005))).bones.is_empty(), "a move of 0.00005 units is float noise");
+        let d = diff(&a, &turned_to(0.0, track(1.0002)));
+        let mut named: Vec<usize> = d.bones.iter().map(|b| b.bone).collect();
+        named.sort();
+        assert_eq!(named, vec![0, 1], "bone 0 moves, and bone 1 is its child");
+        assert!(d.bones.iter().all(|b| near(b.max_offset, 0.0002, 0.00005)), "{d:?}");
+    }
+
     #[test]
     fn diff_with_stops_when_cancelled_and_checks_once_per_sample() {
         let a = parse(&arm_ani(30)).unwrap();

@@ -51,18 +51,20 @@ pub fn run(archive: &Archive, path: &str, tool: &Tool, job: &shaiya_core::Job) -
     job.check()?;
     let input = read_ani(archive, path, "the open archive")?;
     job.check()?;
-    let output = match tool {
-        Tool::Retime { factor } => animedit::retime(&input, *factor),
-        Tool::RetimeSeconds { seconds } => animedit::factor_for_seconds(&input, *seconds).and_then(|f| animedit::retime(&input, f)),
-        Tool::Trim { start, end } => animedit::trim(&input, *start, *end),
+    // retime looks at the job while it samples and prunes, so a change of the settings stops a long one at once
+    let made = match tool {
+        Tool::Retime { factor } => animedit::retime_with(&input, *factor, &mut || job.check().is_err()),
+        Tool::RetimeSeconds { seconds } => animedit::factor_for_seconds(&input, *seconds).and_then(|f| animedit::retime_with(&input, f, &mut || job.check().is_err())),
+        Tool::Trim { start, end } => animedit::trim(&input, *start, *end).map(Some),
         Tool::CopyTrack { source, bones, rotation, translation } => {
             let src = read_ani(archive, source, "the open archive")?;
             job.check()?;
             let bones: Vec<usize> = if bones.is_empty() { (0..input.bones.len()).collect() } else { bones.clone() };
-            animedit::copy_tracks(&input, &src, &bones, Tracks { rotation: *rotation, translation: *translation })
+            animedit::copy_tracks(&input, &src, &bones, Tracks { rotation: *rotation, translation: *translation }).map(Some)
         }
     }
     .map_err(refused)?;
+    let Some(output) = made else { return Err(Error::Cancelled) };
     job.check()?;
     if !passes(&output, &input) {
         return Err(Error::Unsupported("internal error (a bug): the edited animation does not pass against its input".to_string()));
@@ -131,6 +133,8 @@ pub struct AnimEdit {
     pub result: Option<std::result::Result<Edited, String>>,
     saving: Option<(PathBuf, TaskHandle<()>)>,
     queue_wanted: bool,
+    /// The running task was cancelled by the window itself because the settings changed (a cancel from Activity is shown as cancelled).
+    superseded: bool,
     pub open: bool,
 }
 
@@ -158,6 +162,7 @@ impl AnimEdit {
             result: None,
             saving: None,
             queue_wanted: false,
+            superseded: false,
             open: true,
         }
     }
@@ -238,13 +243,20 @@ impl AnimEdit {
         if let Some(h) = &mut self.handle {
             if let Some(outcome) = h.poll() {
                 self.handle = None;
-                self.shown_for = self.started.clone();
-                self.result = Some(match outcome {
-                    TaskOutcome::Done(e) => Ok(e),
-                    TaskOutcome::Failed(e) => Err(e.to_string()),
-                    TaskOutcome::Cancelled => Err("cancelled".to_string()),
-                    TaskOutcome::Panicked(m) => Err(format!("internal error (a bug): {m}")),
-                });
+                let superseded = std::mem::take(&mut self.superseded);
+                match outcome {
+                    // stopped because the settings changed: the shown result stays what it was and the window starts the new setting
+                    TaskOutcome::Cancelled if superseded => self.started = None,
+                    other => {
+                        self.shown_for = self.started.clone();
+                        self.result = Some(match other {
+                            TaskOutcome::Done(e) => Ok(e),
+                            TaskOutcome::Failed(e) => Err(e.to_string()),
+                            TaskOutcome::Cancelled => Err("cancelled".to_string()),
+                            TaskOutcome::Panicked(m) => Err(format!("internal error (a bug): {m}")),
+                        });
+                    }
+                }
             }
         }
         if let Some((out, mut h)) = self.saving.take() {
@@ -303,7 +315,11 @@ impl AnimEdit {
 
     /// The staged file to queue, when "Queue as replacement" was chosen and a result is ready; the file is written into the Toolkit's own
     /// data folder (never a client) and the Archive tab runs its replace checks on it.
-    pub fn take_queue(&mut self, cx: &mut ToolkitCx<'_>) -> Option<PathBuf> {
+    ///
+    /// Every queue gets a file of its own (a name that was never used before, and never one that exists): a staged file is never
+    /// overwritten, so a queued change always finds the bytes it was checked with, also after an undo. Staged files that no queued change
+    /// uses (`keep` lists the ones that are used) and that are older than [`STAGED_KEEP_DAYS`] days are removed first.
+    pub fn take_queue(&mut self, cx: &mut ToolkitCx<'_>, keep: &[PathBuf]) -> Option<PathBuf> {
         if !std::mem::take(&mut self.queue_wanted) {
             return None;
         }
@@ -315,11 +331,13 @@ impl AnimEdit {
             cx.shell.error("Queue failed", &Error::Refused("The Toolkit has no data folder to keep the edited file in".to_string()));
             return None;
         };
-        let flat: String = self.path.chars().map(|c| if c == '/' || c == '\\' || c == ':' { '_' } else { c }).collect();
-        let file = dir.join(flat);
+        let file = staged_path(&dir, &self.path);
         let saved: Vec<PathBuf> = cx.shell.shared().clients.iter().map(|c| PathBuf::from(&c.path)).collect();
         let made = match shaiya_core::fs::ensure_out_folder(&dir, &saved) {
-            Ok(None) => write_checked(&file, &e),
+            Ok(None) => {
+                sweep_staged(&dir, keep, std::time::Duration::from_secs(STAGED_KEEP_DAYS * 24 * 3600));
+                write_checked(&file, &e)
+            }
             Ok(Some(client)) => Err(Error::Refused(format!("{} is inside the client folder {}", dir.display(), client.display()))),
             Err(x) => Err(x),
         };
@@ -448,13 +466,65 @@ impl AnimEdit {
         if queue {
             self.want_queue();
         }
-        // live preview: the settings changed since the last start
-        if self.handle.is_none() {
-            if let Ok(w) = self.wanted() {
-                if self.started.as_ref() != Some(&w) {
-                    self.start(w, cx);
-                }
+        self.follow_settings(cx);
+    }
+
+    /// Live preview: when the settings changed since the last start, the running task (made for the old settings) is cancelled at once and
+    /// the new settings start when it has ended; with none running, they start now.
+    pub fn follow_settings(&mut self, cx: &mut ToolkitCx<'_>) {
+        let wanted = self.wanted();
+        if let Some(h) = &self.handle {
+            let stale = match &wanted {
+                Ok(w) => self.started.as_ref() != Some(w),
+                Err(_) => true,
+            };
+            if stale && !self.superseded {
+                self.superseded = true;
+                h.cancel();
             }
+        } else if let Ok(w) = wanted {
+            if self.started.as_ref() != Some(&w) {
+                self.start(w, cx);
+            }
+        }
+    }
+
+    /// Whether the running task was cancelled because the settings changed (a test hook).
+    #[doc(hidden)]
+    pub fn is_superseded(&self) -> bool {
+        self.superseded
+    }
+}
+
+/// Days a staged file that no queued change uses is kept before the next queue removes it.
+pub const STAGED_KEEP_DAYS: u64 = 7;
+
+/// A path in `dir` for the staged file of the archive path `path`: the flattened path (made portable) behind a prefix that no earlier call
+/// and no other program instance used (time, process, counter), and that names no file that exists, so nothing is ever overwritten.
+pub fn staged_path(dir: &Path, path: &str) -> PathBuf {
+    static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let flat: String = path.chars().map(|c| if c == '/' || c == '\\' || c == ':' { '_' } else { c }).collect();
+    let flat = shaiya_core::fs::portable_name(&flat).unwrap_or(flat);
+    let ms = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0);
+    loop {
+        let n = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let file = dir.join(format!("{ms:x}-{:x}-{n}-{flat}", std::process::id()));
+        if !file.exists() {
+            return file;
+        }
+    }
+}
+
+/// Removes the files of `dir` that are not in `keep` and are older than `older`. Only plain files directly in `dir`; a failure is ignored
+/// (a file that stays is harmless).
+pub fn sweep_staged(dir: &Path, keep: &[PathBuf], older: std::time::Duration) {
+    let Ok(rd) = std::fs::read_dir(dir) else { return };
+    let now = std::time::SystemTime::now();
+    for e in rd.flatten() {
+        let p = e.path();
+        let old = e.metadata().ok().filter(|m| m.is_file()).and_then(|m| m.modified().ok()).and_then(|t| now.duration_since(t).ok()).is_some_and(|d| d > older);
+        if old && !keep.iter().any(|k| k == &p) {
+            let _ = std::fs::remove_file(&p);
         }
     }
 }
@@ -468,4 +538,59 @@ fn write_checked(out: &Path, e: &Edited) -> Result<()> {
             _ => Err(Error::Unsupported("internal error (a bug): the file written does not read back as the edited animation".to_string())),
         }
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_bone_list_is_numbers_ranges_or_all() {
+        assert_eq!(parse_bones("3,4,7-9"), Ok(vec![3, 4, 7, 8, 9]));
+        assert_eq!(parse_bones(" 2 - 4 , 7 "), Ok(vec![2, 3, 4, 7]));
+        assert_eq!(parse_bones("5"), Ok(vec![5]));
+        assert_eq!(parse_bones("all"), Ok(Vec::new()));
+        assert_eq!(parse_bones("ALL"), Ok(Vec::new()));
+        assert_eq!(parse_bones(""), Ok(Vec::new()), "nothing typed is every bone");
+        assert_eq!(parse_bones("1,1,2"), Ok(vec![1, 2]), "a bone named twice is one bone");
+        for bad in ["x", "1,,2", "3-1", "1-2-3", "-1", "1.5", "4-", "0-100000"] {
+            assert!(parse_bones(bad).is_err(), "{bad:?}");
+        }
+        assert_eq!(parse_bones("1,x").unwrap_err(), "\"x\" is not a bone number");
+        assert!(parse_bones("9-3").unwrap_err().contains("not a range of bones"));
+    }
+
+    #[test]
+    fn a_staged_name_is_new_every_time_and_never_one_that_exists() {
+        let d = shaiya_testkit::TempDir::new("t12-w9fix-staged");
+        let mut seen = std::collections::HashSet::new();
+        for _ in 0..50 {
+            let f = staged_path(d.path(), "a_b/c.ANI");
+            assert!(seen.insert(f.clone()), "{f:?} was handed out before");
+            std::fs::write(&f, b"x").unwrap();
+        }
+        // two archive paths that flatten to the same text do not share a file
+        assert_ne!(staged_path(d.path(), "a_b/c.ANI"), staged_path(d.path(), "a/b_c.ANI"));
+        // the name is a plain file name Windows holds
+        let name = staged_path(d.path(), "Character/Human/ANI/x?.ANI ").file_name().unwrap().to_string_lossy().into_owned();
+        assert!(!name.contains(['/', '\\', ':', '?']) && !name.ends_with(' '), "{name}");
+    }
+
+    #[test]
+    fn old_unused_staged_files_are_swept_and_the_others_stay() {
+        let d = shaiya_testkit::TempDir::new("t12-w9fix-sweep");
+        let (old_free, old_used, fresh) = (d.path().join("old-free"), d.path().join("old-used"), d.path().join("fresh"));
+        for f in [&old_free, &old_used, &fresh] {
+            std::fs::write(f, b"x").unwrap();
+        }
+        let long_ago = std::time::SystemTime::now() - std::time::Duration::from_secs(10 * 24 * 3600);
+        for f in [&old_free, &old_used] {
+            let h = std::fs::OpenOptions::new().write(true).open(f).unwrap();
+            h.set_modified(long_ago).unwrap();
+        }
+        sweep_staged(d.path(), std::slice::from_ref(&old_used), std::time::Duration::from_secs(STAGED_KEEP_DAYS * 24 * 3600));
+        assert!(!old_free.exists(), "old and unused: removed");
+        assert!(old_used.exists(), "old but a queued change uses it: kept");
+        assert!(fresh.exists(), "recent: kept");
+    }
 }

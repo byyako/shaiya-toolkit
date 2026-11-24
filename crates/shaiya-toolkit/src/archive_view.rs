@@ -1975,8 +1975,10 @@ impl ArchiveView {
     }
 
     fn finish_ani_edit_queue(&mut self, cx: &mut ToolkitCx<'_>) {
+        // the staged files that queued changes use stay, whatever their age
+        let keep: Vec<PathBuf> = self.pending.iter().filter_map(|p| if let PendingKind::Put { source, .. } = &p.kind { Some(source.clone()) } else { None }).collect();
         let Some(c) = &mut self.anim_edit else { return };
-        let Some(file) = c.take_queue(cx) else { return };
+        let Some(file) = c.take_queue(cx, &keep) else { return };
         let path = c.path().to_string();
         if let Some(i) = self.find_row(&path) {
             self.replace_with_file(i, file, cx);

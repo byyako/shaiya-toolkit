@@ -13,7 +13,7 @@ use shaiya_clientdata::mani::{ManiValue, MANI_FIELDS, MANI_SIZE};
 use shaiya_clientdata::modeljson::{self, JsonError, ModelFormat, MAX_JSON_BYTES, MAX_MODEL_BYTES};
 use shaiya_clientdata::mesh3de::De3Layout;
 use shaiya_clientdata::{Ani, C3dc, Mani, Mesh3de, Mesh3do, Vani};
-use shaiya_core::fs::{client_folder_above, client_folder_for_new, ensure_out_folder, same_file, write_atomic_checked};
+use shaiya_core::fs::{client_folder_above, client_folder_for_new, ensure_out_folder, out_key, out_name_problem, same_file, write_atomic_checked};
 use shaiya_core::glob::{Filter, Pattern};
 use shaiya_core::{Error, Result};
 use std::cell::Cell;
@@ -48,8 +48,9 @@ pub enum Cmd {
     /// With --out-dir DIR instead of -o, any number of files, folders or (with --from) patterns are exported, one `<path>.json` per model
     /// file under DIR (folders are made; a path inside the archive stays a path under DIR). DIR is checked before anything is read: inside a
     /// client folder it is exit 4. A file that does not read, or whose output exists (without --force), is reported and the rest go on; the
-    /// exit code at the end is 3 for a file that did not read, 4 for an output that exists or is refused, 5 for a bug, else 0. The last line
-    /// says `wrote N of M (K failed)`.
+    /// exit code at the end is the largest of 3 (a file that did not read, or whose output name is refused: a path part Windows cannot hold or
+    /// named data.sah, a `..` part), 4 (an output that exists, a second input with the same output name, or a folder that would be inside a
+    /// client folder or cannot be made) and 5 (a bug), else 0. The last line says `wrote N of M (K failed)`.
     ///
     /// Example: shaiya anim export "character/human/ani/*" --from "@us" --out-dir json-out
     Export(ExportArgs),
@@ -1114,7 +1115,8 @@ fn export(ctx: &Ctx, a: &ExportArgs, job: &shaiya_core::Job) -> Res {
 enum Why {
     /// The file did not read, is not a model file, or its output name is refused: exit 3.
     Input,
-    /// The output exists (without --force), is a second output of the same name or would land inside a client folder: exit 4.
+    /// The output exists (without --force), is a second output of the same name, would land inside a client folder or its folder cannot be
+    /// made: exit 4.
     Safety,
     /// The self-check failed (a bug of ours): exit 5.
     Bug,
@@ -1157,8 +1159,12 @@ fn export_dir(ctx: &Ctx, a: &ExportArgs, dir: &Path, job: &shaiya_core::Job) -> 
     let mut failed: Vec<(String, String, Why)> = inputs.failed.iter().map(|(p, why)| (p.clone(), why.clone(), Why::Input)).collect();
     let mut taken: std::collections::HashSet<String> = std::collections::HashSet::new();
     let mut folders_checked: std::collections::HashSet<PathBuf> = std::collections::HashSet::new();
+    let mut cancelled = false;
     for e in &inputs.entries {
-        job.check()?;
+        if job.check().is_err() {
+            cancelled = true;
+            break;
+        }
         match export_entry(&inputs, e, dir, a.force, &saved, &mut taken, &mut folders_checked) {
             Ok(target) => written.push(target.display().to_string()),
             Err((reason, why)) => failed.push((e.name.clone(), reason, why)),
@@ -1168,19 +1174,28 @@ fn export_dir(ctx: &Ctx, a: &ExportArgs, dir: &Path, job: &shaiya_core::Job) -> 
     let total = inputs.entries.len() + inputs.failed.len();
     if ctx.json {
         let list: Vec<Value> = failed.iter().map(|(input, reason, _)| json!({"input": input, "reason": reason})).collect();
-        print_json(&json!({ "written": written, "failed": list }));
+        print_json(&json!({ "written": written, "failed": list, "cancelled": cancelled }));
     } else {
         let mut w = out();
-        outln!(w, "wrote {} of {total} ({} failed)", written.len(), failed.len());
+        outln!(w, "{}", export_summary(written.len(), total, failed.len(), cancelled));
         let _ = w.flush();
     }
     for (input, reason, _) in &failed {
         eprintln!("{input}: FAILED: {reason}");
     }
+    if cancelled {
+        // the files already written stay; the summary above says how many
+        return Err(Error::Cancelled.into());
+    }
     if total == 0 {
         note(ctx, "note: no .ANI, .3DC, .VANI, .MANI, .3DO or .3DE files found");
     }
     Ok(failed.iter().map(|(_, _, why)| why.code()).max().unwrap_or(0))
+}
+
+/// The last line of an `--out-dir` export: `wrote N of M (K failed)`, with `, cancelled` when it was stopped (the files written stay).
+fn export_summary(written: usize, total: usize, failed: usize, cancelled: bool) -> String {
+    format!("wrote {written} of {total} ({failed} failed){}", if cancelled { ", cancelled" } else { "" })
 }
 
 /// One file of an `--out-dir` export: checks, read, export, write. `Err` is the reason and its kind.
@@ -1200,11 +1215,11 @@ fn export_entry(
     if let Some(problem) = shaiya_archive::edit::loose_name_problem(&e.rel) {
         return Err(input(format!("not written: {problem}")));
     }
-    if e.rel.split('/').any(|part| part.eq_ignore_ascii_case("data.sah")) {
-        return Err(input("not written: a path part named data.sah would make the output folder look like a client folder".to_string()));
+    if let Some(problem) = out_name_problem(&e.rel) {
+        return Err(input(format!("not written: {problem}")));
     }
     let target = json_target(dir, &e.rel);
-    if !taken.insert(target.to_string_lossy().to_ascii_lowercase()) {
+    if !taken.insert(out_key(&target)) {
         return Err(("another input of this run has the same output name".to_string(), Why::Safety));
     }
     if target.exists() && !force {
@@ -1438,7 +1453,19 @@ fn edit(ctx: &Ctx, a: &EditArgs) -> Res {
                 (None, Some(s)) => animedit::factor_for_seconds(&input, s),
                 (None, None) => unreachable!("clap requires one of them"),
             };
-            factor.and_then(|f| animedit::retime(&input, f))
+            match (factor, x.seconds) {
+                // the factor that --seconds asks for is a usage error when it is outside the range --factor may have (exit 2, like --factor)
+                (Ok(f), Some(s)) if x.factor.is_none() && !(animedit::RETIME_MIN..=animedit::RETIME_MAX).contains(&f) => {
+                    return Err(Fail::Usage(format!(
+                        "--seconds {s} makes {} {:.3} times as long: the factor must be from {} to {}",
+                        io.input,
+                        f,
+                        animedit::RETIME_MIN,
+                        animedit::RETIME_MAX
+                    )));
+                }
+                (factor, _) => factor.and_then(|f| animedit::retime(&input, f)),
+            }
         }
         EditTool::Trim(x) => animedit::trim(&input, x.start, x.end),
         EditTool::CopyTrack(x) => {
@@ -1588,6 +1615,37 @@ mod tests {
             assert_eq!(stop(&ctx(), &f), 3);
         }
         assert_eq!(stop(&ctx(), &Fail::Usage("x".into())), 2);
+    }
+
+    /// A cancelled `--out-dir` export keeps the files it wrote, still gets its summary line (which says it was cancelled), and ends as a cancel.
+    #[test]
+    fn a_cancelled_out_dir_export_keeps_its_files_and_ends_as_a_cancel() {
+        let base = std::env::temp_dir().join(format!("shaiya-anim-cancel-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let (src, out) = (base.join("src"), base.join("out"));
+        std::fs::create_dir_all(&src).unwrap();
+        for n in ["a.ANI", "b.ANI", "c.ANI"] {
+            std::fs::write(src.join(n), shaiya_testkit::anim::arm_ani(30)).unwrap();
+        }
+        let cancel = shaiya_core::Cancel::new();
+        let progress = shaiya_core::FnProgress::new({
+            let cancel = cancel.clone();
+            move |done, _| {
+                if done == 1 {
+                    cancel.cancel();
+                }
+            }
+        });
+        let job = shaiya_core::Job::new(&progress, cancel);
+        let c = Ctx { data_dir: Some(base.join("data")), ..ctx() };
+        let args = ExportArgs { inputs: vec![src.to_string_lossy().into_owned()], from: None, out: None, out_dir: Some(out.clone()), force: false };
+        let r = export_dir(&c, &args, &out, &job);
+        assert!(matches!(r, Err(Fail::Error(Error::Cancelled))));
+        let written = std::fs::read_dir(&out).unwrap().count();
+        assert_eq!(written, 1, "exactly the file counted before the cancel is on disk");
+        assert_eq!(export_summary(1, 3, 0, true), "wrote 1 of 3 (0 failed), cancelled");
+        assert_eq!(export_summary(3, 3, 0, false), "wrote 3 of 3 (0 failed)");
+        let _ = std::fs::remove_dir_all(&base);
     }
 
     /// A folder that cannot be listed is reported and the walk goes on. (A path that cannot be listed is simulated by a file where a folder is

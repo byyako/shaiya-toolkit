@@ -59,6 +59,28 @@ pub fn portable_name(name: &str) -> Option<String> {
     changed.then_some(out)
 }
 
+/// Why the relative path `rel` (parts separated by `/`) is not written below an output folder, or `None`: a part named `data.sah` (any
+/// letter case) would make the folder look like a client folder, and a part Windows cannot hold (a trailing dot or space, which Windows
+/// drops so that `data.sah.` is `data.sah` and `a.` is `a`; a reserved device name such as `CON` or `NUL`; a forbidden character) is
+/// refused on every system so that the same names work everywhere.
+pub fn out_name_problem(rel: &str) -> Option<String> {
+    for part in rel.split('/') {
+        if part.to_lowercase() == "data.sah" {
+            return Some("a path part named data.sah would make the output folder look like a client folder".to_string());
+        }
+        if portable_name(part).is_some() {
+            return Some(format!("the path part {part:?} is not a name Windows can hold (a trailing dot or space, a reserved device name or a forbidden character)"));
+        }
+    }
+    None
+}
+
+/// The key under which two output paths are the same file: letter case is ignored with Unicode lowercasing (a case-insensitive disk holds
+/// `A.json` and `a.json` as one file).
+pub fn out_key(path: &Path) -> String {
+    path.to_string_lossy().to_lowercase()
+}
+
 fn temp_path(path: &Path) -> PathBuf {
     let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| "out".into());
     let tmp = format!(".{name}.{}{TEMP_SUFFIX}", std::process::id());
@@ -327,6 +349,18 @@ pub fn cleanup_stale_temps(dir: &Path) {
 mod tests {
     use super::*;
     use crate::job::{Cancel, Silent};
+
+    #[test]
+    fn output_names_that_windows_would_change_are_refused_and_keys_ignore_case() {
+        assert!(out_name_problem("Monster/ANI/a.ANI").is_none());
+        for bad in ["data.sah/x.ANI", "DATA.SAH/x", "a/Data.Sah", "data.sah./x", "data.sah /x", "a./b.ANI", "a/b.ANI ", "CON/x.ANI", "x/nul.ANI", "COM1", "lpt9.txt", "a/b?c"] {
+            assert!(out_name_problem(bad).is_some(), "{bad}");
+        }
+        assert!(out_name_problem("com0/x").is_none() && out_name_problem("CONSOLE/x").is_none() && out_name_problem("COM10/x").is_none());
+        assert_eq!(out_key(Path::new("Dir/A.JSON")), out_key(Path::new("dir/a.json")));
+        assert_eq!(out_key(Path::new("\u{c9}.json")), out_key(Path::new("\u{e9}.json")), "not only ASCII letters");
+        assert_ne!(out_key(Path::new("a.json")), out_key(Path::new("b.json")));
+    }
 
     #[test]
     fn the_verbatim_prefix_is_dropped_for_display() {

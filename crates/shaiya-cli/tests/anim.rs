@@ -1254,6 +1254,45 @@ fn a_file_that_does_not_read_is_reported_and_the_others_written() {
 }
 
 #[test]
+fn two_inputs_with_the_same_output_name_write_the_first_and_exit_4() {
+    let w = world();
+    let (d1, d2) = (w.tmp.path().join("one"), w.tmp.path().join("two"));
+    write(&d1.join("same.ANI"), &arm_ani(30));
+    write(&d2.join("SAME.ani"), &arm_ani(60));
+    let dir = w.tmp.path().join("o");
+    let o = sh(&w.data, &["anim", "export", p(&d1.join("same.ANI")), p(&d2.join("SAME.ani")), "--out-dir", p(&dir)]);
+    // a file named on the command line is written as `<file name>.json`: the second has another letter case only
+    assert_eq!(code(&o), 4, "{}{}", out(&o), err(&o));
+    assert!(out(&o).contains("wrote 1 of 2 (1 failed)") && err(&o).contains("same output name"), "{}{}", out(&o), err(&o));
+    assert_eq!(files_under(&dir), vec!["same.ANI.json"], "only the first was written");
+    assert!(std::fs::read_to_string(dir.join("same.ANI.json")).unwrap().contains("\"end_key\": 30"), "the first input won");
+}
+
+#[test]
+fn an_archive_path_with_dotdot_or_a_windows_name_is_reported_exit_3_and_not_written() {
+    let w = world();
+    let c = client_with(
+        &w,
+        "tr",
+        &[
+            ("a/../b.ANI", arm_ani(30)),
+            ("../c.ANI", arm_ani(30)),
+            ("CON/d.ANI", arm_ani(30)),
+            ("e./f.ANI", arm_ani(30)),
+            ("data.sah./g.ANI", arm_ani(30)),
+            ("nul.ANI", arm_ani(30)),
+            ("ok/h.ANI", arm_ani(30)),
+        ],
+    );
+    let d = w.tmp.path().join("o");
+    let o = sh(&w.data, &["anim", "export", "*", "--from", p(&c), "--out-dir", p(&d)]);
+    assert_eq!(code(&o), 3, "{}{}", out(&o), err(&o));
+    assert!(out(&o).contains("wrote 1 of 7 (6 failed)"), "{}{}", out(&o), err(&o));
+    assert_eq!(files_under(&d), vec!["ok/h.ANI.json"]);
+    assert!(!w.tmp.path().join("c.ANI.json").exists() && !w.tmp.path().join("b.ANI.json").exists(), "nothing was written above DIR");
+}
+
+#[test]
 fn more_than_one_input_needs_out_dir_exit_2() {
     let w = world();
     let d = w.tmp.path().join("m");
@@ -1273,6 +1312,20 @@ fn more_than_one_input_needs_out_dir_exit_2() {
 fn arm_turned(sin: f32, cos: f32, end_key: i32) -> Vec<u8> {
     let b = |parent: i32, y: f32, rot: Vec<(i32, [f32; 4])>| BoneSpec { parent, matrix: translation_bits(0.0, y, 0.0), rot, trans: Vec::new() };
     ani_bytes(0, end_key, &[b(-1, 0.0, Vec::new()), b(0, 1.0, vec![(0, [0.0, 0.0, 0.0, 1.0]), (end_key, [0.0, 0.0, sin, cos])]), b(1, 2.0, Vec::new())])
+}
+
+#[test]
+fn diff_json_gives_null_for_a_pose_that_is_not_a_finite_number() {
+    let w = world();
+    let d = w.tmp.path().join("d");
+    write(&d.join("a.ANI"), &arm_ani(30));
+    write(&d.join("nan.ANI"), &arm_turned(f32::NAN, f32::NAN, 30));
+    let o = sh(&w.data, &["anim", "diff", p(&d.join("a.ANI")), p(&d.join("nan.ANI")), "--json"]);
+    assert_eq!(code(&o), 1, "{}", err(&o));
+    let v = json(&o);
+    let bones = v["bones"].as_array().unwrap();
+    assert!(!bones.is_empty(), "{v}");
+    assert!(bones.iter().all(|b| b["max_angle_deg"].is_null() && b["max_offset"].is_null()), "an infinite value is null: {v}");
 }
 
 #[test]
@@ -1478,6 +1531,12 @@ fn edit_retime_writes_a_file_that_passes_compare() {
     let o = sh(&w.data, &["anim", "edit", "copy-track", p(&d.join("a.ANI")), "--source", p(&d.join("slow.ANI")), "--bones", "1", "--rotation", "-o", p(&d.join("mix.ANI"))]);
     assert_eq!(code(&o), 0, "{}", err(&o));
     assert_eq!(code(&sh(&w.data, &["anim", "compare", p(&d.join("mix.ANI")), p(&d.join("a.ANI"))])), 0);
+    // the copied rotation of bone 1 runs to key 60, so the end key is 60 (the larger of the two), and the track is the source's
+    let v = json(&sh(&w.data, &["anim", "info", p(&d.join("mix.ANI")), "--json"]));
+    assert_eq!(v["files"][0]["end_key"], 60, "{v}");
+    let (src, mixed) = (std::fs::read(d.join("slow.ANI")).unwrap(), std::fs::read(d.join("mix.ANI")).unwrap());
+    let (src, mixed) = (shaiya_clientdata::Ani::parse(&src, "s").unwrap(), shaiya_clientdata::Ani::parse(&mixed, "m").unwrap());
+    assert_eq!(mixed.bones[1].rot, src.bones[1].rot);
     // from an archive
     let c = client_with(&w, "ec", &[("Monster/ANI/A.ANI", arm_ani(30))]);
     let o = sh(&w.data, &["anim", "edit", "retime", "Monster/ANI/A.ANI", "--from", p(&c), "--factor", "0.5", "-o", p(&d.join("fast.ANI"))]);
@@ -1514,6 +1573,17 @@ fn edit_outputs_follow_the_import_rules() {
     same.push("--force".to_string());
     assert_eq!(code(&sh_owned(&w.data, &same)), 4);
     assert_eq!(std::fs::read(a).unwrap(), arm_ani(30));
+    // the same file as SRC: 4, even with --force, and SRC is not changed
+    write(&d.join("src.ANI"), &arm_ani(60));
+    let o = sh(&w.data, &["anim", "edit", "copy-track", a, "--source", p(&d.join("src.ANI")), "--bones", "1", "--rotation", "-o", p(&d.join("src.ANI")), "--force"]);
+    assert_eq!(code(&o), 4, "{}", err(&o));
+    assert_eq!(std::fs::read(d.join("src.ANI")).unwrap(), arm_ani(60));
+    // --seconds that needs a factor outside 0.1 to 10 is a bad argument too: 2, nothing written
+    for s in ["1000", "0.01"] {
+        let o = sh(&w.data, &["anim", "edit", "retime", a, "--seconds", s, "-o", p(&d.join("sec.ANI"))]);
+        assert_eq!(code(&o), 2, "--seconds {s}: {}{}", out(&o), err(&o));
+        assert!(!d.join("sec.ANI").exists());
+    }
     // inside a client folder: 4, nothing made
     let o = sh_owned(&w.data, &base(p(&w.client.join("new.ANI"))));
     assert_eq!(code(&o), 4, "{}", err(&o));

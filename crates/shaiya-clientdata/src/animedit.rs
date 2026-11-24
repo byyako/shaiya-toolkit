@@ -7,6 +7,7 @@
 
 use crate::anim::{passes, rig_check, segment, slerp, validate, Ani, RigDiff, RotKey, Severity, TransKey};
 use crate::error::{Error, Result};
+use crate::modeljson::MAX_MODEL_BYTES;
 
 /// The smallest and largest factor of [`retime`].
 pub const RETIME_MIN: f32 = 0.1;
@@ -15,10 +16,19 @@ pub const RETIME_MAX: f32 = 10.0;
 pub const RETIME_RANGE_MAX: i64 = 1_000_000;
 /// Most keys [`retime`] samples in all (tracks times keys of the new range): a bigger job is refused before anything is allocated.
 pub const RETIME_SAMPLES_MAX: u64 = 50_000_000;
-/// A key that linear (or slerp) interpolation between its neighbours reproduces within this is dropped by [`retime`].
+/// A key that linear (or slerp) interpolation between its two kept neighbours reproduces within this (per component of the track's own
+/// value, not of the world pose) is dropped by [`retime`], when it lies inside a run of at most [`PRUNE_WINDOW`] keys.
 pub const RETIME_TOLERANCE: f32 = 1e-5;
-/// Keys one dropped run may span in [`retime`].
-const PRUNE_WINDOW: usize = 64;
+/// Keys one dropped run may span in [`retime`]: on a long straight run one key is kept in every 64.
+pub const PRUNE_WINDOW: usize = 64;
+/// Samples between two looks at the cancel callback of [`retime_with`].
+const CANCEL_EVERY: usize = 4096;
+
+/// The size of the file of an animation with these key counts: the 10 header bytes, then per bone the parent, the 16-float matrix, the two
+/// key counts, and 20 bytes per rotation key and 16 per translation key.
+fn file_bytes(bones: usize, rot_keys: u64, trans_keys: u64) -> u64 {
+    10 + bones as u64 * (4 + 64 + 4 + 4) + rot_keys * 20 + trans_keys * 16
+}
 
 /// Which tracks [`copy_tracks`] copies.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -71,12 +81,15 @@ fn trans_dist(a: [f32; 3], b: [f32; 3]) -> f32 {
 }
 
 /// The indices of `dense` (one value per whole key) that stay: the first and the last, and every other value the interpolation of its kept
-/// neighbours does not reproduce within [`RETIME_TOLERANCE`].
-fn prune<T: Copy>(dense: &[T], lerp: impl Fn(T, T, f32) -> T, dist: impl Fn(T, T) -> f32) -> Vec<usize> {
+/// neighbours does not reproduce within [`RETIME_TOLERANCE`]. `None` when `cancel` said stop (it is asked once per kept key).
+fn prune<T: Copy>(dense: &[T], lerp: impl Fn(T, T, f32) -> T, dist: impl Fn(T, T) -> f32, cancel: &mut dyn FnMut() -> bool) -> Option<Vec<usize>> {
     let n = dense.len();
     let mut kept = vec![0usize];
     let mut a = 0usize;
     while a + 1 < n {
+        if cancel() {
+            return None;
+        }
         let mut best = a + 1;
         let mut b = a + 2;
         while b < n && b <= a + PRUNE_WINDOW {
@@ -90,7 +103,7 @@ fn prune<T: Copy>(dense: &[T], lerp: impl Fn(T, T, f32) -> T, dist: impl Fn(T, T
         kept.push(best);
         a = best;
     }
-    kept
+    Some(kept)
 }
 
 /// What a finished edit must be: it passes against its input, or the reasons are the refusal.
@@ -105,12 +118,24 @@ fn finish(out: Ani, input: &Ani) -> Result<Ani> {
 }
 
 /// Makes the animation `factor` times as long: the new end key is `first + round((end - first) * factor)`; every bone that has a track gets
-/// keys at every whole key of the new range, sampled from the old pose at `first + (k - first) / factor` on its own track, and the keys that
-/// linear (rotation: slerp) interpolation reproduces within 1e-5 are dropped again. A bone without a track stays without one.
+/// keys at every whole key of the new range, sampled from the old pose at `first + i * span / new span` for the new key `first + i` (so the
+/// first key and the end key map exactly onto the old first and end keys even when the rounding changes the length: the end pose is kept,
+/// and the motion in between is stretched by the rounded factor), and the keys that linear (rotation: slerp) interpolation reproduces within
+/// 1e-5 are dropped again. A bone without a track stays without one. Detail between two whole keys of the new range is not kept.
 ///
 /// Refused: a factor that is not a finite number in 0.1 to 10; an animation with no length; a result under one key or over
-/// [`RETIME_RANGE_MAX`] keys, or a job over [`RETIME_SAMPLES_MAX`] samples.
+/// [`RETIME_RANGE_MAX`] keys, a job over [`RETIME_SAMPLES_MAX`] samples, or a result whose file would be over [`MAX_MODEL_BYTES`] (the
+/// toolkit refuses to read a larger file back).
 pub fn retime(ani: &Ani, factor: f32) -> Result<Ani> {
+    Ok(retime_with(ani, factor, &mut || false)?.expect("a retime that is never cancelled ends"))
+}
+
+/// [`retime`] with a cancel check about every 4096 samples and once per kept key: `cancel` returning true ends it with `Ok(None)`.
+pub fn retime_with(ani: &Ani, factor: f32, cancel: &mut dyn FnMut() -> bool) -> Result<Option<Ani>> {
+    retime_capped(ani, factor, MAX_MODEL_BYTES, cancel)
+}
+
+fn retime_capped(ani: &Ani, factor: f32, max_bytes: u64, cancel: &mut dyn FnMut() -> bool) -> Result<Option<Ani>> {
     if !factor.is_finite() || !(RETIME_MIN..=RETIME_MAX).contains(&factor) {
         return refuse(format!("the factor must be a number from {RETIME_MIN} to {RETIME_MAX}"));
     }
@@ -132,23 +157,47 @@ pub fn retime(ani: &Ani, factor: f32) -> Result<Ani> {
         return refuse("the job would sample too many keys; retime a shorter animation");
     }
     let n = new_span as usize + 1;
-    let old_time = |i: usize| first as f32 + i as f32 / factor;
+    // the new key `first + i` is sampled at the old time `first + i * span / new_span` (in f64: i = new_span gives the old end key exactly)
+    let old_time = |i: usize| (f64::from(first) + i as f64 * span as f64 / new_span as f64) as f32;
+    let too_big = || refuse::<Option<Ani>>(format!("the result would be over {} MiB, the most the toolkit reads back; retime a shorter animation", max_bytes >> 20));
     let mut out = ani.clone();
     out.end_key = new_end;
+    let (mut rot_keys, mut trans_keys) = (0u64, 0u64);
     for (b, old) in out.bones.iter_mut().zip(&ani.bones) {
         if !old.rot.is_empty() {
-            let dense: Vec<[f32; 4]> = (0..n).map(|i| rot_at(&old.rot, old_time(i))).collect();
-            let kept = prune(&dense, slerp, rot_dist);
+            let mut dense: Vec<[f32; 4]> = Vec::with_capacity(n);
+            for i in 0..n {
+                if i % CANCEL_EVERY == 0 && cancel() {
+                    return Ok(None);
+                }
+                dense.push(rot_at(&old.rot, old_time(i)));
+            }
+            let Some(kept) = prune(&dense, slerp, rot_dist, cancel) else { return Ok(None) };
             b.rot = kept.into_iter().map(|i| RotKey { key: first + i as i32, q: dense[i] }).collect();
+            rot_keys += b.rot.len() as u64;
         }
         if !old.trans.is_empty() {
-            let dense: Vec<[f32; 3]> = (0..n).map(|i| trans_at(&old.trans, old_time(i))).collect();
+            let mut dense: Vec<[f32; 3]> = Vec::with_capacity(n);
+            for i in 0..n {
+                if i % CANCEL_EVERY == 0 && cancel() {
+                    return Ok(None);
+                }
+                dense.push(trans_at(&old.trans, old_time(i)));
+            }
             let lerp = |a: [f32; 3], c: [f32; 3], f: f32| [a[0] + (c[0] - a[0]) * f, a[1] + (c[1] - a[1]) * f, a[2] + (c[2] - a[2]) * f];
-            let kept = prune(&dense, lerp, trans_dist);
+            let Some(kept) = prune(&dense, lerp, trans_dist, cancel) else { return Ok(None) };
             b.trans = kept.into_iter().map(|i| TransKey { key: first + i as i32, v: dense[i] }).collect();
+            trans_keys += b.trans.len() as u64;
+        }
+        // stop as soon as the keys made so far are over the cap: no bigger result is ever built
+        if file_bytes(0, rot_keys, trans_keys) > max_bytes {
+            return too_big();
         }
     }
-    finish(out, ani)
+    if file_bytes(out.bones.len(), rot_keys, trans_keys) > max_bytes {
+        return too_big();
+    }
+    finish(out, ani).map(Some)
 }
 
 /// Keeps the keys `start` to `end` and moves them to the first field: needs `first field <= start < end <= end key`. Every track is sampled at
@@ -290,6 +339,131 @@ mod tests {
         for t in 0..=2 {
             assert!(same_poses(&r, t as f32, &a, t as f32 * 2.0), "key {t}");
         }
+    }
+
+    fn poses_within(a: &Ani, ta: f32, b: &Ani, tb: f32, tol: f32) -> bool {
+        let (pa, pb) = (pose(a, &locals(a), ta), pose(b, &locals(b), tb));
+        pa.iter().zip(&pb).all(|(x, y)| x.iter().zip(y).all(|(p, q)| (p - q).abs() <= tol))
+    }
+
+    #[test]
+    fn a_factor_that_does_not_divide_the_span_keeps_the_end_pose() {
+        // span 31 x 0.3 = 9.3: the new range is 0..9 and its last key is the old end key, not old key 30
+        let a = build(0, 31, &[spec(-1, 0.0, Vec::new(), Vec::new()), spec(0, 1.0, vec![(0, turn(0.0)), (31, turn(80.0))], vec![(0, [0.0; 3]), (31, [3.1, 0.0, 0.0])])]);
+        let r = retime(&a, 0.3).unwrap();
+        assert_eq!((r.first_field, r.end_key), (0, 9));
+        assert!(same_poses(&r, 9.0, &a, 31.0), "the end pose of the original is the end pose of the result");
+        assert!(same_poses(&r, 0.0, &a, 0.0));
+        for i in 0..=9 {
+            assert!(poses_within(&r, i as f32, &a, i as f32 * 31.0 / 9.0, 1e-4), "new key {i} is old time {}", i as f32 * 31.0 / 9.0);
+        }
+        // span 14 x 0.1 = 1.4: the range 0..1 holds the first and the last pose of the 14 keys
+        let b = build(0, 14, &[spec(-1, 0.0, Vec::new(), vec![(0, [0.0; 3]), (14, [14.0, 0.0, 0.0])])]);
+        let r = retime(&b, 0.1).unwrap();
+        assert_eq!(r.end_key, 1);
+        assert_eq!(r.bones[0].trans.iter().map(|k| (k.key, k.v)).collect::<Vec<_>>(), vec![(0, [0.0; 3]), (1, [14.0, 0.0, 0.0])], "all 14 keys of motion end at the new last key");
+        // a first field other than 0 keeps its start and maps its end the same way
+        let c = build(-5, 26, &[spec(-1, 0.0, Vec::new(), vec![(-5, [0.0; 3]), (26, [3.1, 0.0, 0.0])])]);
+        let r = retime(&c, 0.3).unwrap();
+        assert_eq!((r.first_field, r.end_key), (-5, 4));
+        assert_eq!(r.bones[0].trans.last().unwrap().v, [3.1, 0.0, 0.0]);
+    }
+
+    #[test]
+    fn a_whole_new_span_samples_exactly_where_the_factor_says() {
+        // 30 x 2 = 60 exactly: new key k is old time k / 2, the same as the old rule
+        let a = sample();
+        let r = retime(&a, 2.0).unwrap();
+        for k in 0..=60 {
+            assert!(poses_within(&r, k as f32, &a, k as f32 / 2.0, 1e-5), "key {k}");
+        }
+    }
+
+    #[test]
+    fn a_result_over_the_byte_cap_is_refused_and_the_size_formula_is_the_files() {
+        let a = sample();
+        let r = retime(&a, 2.0).unwrap();
+        let bytes = r.try_to_bytes().unwrap().len() as u64;
+        let (rot, trans) = r.key_counts();
+        assert_eq!(file_bytes(r.bones.len(), rot as u64, trans as u64), bytes, "the estimate is the size of the file");
+        assert!(retime_capped(&a, 2.0, bytes, &mut || false).unwrap().is_some(), "exactly at the cap is fine");
+        let e = retime_capped(&a, 2.0, bytes - 1, &mut || false).unwrap_err().to_string();
+        assert!(e.contains("the result would be over") && e.contains("retime a shorter animation"), "{e}");
+        // the real cap is the one the toolkit reads back
+        assert_eq!(MAX_MODEL_BYTES, 128 << 20);
+    }
+
+    #[test]
+    fn retime_stops_when_cancelled_and_asks_during_the_work() {
+        let a = sample();
+        let mut calls = 0;
+        assert!(retime_with(&a, 2.0, &mut || {
+            calls += 1;
+            true
+        })
+        .unwrap()
+        .is_none());
+        assert_eq!(calls, 1, "it stops at the first look");
+        let mut calls = 0;
+        let r = retime_with(&a, 2.0, &mut || {
+            calls += 1;
+            false
+        })
+        .unwrap()
+        .expect("never cancelled");
+        assert_eq!(r, retime(&a, 2.0).unwrap());
+        assert!(calls > 3, "asked while sampling and pruning: {calls}");
+        // a long animation: the cancel arrives in the middle of the sampling, long before the end
+        let long = build(0, 100_000, &[spec(-1, 0.0, Vec::new(), vec![(0, [0.0; 3]), (100_000, [1.0, 0.0, 0.0])])]);
+        let mut calls = 0;
+        assert!(retime_with(&long, 1.0, &mut || {
+            calls += 1;
+            calls == 3
+        })
+        .unwrap()
+        .is_none());
+        assert_eq!(calls, 3);
+    }
+
+    #[test]
+    fn a_straight_run_keeps_one_key_in_64_and_a_curve_keeps_what_it_needs() {
+        let straight = build(0, 200, &[spec(-1, 0.0, Vec::new(), vec![(0, [0.0; 3]), (200, [2.0, 0.0, 0.0])])]);
+        let r = retime(&straight, 1.0).unwrap();
+        assert_eq!(r.bones[0].trans.iter().map(|k| k.key).collect::<Vec<_>>(), vec![0, 64, 128, 192, 200], "the window is {PRUNE_WINDOW} keys");
+        // a rotation of five keys made of two straight turns (0 to 60 degrees, then back): the middle keys of each turn are dropped
+        let two_turns: Vec<(i32, [f32; 4])> = [(0, 0.0), (10, 30.0), (20, 60.0), (30, 30.0), (40, 0.0)].iter().map(|&(k, d)| (k, turn(d))).collect();
+        let bent = build(0, 40, &[spec(-1, 0.0, Vec::new(), Vec::new()), spec(0, 1.0, two_turns, Vec::new())]);
+        let r = retime(&bent, 1.0).unwrap();
+        assert_eq!(r.bones[1].rot.iter().map(|k| k.key).collect::<Vec<_>>(), vec![0, 20, 40]);
+        for t in 0..=40 {
+            assert!(poses_within(&r, t as f32, &bent, t as f32, 1e-4), "key {t}");
+        }
+        // a rotation that swings through a real curve: no key is reproduced by its neighbours, so all of them stay
+        let swing: Vec<(i32, [f32; 4])> = (0..=60).map(|k| (k, turn(40.0 * (k as f32 / 5.0).sin()))).collect();
+        let curved = build(0, 60, &[spec(-1, 0.0, Vec::new(), Vec::new()), spec(0, 1.0, swing, Vec::new())]);
+        let r = retime(&curved, 1.0).unwrap();
+        assert_eq!(r.bones[1].rot.len(), 61);
+        for t in 0..=60 {
+            assert!(poses_within(&r, t as f32, &curved, t as f32, 1e-5), "key {t}");
+        }
+    }
+
+    #[test]
+    fn copy_track_end_key_is_the_larger_of_the_input_end_and_the_last_copied_key() {
+        let skeleton = |end: i32, rot1: Vec<(i32, [f32; 4])>| build(0, end, &[spec(-1, 0.0, Vec::new(), Vec::new()), spec(0, 1.0, rot1, Vec::new())]);
+        let dst = skeleton(30, vec![(0, turn(0.0)), (30, turn(10.0))]);
+        let all = Tracks { rotation: true, translation: true };
+        // a copied track that runs longer lengthens the animation to its last key
+        let longer = skeleton(60, vec![(0, turn(0.0)), (60, turn(90.0))]);
+        let r = copy_tracks(&dst, &longer, &[1], all).unwrap();
+        assert_eq!(r.end_key, 60);
+        assert_eq!(r.bones[1].rot, longer.bones[1].rot);
+        // a source whose own end key is longer but whose copied track stops at 20 does not: the source's end key is not used
+        let short_track = skeleton(60, vec![(0, turn(0.0)), (20, turn(90.0))]);
+        assert_eq!(copy_tracks(&dst, &short_track, &[1], all).unwrap().end_key, 30);
+        // a source that ends sooner never shortens it
+        let shorter = skeleton(10, vec![(0, turn(0.0)), (10, turn(90.0))]);
+        assert_eq!(copy_tracks(&dst, &shorter, &[1], all).unwrap().end_key, 30);
     }
 
     #[test]
