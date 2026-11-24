@@ -444,7 +444,7 @@ pub fn anim_preview(src: &dyn FileSource, data: &[u8], path: &str, mesh: &MeshCh
         tex = preview_tex::for_meshes(src, &built.0, &paths, job).ok_or_else(|| shaiya_clientdata::Error::Archive("cancelled".into()))?;
     }
     let meshes: Vec<(&shaiya_clientdata::mesh3dc::C3dcMesh, Option<usize>)> = parsed.iter().zip(&tex.per_mesh).flat_map(|((_, c), t)| c.meshes.iter().map(move |m| (m, *t))).collect();
-    let frames = shaiya_clientdata::render::anim_frames_with(&ani, &meshes, &tex.textures, &tex.alpha, shaiya_clientdata::render::View::DEFAULT, &mut || job.check().is_err()).ok_or_else(|| shaiya_clientdata::Error::Archive("cancelled".into()))?;
+    let frames = shaiya_clientdata::render::anim_frames_with(&ani, &meshes, &tex.textures, &tex.alpha, look.view, &mut || job.check().is_err()).ok_or_else(|| shaiya_clientdata::Error::Archive("cancelled".into()))?;
 
     let mut notes = Vec::new();
     if !look.textured && !parsed.is_empty() {
@@ -526,7 +526,7 @@ pub fn c3dc_preview(src: &dyn FileSource, data: &[u8], path: &str, textures: &Te
     } else {
         notes.push(preview_tex::TEXTURES_OFF.to_string());
     }
-    let picture = shaiya_clientdata::render::c3dc_picture_with(&c, mip.as_ref().map(|(m, a)| (m, *a)), shaiya_clientdata::render::View::DEFAULT);
+    let picture = shaiya_clientdata::render::c3dc_picture_with(&c, mip.as_ref().map(|(m, a)| (m, *a)), look.view);
     let (width, height, rgba) = match picture {
         Some(p) => (p.width as u32, p.height as u32, p.rgba),
         None => (0, 0, Vec::new()),

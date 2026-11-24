@@ -3298,3 +3298,197 @@ fn fit_and_alpha_of_the_picture_preview_stay_when_another_picture_is_selected() 
     assert!(!w.h.app.app.archive.preview.fit && !w.h.app.app.archive.preview.alpha);
     assert!(!w.h.app.tool_settings.preview_fit && !w.h.app.tool_settings.preview_alpha);
 }
+
+// ------------------------------------------------------------------------------------------------ T12 W7: preview controls and remembered state
+
+/// The first picture of the animation preview that is open.
+fn first_frame(h: &Harness<ToolkitApp>) -> Vec<u8> {
+    match h.app.app.archive.preview_data() {
+        Some(shaiya_toolkit::preview::PreviewData::Anim { frames, .. }) => frames.frames[0].clone(),
+        _ => panic!("not an animation preview"),
+    }
+}
+
+/// Runs frames until the preview is ready and its first picture is not `old`.
+fn wait_new_frame(h: &mut Harness<ToolkitApp>, old: &[u8]) -> bool {
+    h.wait_until(WAIT, |h| {
+        h.app.app.archive.preview_ready() && matches!(h.app.app.archive.preview_data(), Some(shaiya_toolkit::preview::PreviewData::Anim { frames, .. }) if !frames.frames.is_empty() && frames.frames[0] != old)
+    })
+}
+
+fn ani_ready(tag: &str) -> World {
+    let mut w = ani_world(tag);
+    with_cx(&mut w.h, |app, cx| app.archive.select_path(ANI_PATH, cx));
+    assert!(preview_ready(&mut w.h));
+    w.h.frames(3);
+    w
+}
+
+#[test]
+fn an_old_settings_file_without_the_0_5_fields_still_loads() {
+    // the settings of 0.4.1, literally
+    let old = r#"{"tab":"archive","last_client":"US test","tree_width":210.0,"preview_width":400.0,"columns":[100.0],"show_shadowed":true,"text_encoding":"UTF-8","extract_keep_times":false,"preview_loop":false,"preview_bones":true,"preview_fit":true,"preview_alpha":true,"preview_textured":false,"keys":{}}"#;
+    let s: ToolkitSettings = serde_json::from_str(old).unwrap();
+    assert_eq!((s.preview_width, s.preview_loop, s.preview_textured), (400.0, false, false), "the old fields are read");
+    assert_eq!((s.preview_speed, s.preview_view, s.last_export_dir.as_str(), s.sort_key.as_str(), s.sort_desc), (1.0, [35.0, 25.0, 1.0], "", "name", false), "the new ones take their defaults");
+    assert_eq!(s.clone().sanitized(), s, "defaults are in range");
+}
+
+#[test]
+fn the_0_5_preview_settings_round_trip() {
+    let s = ToolkitSettings { preview_speed: 2.0, preview_view: [120.0, -30.0, 2.5], last_export_dir: "out".into(), sort_key: "size".into(), sort_desc: true, ..Default::default() };
+    let back: ToolkitSettings = serde_json::from_str(&serde_json::to_string(&s).unwrap()).unwrap();
+    assert_eq!(back, s);
+    assert_eq!(back.clone().sanitized(), s, "values in range are kept");
+}
+
+#[test]
+fn out_of_range_settings_fall_back_to_defaults() {
+    let d = ToolkitSettings::default();
+    for speed in [f32::NAN, 0.0, 0.2, 4.5, -1.0, f32::INFINITY] {
+        assert_eq!(ToolkitSettings { preview_speed: speed, ..Default::default() }.sanitized().preview_speed, 1.0, "speed {speed}");
+    }
+    for view in [[f32::NAN, 0.0, 1.0], [0.0, f32::INFINITY, 1.0], [10.0, 10.0, 0.0], [10.0, 10.0, -1.0], [10.0, 10.0, f32::NAN]] {
+        assert_eq!(ToolkitSettings { preview_view: view, ..Default::default() }.sanitized().preview_view, d.preview_view, "view {view:?}");
+    }
+    assert_eq!(ToolkitSettings { sort_key: "colour".into(), ..Default::default() }.sanitized().sort_key, "name");
+    // the same through a settings file of a data folder
+    let data = TempDir::new("w7-out-of-range");
+    let mut h = Harness::<ToolkitApp>::new(shaiya_ui::ShellOptions { data_dir: Some(data.path().to_path_buf()), ..Default::default() });
+    h.frames(2);
+    h.app.flush_settings(true);
+    drop(h);
+    let file = settings_file_under(data.path());
+    std::fs::write(&file, r#"{"shell":{},"tool":{"preview_speed":9.0,"preview_view":[10.0,20.0,-2.0],"sort_key":"colour","sort_desc":true}}"#).unwrap();
+    let h = Harness::<ToolkitApp>::new(shaiya_ui::ShellOptions { data_dir: Some(data.path().to_path_buf()), ..Default::default() });
+    let s = &h.app.tool_settings;
+    assert_eq!((s.preview_speed, s.preview_view, s.sort_key.as_str(), s.sort_desc), (1.0, [35.0, 25.0, 1.0], "name", true));
+}
+
+#[test]
+fn dragging_turns_the_view_and_renders_again_when_released() {
+    let mut w = ani_ready("w7-drag");
+    let before = first_frame(&w.h);
+    let default = w.h.app.tool_settings.preview_view;
+    w.h.app.app.archive.drag_view_for_tests(40.0, 10.0);
+    assert!(wait_new_frame(&mut w.h, &before), "the frames are made again with the turned view");
+    let v = w.h.app.tool_settings.preview_view;
+    assert!((v[0] - (default[0] + 20.0)).abs() < 1e-3 && (v[1] - (default[1] + 5.0)).abs() < 1e-3, "{v:?}");
+    assert_eq!(w.h.app.app.archive.preview.controls.shown, w.h.app.app.archive.preview.controls.ctl.view);
+}
+
+#[test]
+fn zoom_renders_again_after_the_wheel_stops() {
+    let mut w = ani_ready("w7-zoom");
+    let before = first_frame(&w.h);
+    w.h.app.app.archive.wheel_view_for_tests(300.0);
+    assert!(wait_new_frame(&mut w.h, &before), "the frames are made again once the wheel stopped");
+    assert!(w.h.app.tool_settings.preview_view[2] > 1.5, "{:?}", w.h.app.tool_settings.preview_view);
+}
+
+#[test]
+fn reset_view_returns_to_the_default() {
+    let mut w = ani_ready("w7-reset");
+    let start = first_frame(&w.h);
+    w.h.app.app.archive.drag_view_for_tests(60.0, 0.0);
+    assert!(wait_new_frame(&mut w.h, &start));
+    let turned = first_frame(&w.h);
+    w.h.app.app.archive.reset_view_for_tests();
+    assert!(wait_new_frame(&mut w.h, &turned));
+    assert_eq!(w.h.app.tool_settings.preview_view, [35.0, 25.0, 1.0]);
+    assert_eq!(first_frame(&w.h), start, "the default view draws what 0.4.1 drew");
+}
+
+#[test]
+fn the_view_comes_back_after_a_restart() {
+    let mut w = ani_ready("w7-restart");
+    let before = first_frame(&w.h);
+    w.h.app.app.archive.drag_view_for_tests(-30.0, 20.0);
+    assert!(wait_new_frame(&mut w.h, &before));
+    let turned = first_frame(&w.h);
+    let want = w.h.app.tool_settings.preview_view;
+    w.h.app.flush_settings(true);
+    let mut h2 = Harness::<ToolkitApp>::new(shaiya_ui::ShellOptions { data_dir: Some(w.data_path.clone()), ..Default::default() });
+    assert_eq!(h2.app.tool_settings.preview_view, want);
+    // the last client opens at start
+    assert!(h2.wait_until(WAIT, |h| h.app.app.archive.is_open()));
+    with_cx(&mut h2, |app, cx| app.archive.select_path(ANI_PATH, cx));
+    assert!(preview_ready(&mut h2));
+    assert_eq!(first_frame(&h2), turned, "the next run draws with the remembered view");
+}
+
+#[test]
+fn the_sort_order_comes_back_after_a_restart() {
+    let mut w = open_world("w7-sort");
+    with_cx(&mut w.h, |app, cx| {
+        app.archive.sort_for_tests("size", cx);
+        app.archive.sort_for_tests("size", cx);
+    });
+    assert_eq!((w.h.app.tool_settings.sort_key.as_str(), w.h.app.tool_settings.sort_desc), ("size", true));
+    w.h.app.flush_settings(true);
+    let h2 = Harness::<ToolkitApp>::new(shaiya_ui::ShellOptions { data_dir: Some(w.data_path.clone()), ..Default::default() });
+    assert_eq!(h2.app.app.archive.sort_key, shaiya_toolkit::archive_view::SortKey::Size);
+    assert!(h2.app.app.archive.sort_desc);
+}
+
+#[test]
+fn save_frame_writes_a_png_of_the_frame_on_screen() {
+    let mut w = ani_ready("w7-save");
+    let out_dir = TempDir::new("w7-save-out");
+    let out = out_dir.path().join("frame.png");
+    with_cx(&mut w.h, |app, cx| app.archive.save_frame_to(&out, cx)).unwrap();
+    assert!(w.h.wait_until(WAIT, |h| !h.app.app.archive.is_saving_frame()));
+    let bytes = std::fs::read(&out).unwrap();
+    assert_eq!(shaiya_toolkit::preview_controls::png_size(&bytes), Some((240, 220)));
+    assert_eq!(w.h.app.tool_settings.last_export_dir, out_dir.path().display().to_string());
+    let Some(shaiya_toolkit::preview::PreviewData::Anim { frames, .. }) = w.h.app.app.archive.preview_data() else { panic!("not an animation preview") };
+    assert_eq!((frames.width, frames.height), (240, 220));
+    // not a .png name: refused, nothing written
+    let bad = out_dir.path().join("frame.txt");
+    assert!(with_cx(&mut w.h, |app, cx| app.archive.save_frame_to(&bad, cx)).is_err() && !bad.exists());
+}
+
+#[test]
+fn save_frame_into_a_client_folder_is_refused_and_writes_nothing() {
+    let mut w = ani_ready("w7-save-refused");
+    let into = w.client_dir().join("frame.png");
+    let err = with_cx(&mut w.h, |app, cx| app.archive.save_frame_to(&into, cx)).unwrap_err();
+    assert!(err.starts_with("Choose a folder outside the client:"), "{err}");
+    assert!(!w.h.app.app.archive.is_saving_frame());
+    w.h.frames(3);
+    assert!(!into.exists(), "nothing was written");
+    let temps: Vec<_> = std::fs::read_dir(w.client_dir()).unwrap().flatten().map(|e| e.file_name().to_string_lossy().to_string()).filter(|n| n.to_lowercase().contains("png")).collect();
+    assert!(temps.is_empty(), "no temporary file either: {temps:?}");
+}
+
+#[test]
+fn the_comma_and_period_keys_step_one_frame_and_pause() {
+    let mut w = ani_ready("w7-keys");
+    w.h.app.app.archive.pause_anim_at(10.0);
+    w.h.frames(2);
+    w.h.key(Key::Period, Modifiers::NONE);
+    let p = w.h.app.app.archive.preview.player.clone();
+    assert_eq!((p.t, p.playing), (11.0, false), "one frame on");
+    w.h.key(Key::Comma, Modifiers::NONE);
+    w.h.key(Key::Comma, Modifiers::NONE);
+    assert_eq!(w.h.app.app.archive.preview.player.t, 9.0, "two frames back");
+    w.h.frames(2);
+    assert!(w.h.text().contains("Speed: 1x"), "{}", w.h.text());
+}
+
+#[test]
+fn save_frame_of_a_still_model_writes_its_picture() {
+    let mut w = ani_world("w7-save-still");
+    with_cx(&mut w.h, |app, cx| app.archive.select_path("Character/Human/3DC/huwm_torso001.3DC", cx));
+    assert!(preview_ready(&mut w.h));
+    w.h.frames(3);
+    let (pw, ph) = match w.h.app.app.archive.preview_data() {
+        Some(shaiya_toolkit::preview::PreviewData::Model { width, height, rgba, .. }) if !rgba.is_empty() => (*width, *height),
+        _ => panic!("not a model picture"),
+    };
+    let out_dir = TempDir::new("w7-save-still-out");
+    let out = out_dir.path().join("torso.png");
+    with_cx(&mut w.h, |app, cx| app.archive.save_frame_to(&out, cx)).unwrap();
+    assert!(w.h.wait_until(WAIT, |h| !h.app.app.archive.is_saving_frame()));
+    assert_eq!(shaiya_toolkit::preview_controls::png_size(&std::fs::read(&out).unwrap()), Some((pw, ph)));
+}

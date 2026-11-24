@@ -132,7 +132,7 @@ fn caches() -> &'static (MeshInfoCache, TextureIndexCache) {
 
 fn look(a: &Archive, path: &str, textured: bool) -> PreviewData {
     let c = caches();
-    make_preview_look(a, path, false, 0, &MeshChoice::Default, &c.0, &c.1, &Look { textured, texture: 0 }, &Job::silent()).unwrap_or_else(|e| panic!("{path}: {e}"))
+    make_preview_look(a, path, false, 0, &MeshChoice::Default, &c.0, &c.1, &Look { textured, texture: 0, ..Look::default() }, &Job::silent()).unwrap_or_else(|e| panic!("{path}: {e}"))
 }
 
 fn pictures(p: &PreviewData) -> Vec<&[u8]> {

@@ -124,24 +124,24 @@ fn pick_3do(src: &dyn FileSource, path: &str, name: &str, textures: &TextureInde
     })
 }
 
-fn rest_picture(vertices: &[([f32; 3], [f32; 2])], faces: &[[u16; 3]], tex: Option<(&MipImage, AlphaMode)>) -> (u32, u32, Vec<u8>) {
+fn rest_picture(vertices: &[([f32; 3], [f32; 2])], faces: &[[u16; 3]], tex: Option<(&MipImage, AlphaMode)>, view: View) -> (u32, u32, Vec<u8>) {
     let pos: Vec<[f32; 3]> = vertices.iter().map(|v| v.0).collect();
     let uv: Vec<[f32; 2]> = vertices.iter().map(|v| v.1).collect();
-    match render::mesh_picture(&pos, &uv, faces, tex, View::DEFAULT) {
+    match render::mesh_picture(&pos, &uv, faces, tex, view) {
         Some(p) => (p.width as u32, p.height as u32, p.rgba),
         None => (0, 0, Vec::new()),
     }
 }
 
 /// The rest picture of a model with the texture `picked` names (decoded here; an unreadable one is noted and drawn grey).
-fn rest_with(src: &dyn FileSource, picked: &mut Picked, vertices: &[([f32; 3], [f32; 2])], faces: &[[u16; 3]], job: &Job) -> shaiya_clientdata::Result<(u32, u32, Vec<u8>)> {
+fn rest_with(src: &dyn FileSource, picked: &mut Picked, vertices: &[([f32; 3], [f32; 2])], faces: &[[u16; 3]], view: View, job: &Job) -> shaiya_clientdata::Result<(u32, u32, Vec<u8>)> {
     let mip = picked.path.as_ref().and_then(|p| preview_tex::decode_mip(src, p, job));
     job.check().map_err(|_| cancelled())?;
     if let (Some(p), None) = (&picked.path, &mip) {
         let note = preview_tex::unreadable(file_name(p));
         picked.notes.push(note);
     }
-    Ok(rest_picture(vertices, faces, mip.as_ref().map(|m| (m, picked.alpha))))
+    Ok(rest_picture(vertices, faces, mip.as_ref().map(|m| (m, picked.alpha)), view))
 }
 
 /// The `.3DO` preview: the rest mesh with its `.ITM` texture; a mesh with frames plays them (textured) at its frame rate (inferred).
@@ -151,7 +151,7 @@ pub fn m3do_preview(src: &dyn FileSource, data: &[u8], path: &str, textures: &Te
     let first = format!("3DO mesh: {}, {}", n(verts, "vertex", "vertices"), n(tris, "triangle", "triangles"));
     let mut picked = pick_3do(src, path, &m.texture_name(), textures, look, job)?;
     if m.frames.is_empty() {
-        let (width, height, rgba) = rest_with(src, &mut picked, &m.vertices.iter().map(|x| (x.pos, x.uv)).collect::<Vec<_>>(), &m.faces, job)?;
+        let (width, height, rgba) = rest_with(src, &mut picked, &m.vertices.iter().map(|x| (x.pos, x.uv)).collect::<Vec<_>>(), &m.faces, look.view, job)?;
         return Ok(PreviewData::Model { header: first, missing: Vec::new(), see_through: Vec::new(), invisible: Vec::new(), notes: picked.notes, texture: None, width, height, rgba });
     }
     let positive = m.frame_rate > 0;
@@ -162,7 +162,7 @@ pub fn m3do_preview(src: &dyn FileSource, data: &[u8], path: &str, textures: &Te
         format!("{}, the file's rate ({}) is not a positive number; played at {FALLBACK_RATE} frames per second", n(m.frames.len(), "frame", "frames"), m.frame_rate)
     };
     let items = [MorphItem { texture: picked.path.clone().unwrap_or_default(), faces: &m.faces, uv: m.vertices.iter().map(|x| x.uv).collect() }];
-    let made = render::morph_frames_with(&items, &[picked.alpha], m.frames.len(), View::DEFAULT, &mut |_, f| m.frames[f].vertices.iter().map(|x| x.0).collect(), &mut |name| image_at(src, job, name), &mut || job.check().is_err()).ok_or_else(cancelled)?;
+    let made = render::morph_frames_with(&items, &[picked.alpha], m.frames.len(), look.view, &mut |_, f| m.frames[f].vertices.iter().map(|x| x.0).collect(), &mut |name| image_at(src, job, name), &mut || job.check().is_err()).ok_or_else(cancelled)?;
     job.check().map_err(|_| cancelled())?;
     let mut notes = picked.notes;
     if let Some(name) = made.missing.first() {
@@ -219,12 +219,12 @@ pub fn m3de_preview(src: &dyn FileSource, data: &[u8], path: &str, textures: &Te
     };
     notes.push(EFFECT_NOTE.to_string());
     let Some(block) = block else {
-        let (width, height, rgba) = rest_with(src, &mut picked, &m.vertices.iter().map(|x| (x.pos, x.uv)).collect::<Vec<_>>(), &m.faces, job)?;
+        let (width, height, rgba) = rest_with(src, &mut picked, &m.vertices.iter().map(|x| (x.pos, x.uv)).collect::<Vec<_>>(), &m.faces, look.view, job)?;
         notes.extend(picked.notes);
         return Ok(PreviewData::Model { header, missing: Vec::new(), see_through: Vec::new(), invisible: Vec::new(), notes, texture: None, width, height, rgba });
     };
     let items = [MorphItem { texture: picked.path.clone().unwrap_or_default(), faces: &m.faces, uv: m.vertices.iter().map(|x| x.uv).collect() }];
-    let made = render::morph_frames_with(&items, &[picked.alpha], block.frames.len(), View::DEFAULT, &mut |_, f| block.frames[f].vertices.iter().map(|x| x.delta).collect(), &mut |name| image_at(src, job, name), &mut || job.check().is_err()).ok_or_else(cancelled)?;
+    let made = render::morph_frames_with(&items, &[picked.alpha], block.frames.len(), look.view, &mut |_, f| block.frames[f].vertices.iter().map(|x| x.delta).collect(), &mut |name| image_at(src, job, name), &mut || job.check().is_err()).ok_or_else(cancelled)?;
     job.check().map_err(|_| cancelled())?;
     notes.extend(picked.notes);
     if let Some(name) = made.missing.first() {

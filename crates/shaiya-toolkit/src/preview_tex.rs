@@ -14,15 +14,17 @@ pub const TEXTURE_CAP: u64 = 32 << 20;
 
 /// What a preview does about textures: the "Textures" switch and which of the textures a list names for a `.3DC` is drawn (0 = the first,
 /// the default; a number past the last is the last).
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// `view` is how the model is turned and zoomed ([`shaiya_clientdata::render::View::DEFAULT`] is the fixed view of 0.4.1).
+#[derive(Clone, Debug, PartialEq)]
 pub struct Look {
     pub textured: bool,
     pub texture: usize,
+    pub view: shaiya_clientdata::render::View,
 }
 
 impl Default for Look {
     fn default() -> Look {
-        Look { textured: true, texture: 0 }
+        Look { textured: true, texture: 0, view: shaiya_clientdata::render::View::DEFAULT }
     }
 }
 

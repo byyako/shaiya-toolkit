@@ -175,18 +175,18 @@ fn the_texture_choice_switches_the_variant() {
     let first = model(preview(&a, TORSO, &Look::default()));
     assert_eq!(first.choices, 2);
     assert!(first.line.as_deref().unwrap().starts_with("texture a.dds from"));
-    let second = model(preview(&a, TORSO, &Look { textured: true, texture: 1 }));
+    let second = model(preview(&a, TORSO, &Look { textured: true, texture: 1, ..Look::default() }));
     assert!(second.line.as_deref().unwrap().starts_with("texture b.dds from") && second.line.as_deref().unwrap().contains("(record 1)"));
     assert_ne!(first.rgba, second.rgba, "another texture, another picture");
     // a choice past the last is the last
-    assert!(model(preview(&a, TORSO, &Look { textured: true, texture: 9 })).line.as_deref().unwrap().starts_with("texture b.dds"));
+    assert!(model(preview(&a, TORSO, &Look { textured: true, texture: 9, ..Look::default() })).line.as_deref().unwrap().starts_with("texture b.dds"));
 }
 
 #[test]
 fn turning_textures_off_draws_grey() {
     let d = TempDir::new("w6-tex-off");
     let a = character(&d, 0, skin());
-    let off = Look { textured: false, texture: 0 };
+    let off = Look { textured: false, texture: 0, ..Look::default() };
     let m = model(preview(&a, TORSO, &off));
     assert_eq!((m.line, coloured(&m.rgba), drawn(&m.rgba) > 0), (None, 0, true));
     assert!(m.notes.iter().any(|n| n == TEXTURES_OFF), "{:?}", m.notes);
@@ -210,7 +210,7 @@ fn an_ani_on_default_parts_textures_each_part_and_decodes_each_texture_once() {
     // two parts use skin.dds: it is read (and decoded) once
     assert_eq!(counting.reads_of("Character/Human/DDS/skin.dds"), 1);
     // the grey picture of the same frames is different
-    let (grey, ..) = frames(preview(&a, ANI, &Look { textured: false, texture: 0 }));
+    let (grey, ..) = frames(preview(&a, ANI, &Look { textured: false, texture: 0, ..Look::default() }));
     assert_ne!(fr[30], grey[30]);
 }
 

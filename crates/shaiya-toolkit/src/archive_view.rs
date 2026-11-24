@@ -185,6 +185,23 @@ pub enum SortKey {
     Type,
 }
 
+impl SortKey {
+    /// The name the settings keep.
+    pub fn key(self) -> &'static str {
+        match self {
+            SortKey::Name => "name",
+            SortKey::Size => "size",
+            SortKey::Packed => "packed",
+            SortKey::Type => "type",
+        }
+    }
+
+    /// The key of a settings name; anything else is `Name`.
+    pub fn from_key(k: &str) -> SortKey {
+        [SortKey::Name, SortKey::Size, SortKey::Packed, SortKey::Type].into_iter().find(|s| s.key() == k).unwrap_or(SortKey::Name)
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ViewRow {
     Folder(usize),
@@ -489,6 +506,8 @@ pub struct PreviewState {
     pub textured: bool,
     pub texture_pick: usize,
     pub player: AnimPlayer,
+    /// Drag, wheel, reset and "Save frame as PNG...".
+    pub controls: crate::preview_controls::PreviewControls,
     /// The one texture of the `.ANI` frame on screen, with the frame it shows.
     anim_tex: Option<(usize, egui::TextureHandle)>,
 }
@@ -638,6 +657,7 @@ impl ArchiveView {
                 textured: true,
                 texture_pick: 0,
                 player: AnimPlayer::default(),
+                controls: Default::default(),
                 anim_tex: None,
             },
             textures: Vec::new(),
@@ -824,6 +844,9 @@ impl ArchiveView {
         }
         self.poll_saved_new(cx);
         self.poll_preview(cx);
+        if let Some(line) = self.preview.controls.poll_save(cx) {
+            self.status_line = line;
+        }
         self.poll_extract(cx);
         if let Some(line) = self.json_exports.poll(cx) {
             self.status_line = line;
@@ -1509,8 +1532,9 @@ impl ArchiveView {
         if self.preview.row != Some(row) {
             self.preview.anim_mesh = MeshChoice::Default;
             self.preview.texture_pick = 0;
-            self.preview.player = AnimPlayer { looping: cx.settings.preview_loop, show_bones: cx.settings.preview_bones, ..AnimPlayer::default() };
+            self.preview.player = AnimPlayer { looping: cx.settings.preview_loop, show_bones: cx.settings.preview_bones, speed: cx.settings.preview_speed, ..AnimPlayer::default() };
         }
+        self.preview.controls.load(crate::preview_controls::view_of(cx.settings.preview_view));
         self.preview.fit = cx.settings.preview_fit;
         self.preview.alpha = cx.settings.preview_alpha;
         self.preview.textured = cx.settings.preview_textured;
@@ -1525,7 +1549,7 @@ impl ArchiveView {
         let textures = l.texture_index.clone();
         let r = &l.rows[row];
         let (path, all, mesh) = (r.path.clone(), self.preview.text_all, self.preview.anim_mesh.clone());
-        let look = crate::preview_tex::Look { textured: self.preview.textured, texture: self.preview.texture_pick };
+        let look = crate::preview_tex::Look { textured: self.preview.textured, texture: self.preview.texture_pick, view: self.preview.controls.ctl.view };
         let h = cx.shell.tasks().spawn(TaskSpec { title: format!("Preview {}", r.name()), cancellable: true, exclusive: None }, move |job| preview::make_preview_look(&*a, &path, all, 0, &mesh, &cache, &textures, &look, job));
         self.preview.handle = Some(h);
     }
@@ -1563,6 +1587,90 @@ impl ArchiveView {
             return !frames.frames.is_empty() && self.preview.anim_tex.is_some();
         }
         self.preview.texture_name.as_ref().is_some_and(|n| self.textures.iter().any(|(t, _)| t == n)) && matches!(self.preview.data, Some(PreviewData::Image { .. } | PreviewData::Map { .. } | PreviewData::Model { .. }))
+    }
+
+    /// A click on a column header: the same key flips the direction, another key starts ascending; both are kept in the settings.
+    fn sort_by(&mut self, k: SortKey, cx: &mut ToolkitCx<'_>) {
+        if self.sort_key == k {
+            self.sort_desc = !self.sort_desc;
+        } else {
+            self.sort_key = k;
+            self.sort_desc = false;
+        }
+        cx.settings.sort_key = self.sort_key.key().to_string();
+        cx.settings.sort_desc = self.sort_desc;
+    }
+
+    /// Test hook: a click on the header of the `key` column ("name", "size", "packed", "type").
+    #[doc(hidden)]
+    pub fn sort_for_tests(&mut self, key: &str, cx: &mut ToolkitCx<'_>) {
+        self.sort_by(SortKey::from_key(key), cx);
+    }
+
+    /// What the drawn controls asked for: the preview made again with the new view (kept in the settings), or the save dialog.
+    fn after_controls(&mut self, cx: &mut ToolkitCx<'_>, acts: &mut Vec<Act>) {
+        if self.preview.controls.ctl.take_render() {
+            cx.settings.preview_view = crate::preview_controls::view_array(self.preview.controls.ctl.view);
+            acts.push(Act::Open("view-change".into()));
+        }
+        if self.preview.controls.take_save() {
+            acts.push(Act::Open("save-frame".into()));
+        }
+    }
+
+    /// The pixels of the frame on screen (or the still picture) with the name its file would get: (`<stem>-<key>.png`, width, height, rgba).
+    fn frame_on_screen(&self) -> Option<(String, u32, u32, Vec<u8>)> {
+        let row = self.preview.row?;
+        let r = self.loaded.as_ref()?.rows.get(row)?;
+        let name = r.name();
+        let stem = name.rsplit_once('.').map_or(name, |(s, _)| s);
+        match self.preview.data.as_ref()? {
+            PreviewData::Anim { frames, .. } => {
+                let idx = self.preview.player.frame_index(frames.step, frames.frames.len());
+                let rgba = frames.frames.get(idx).filter(|f| !f.is_empty())?;
+                Some((format!("{stem}-{}.png", self.preview.player.t.floor() as i64), frames.width as u32, frames.height as u32, rgba.clone()))
+            }
+            PreviewData::Model { width, height, rgba, .. } if !rgba.is_empty() => Some((format!("{stem}.png"), *width, *height, rgba.clone())),
+            _ => None,
+        }
+    }
+
+    fn save_frame_dialog(&mut self, cx: &mut ToolkitCx<'_>) {
+        let Some((name, ..)) = self.frame_on_screen() else { return };
+        if let Some(out) = cx.shell.save_file("save-frame-png", &name, &[("PNG", &["png"])]) {
+            let _ = self.save_frame_to(&out, cx);
+        }
+    }
+
+    /// Writes the frame on screen (or the still picture) as a PNG to `out`; refused, with nothing written, inside a client folder.
+    #[doc(hidden)]
+    pub fn save_frame_to(&mut self, out: &Path, cx: &mut ToolkitCx<'_>) -> std::result::Result<(), String> {
+        let Some((_, w, h, rgba)) = self.frame_on_screen() else { return Err("There is no picture to save".to_string()) };
+        let dir = self.loaded.as_ref().and_then(|l| l.client_dir.clone());
+        self.preview.controls.save(out.to_path_buf(), w, h, rgba, dir.as_deref(), cx)
+    }
+
+    /// Test hook: drags the picture by `dx`, `dy` pixels and lets go (the preview is made again on the next drawn frame).
+    #[doc(hidden)]
+    pub fn drag_view_for_tests(&mut self, dx: f32, dy: f32) {
+        self.preview.controls.drag_for_tests(dx, dy);
+    }
+
+    /// Test hook: one wheel event over the picture (the preview is made again one drawn frame after).
+    #[doc(hidden)]
+    pub fn wheel_view_for_tests(&mut self, delta: f32) {
+        self.preview.controls.wheel_for_tests(delta);
+    }
+
+    /// Test hook: "Reset view".
+    #[doc(hidden)]
+    pub fn reset_view_for_tests(&mut self) {
+        self.preview.controls.ctl.reset();
+    }
+
+    #[doc(hidden)]
+    pub fn is_saving_frame(&self) -> bool {
+        self.preview.controls.is_saving()
     }
 
     // ---------------------------------------------------------------------------------------- extraction
@@ -2389,7 +2497,7 @@ impl ArchiveView {
                     ui.label(RichText::new(format!("shown at {width} x {height} (downscaled)")).color(pal.weak));
                 }
                 let tex = self.preview.texture_name.as_ref().and_then(|name| self.textures.iter().find(|(n, _)| n == name)).map(|(_, t)| t);
-                picture_view(ui, &mut self.preview.fit, Some(&mut self.preview.alpha), tex);
+                picture_view(ui, &mut self.preview.fit, Some(&mut self.preview.alpha), tex, None);
                 cx.settings.preview_alpha = self.preview.alpha;
                 cx.settings.preview_fit = self.preview.fit;
             }
@@ -2406,7 +2514,7 @@ impl ArchiveView {
                 }
                 if !rgba.is_empty() {
                     let tex = self.preview.texture_name.as_ref().and_then(|name| self.textures.iter().find(|(n, _)| n == name)).map(|(_, t)| t);
-                    picture_view(ui, &mut self.preview.fit, None, tex);
+                    picture_view(ui, &mut self.preview.fit, None, tex, None);
                     cx.settings.preview_fit = self.preview.fit;
                 }
             }
@@ -2414,11 +2522,12 @@ impl ArchiveView {
                 if textures_switch(&mut self.preview.textured, ui, cx) {
                     acts.push(Act::Open("texture-choice".into()));
                 }
-                if anim_view::draw(ui, &pal, &mut self.preview.player, data, &mut self.preview.anim_tex, &mut self.preview.anim_mesh) {
+                if anim_view::draw(ui, &pal, &mut self.preview.player, data, &mut self.preview.anim_tex, &mut self.preview.anim_mesh, &mut self.preview.controls) {
                     acts.push(Act::Open("anim-mesh".into()));
                 }
                 cx.settings.preview_loop = self.preview.player.looping;
                 cx.settings.preview_bones = self.preview.player.show_bones;
+                cx.settings.preview_speed = self.preview.player.speed;
             }
             Some(data @ PreviewData::Fields { .. }) => anim_view::draw_fields(ui, &pal, data),
             Some(PreviewData::Model { header, missing, see_through, invisible, notes, texture, rgba, .. }) => {
@@ -2457,7 +2566,8 @@ impl ArchiveView {
                     ui.label(RichText::new("no triangles to draw").color(pal.weak));
                 } else {
                     let tex = self.preview.texture_name.as_ref().and_then(|name| self.textures.iter().find(|(n, _)| n == name)).map(|(_, t)| t);
-                    picture_view(ui, &mut self.preview.fit, None, tex);
+                    self.preview.controls.buttons(ui, true);
+                    picture_view(ui, &mut self.preview.fit, None, tex, Some(&mut self.preview.controls));
                     cx.settings.preview_fit = self.preview.fit;
                 }
             }
@@ -2549,6 +2659,7 @@ impl ArchiveView {
                 hex_view(ui, bytes, 0);
             }
         }
+        self.after_controls(cx, acts);
     }
 
     fn draw_dialogs(&mut self, ui: &mut egui::Ui, cx: &mut ToolkitCx<'_>, requests: &mut Vec<TabRequest>) {
@@ -2898,10 +3009,13 @@ impl ArchiveView {
                     }
                 }
                 Act::Open(what) => {
-                    if what == "reload-preview" || what == "anim-mesh" || what == "texture-choice" {
+                    if what == "reload-preview" || what == "anim-mesh" || what == "texture-choice" || what == "view-change" {
                         if let Some(r) = self.preview.row {
                             self.start_preview(r, cx);
                         }
+                    }
+                    if what == "save-frame" {
+                        self.save_frame_dialog(cx);
                     }
                     if what == "goto" {
                         let t = self.preview.goto.trim().to_string();
@@ -2918,14 +3032,7 @@ impl ArchiveView {
                         }
                     }
                 }
-                Act::Sort(k) => {
-                    if self.sort_key == k {
-                        self.sort_desc = !self.sort_desc;
-                    } else {
-                        self.sort_key = k;
-                        self.sort_desc = false;
-                    }
-                }
+                Act::Sort(k) => self.sort_by(k, cx),
                 Act::Extract { all, flat } => {
                     if let Some(dir) = cx.shell.pick_folder("extract") {
                         self.begin_extract(dir, all, false, flat, cx);
@@ -3101,7 +3208,7 @@ fn draw_tree(ui: &mut egui::Ui, l: &Loaded, node: usize, current: &str, acts: &m
 }
 
 /// A decoded picture over a checkerboard: Fit or 1:1 (and the alpha box when `alpha` is given). Used by the image and the map preview.
-fn picture_view(ui: &mut egui::Ui, fit: &mut bool, alpha: Option<&mut bool>, tex: Option<&egui::TextureHandle>) {
+fn picture_view(ui: &mut egui::Ui, fit: &mut bool, alpha: Option<&mut bool>, tex: Option<&egui::TextureHandle>, orbit: Option<&mut crate::preview_controls::PreviewControls>) {
     ui.horizontal(|ui| {
         ui.selectable_value(fit, true, "Fit");
         ui.selectable_value(fit, false, "1:1");
@@ -3115,8 +3222,9 @@ fn picture_view(ui: &mut egui::Ui, fit: &mut bool, alpha: Option<&mut bool>, tex
     let scale = if *fit { (avail.x / size.x).min(avail.y.max(100.0) / size.y).min(8.0) } else { 1.0 };
     let dim = size * scale;
     egui::ScrollArea::both().auto_shrink([false, false]).show(ui, |ui| {
-        let (rect, _) = ui.allocate_exact_size(dim, egui::Sense::hover());
-        let p = ui.painter();
+        let sense = if orbit.is_some() { egui::Sense::click_and_drag() } else { egui::Sense::hover() };
+        let (rect, resp) = ui.allocate_exact_size(dim, sense);
+        let p = ui.painter().with_clip_rect(rect);
         let cell: f32 = 8.0;
         let mut y = 0.0;
         let mut odd = false;
@@ -3133,6 +3241,12 @@ fn picture_view(ui: &mut egui::Ui, fit: &mut bool, alpha: Option<&mut bool>, tex
             odd = !odd;
             y += cell;
         }
-        p.image(tex.id(), rect, egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)), Color32::WHITE);
+        // a zoom that waits for its new picture scales the one on screen about its centre
+        let shown = orbit.as_ref().map_or(1.0, |o| o.pending_scale());
+        let img_rect = if shown == 1.0 { rect } else { egui::Rect::from_center_size(rect.center(), rect.size() * shown) };
+        p.image(tex.id(), img_rect, egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)), Color32::WHITE);
+        if let Some(o) = orbit {
+            o.input(ui, &resp);
+        }
     });
 }

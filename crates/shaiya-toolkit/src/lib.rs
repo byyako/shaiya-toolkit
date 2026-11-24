@@ -15,6 +15,7 @@ pub mod multi_apply;
 pub mod multi_lock;
 pub mod patch_builder;
 pub mod preview;
+pub mod preview_controls;
 pub mod preview_models;
 pub mod preview_tex;
 pub mod publish_form;
@@ -77,6 +78,13 @@ pub struct ToolkitSettings {
     pub preview_alpha: bool,
     /// Models are drawn with their textures (off: plain grey, as before).
     pub preview_textured: bool,
+    /// The speed of the animation player (0.25 to 4), how the models are turned and zoomed (yaw, pitch, zoom), the folder of the last
+    /// "Save frame as PNG...", and the Archive list's sort key ("name", "size", "packed", "type") and direction.
+    pub preview_speed: f32,
+    pub preview_view: [f32; 3],
+    pub last_export_dir: String,
+    pub sort_key: String,
+    pub sort_desc: bool,
     /// Per client name: signature settings.
     pub keys: BTreeMap<String, KeySettings>,
 }
@@ -97,8 +105,32 @@ impl Default for ToolkitSettings {
             preview_fit: true,
             preview_alpha: true,
             preview_textured: true,
+            preview_speed: 1.0,
+            preview_view: [35.0, 25.0, 1.0],
+            last_export_dir: String::new(),
+            sort_key: "name".into(),
+            sort_desc: false,
             keys: BTreeMap::new(),
         }
+    }
+}
+
+impl ToolkitSettings {
+    /// Puts a value that is out of range back to its default (a hand-edited or damaged settings file): a speed that is not a number or is
+    /// outside 0.25 to 4, a view with a number that is not finite or a zoom of 0 or less, a sort key the list does not have.
+    pub fn sanitized(mut self) -> ToolkitSettings {
+        let d = ToolkitSettings::default();
+        if !(self.preview_speed.is_finite() && (0.25..=4.0).contains(&self.preview_speed)) {
+            self.preview_speed = d.preview_speed;
+        }
+        let v = self.preview_view;
+        if !(v.iter().all(|x| x.is_finite()) && v[2] > 0.0) {
+            self.preview_view = d.preview_view;
+        }
+        if !["name", "size", "packed", "type"].contains(&self.sort_key.as_str()) {
+            self.sort_key = d.sort_key;
+        }
+        self
     }
 }
 
@@ -671,6 +703,9 @@ impl ToolApp for ToolkitApp {
             scene: None,
         };
         app.archive.show_shadowed = cx.settings.show_shadowed;
+        *cx.settings = std::mem::take(cx.settings).sanitized();
+        app.archive.sort_key = archive_view::SortKey::from_key(&cx.settings.sort_key);
+        app.archive.sort_desc = cx.settings.sort_desc;
         // the last used client opens at start, as a task; a client whose folder is gone is not opened
         // (a `--shot` run never does: its scene decides what opens)
         if let Some(name) = cx.settings.last_client.clone().filter(|_| !cx.shell.hide_paths()) {
