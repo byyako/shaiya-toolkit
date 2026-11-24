@@ -190,3 +190,233 @@ fn the_help_carries_the_lossy_view_sentence() {
     assert!(flat.contains("an import builds a new file and runs the same checks as `shaiya anim import` before it writes"), "{t}");
     assert!(flat.contains("--format"), "{t}");
 }
+
+// ---- import (W13) ------------------------------------------------------------------------------------------------------------------------
+
+fn import(w: &World, args: &[&str]) -> std::process::Output {
+    let mut a = vec!["anim", "import"];
+    a.extend_from_slice(args);
+    sh(&w.data, &a)
+}
+
+/// The arm exported as `arm.gltf` (+ `arm.bin`) and `arm.glb` in `d`, the mesh with its animation.
+fn exported(w: &World) -> (PathBuf, PathBuf, PathBuf, PathBuf, PathBuf) {
+    let (d, mesh, ani) = work(w);
+    let (gltf, glb) = (d.join("arm.gltf"), d.join("arm.glb"));
+    std::fs::create_dir_all(d.join("out")).unwrap();
+    assert_eq!(code(&export(w, &[p(&mesh), "--format", "gltf", "--anim", p(&ani), "-o", p(&gltf)])), 0);
+    assert_eq!(code(&export(w, &[p(&mesh), "--format", "glb", "--anim", p(&ani), "-o", p(&glb)])), 0);
+    (d, mesh, ani, gltf, glb)
+}
+
+#[test]
+fn a_gltf_comes_back_as_the_same_3dc_and_an_ani_that_passes() {
+    let w = world();
+    let (d, mesh, ani, gltf, glb) = exported(&w);
+    // .3DC: byte for byte (from the .gltf with its .bin and from the .glb), with the .3DC and with the rig's .ANI as the like file
+    for (input, name) in [(&gltf, "a.3DC"), (&glb, "b.3DC")] {
+        let back = d.join("out").join(name);
+        let o = import(&w, &[p(input), "-o", p(&back), "--like", p(&mesh)]);
+        assert_eq!(code(&o), 0, "{}", err(&o));
+        assert_eq!(std::fs::read(&back).unwrap(), arm_mesh_3dc(), "{name}");
+        assert!(out(&o).starts_with(&format!("wrote {}: .3DC, 1 meshes, 16 vertices", p(&back))), "{}", out(&o));
+        assert!(err(&o).contains("a lossy view of the game file"), "{}", err(&o));
+    }
+    let o = import(&w, &[p(&glb), "-o", p(&d.join("out").join("c.3DC")), "--like", p(&ani)]);
+    assert_eq!(code(&o), 0, "{}", err(&o));
+    // .ANI: the same poses and it passes (the rig check lines are those of `anim import` of a JSON)
+    for extra in [&["--keys", "exact"][..], &[][..], &["--reduce"][..]] {
+        let back = d.join("out").join(format!("x{}.ANI", extra.len()));
+        let mut args = vec![p(&gltf), "-o", p(&back), "--like", p(&ani)];
+        args.extend_from_slice(extra);
+        let o = import(&w, &args);
+        assert_eq!(code(&o), 0, "{extra:?}: {}", err(&o));
+        assert!(out(&o).contains("same skeleton as") && out(&o).contains("passes") && out(&o).contains(".ANI, 3 bones"), "{}", out(&o));
+        let cmp = sh(&w.data, &["anim", "diff", p(&ani), p(&back)]);
+        assert_eq!(code(&cmp), 0, "{}", out(&cmp));
+    }
+    // the static kinds
+    let box3 = d.join("in").join("box.3do");
+    write(&box3, &animated_3do(1, 20));
+    let bg = d.join("box.glb");
+    assert_eq!(code(&export(&w, &[p(&box3), "--format", "glb", "-o", p(&bg)])), 0);
+    let o = import(&w, &[p(&bg), "-o", p(&d.join("out").join("box.3DO"))]);
+    assert_eq!(code(&o), 0, "{}", err(&o));
+    let de = d.join("in").join("fx.3DE");
+    write(&de, &box_3de(None));
+    let dg = d.join("fx.glb");
+    assert_eq!(code(&export(&w, &[p(&de), "--format", "glb", "-o", p(&dg)])), 0);
+    let o = import(&w, &[p(&dg), "-o", p(&d.join("out").join("fx.3de"))]);
+    assert_eq!(code(&o), 0, "{}", err(&o));
+    assert_eq!(std::fs::read(d.join("out").join("fx.3de")).unwrap(), box_3de(None));
+    // --json
+    let v = json(&import(&w, &[p(&glb), "-o", p(&d.join("out").join("j.ANI")), "--like", p(&ani), "--json"]));
+    assert_eq!((v["written"].as_bool(), v["passes"].as_bool(), v["format"].as_str(), v["bones"].as_u64()), (Some(true), Some(true), Some("ani"), Some(3)));
+}
+
+#[test]
+fn import_without_like_for_ani_or_3dc_exits_2() {
+    let w = world();
+    let (d, mesh, ani, _, glb) = exported(&w);
+    for name in ["x.ANI", "x.3DC"] {
+        let target = d.join("out").join(name);
+        let o = import(&w, &[p(&glb), "-o", p(&target)]);
+        assert_eq!(code(&o), 2, "{name}: {}", err(&o));
+        assert!(err(&o).contains("--like is required"), "{}", err(&o));
+        assert!(!target.exists());
+    }
+    // a like file for a static kind, flags of another kind, an output of an unknown kind, a like of the wrong kind: exit 2, nothing written
+    let like_m = p(&mesh).to_string();
+    let like_a = p(&ani).to_string();
+    let cases: Vec<(&str, Vec<&str>, &str)> = vec![
+        ("x.3DO", vec!["--like", &like_m], "--like is for .ANI and .3DC only"),
+        ("x.ANI", vec!["--like", &like_m], "must be an .ANI file"),
+        ("x.3DC", vec!["--like", &like_m, "--reduce"], "--reduce is for .ANI only"),
+        ("x.3DC", vec!["--like", &like_m, "--keys", "exact"], "--keys exact is for .ANI only"),
+        ("x.ANI", vec!["--like", &like_a, "--reduce-influences"], "--reduce-influences is for .3DC only"),
+        ("x.ANI", vec!["--like", &like_a, "--reduce", "--keys", "exact"], "cannot be used together"),
+        ("x.3DO", vec!["--map", "m.txt"], "--map"),
+        ("x.json", vec![], "-o of a glTF import must end in"),
+    ];
+    for (name, extra, words) in cases {
+        let target = d.join("out").join(name);
+        let mut a = vec![p(&glb), "-o", p(&target)];
+        a.extend(extra.iter().copied());
+        let o = import(&w, &a);
+        assert_eq!(code(&o), 2, "{name} {extra:?}: {}", err(&o));
+        assert!(err(&o).contains(words), "{name} {extra:?}: {}", err(&o));
+        assert!(!target.exists());
+    }
+}
+
+#[test]
+fn an_imported_ani_that_does_not_pass_exits_1_and_writes_nothing() {
+    let w = world();
+    let (d, _, _, gltf, _) = exported(&w);
+    // a like file that has a parent after its child (the game files do not: the validator calls it an error), and a glTF with the same
+    // tree: the skeleton is the like file's and the check on the result fails, so nothing is written
+    let bone = |parent: i32, y: f32| BoneSpec { parent, matrix: translation_bits(0.0, y, 0.0), rot: vec![], trans: vec![] };
+    let odd = d.join("in").join("odd.ANI");
+    write(&odd, &ani_bytes(0, 30, &[bone(-1, 0.0), bone(2, 1.0), bone(-1, 2.0)]));
+    let mut g = gltf_of(&gltf);
+    g["nodes"][0].as_object_mut().unwrap().remove("children");
+    g["nodes"][1].as_object_mut().unwrap().remove("children");
+    g["nodes"][2]["children"] = serde_json::json!([1]);
+    g["scenes"][0]["nodes"] = serde_json::json!([0, 2]);
+    let oddg = d.join("odd.gltf");
+    write(&oddg, serde_json::to_string(&g).unwrap().as_bytes());
+    let target = d.join("out").join("n.ANI");
+    let o = import(&w, &[p(&oddg), "-o", p(&target), "--like", p(&odd)]);
+    assert_eq!(code(&o), 1, "{}{}", out(&o), err(&o));
+    assert!(out(&o).contains("parent-order") && out(&o).contains("does not pass") && out(&o).contains("nothing written"), "{}", out(&o));
+    assert!(!target.exists());
+    // --json: the compare keys and written false
+    let v = json(&import(&w, &[p(&oddg), "-o", p(&target), "--like", p(&odd), "--json"]));
+    assert_eq!((v["passes"].as_bool(), v["written"].as_bool()), (Some(false), Some(false)));
+    // a like file with another bone count: the file does not name its bones the same way, exit 3 and nothing written
+    let two = d.join("in").join("two.ANI");
+    let bone = |parent: i32, y: f32| BoneSpec { parent, matrix: translation_bits(0.0, y, 0.0), rot: vec![], trans: vec![] };
+    write(&two, &ani_bytes(0, 30, &[bone(-1, 0.0), bone(0, 1.0)]));
+    let o = import(&w, &[p(&gltf), "-o", p(&target), "--like", p(&two)]);
+    assert_eq!(code(&o), 3, "{}", err(&o));
+    assert!(err(&o).contains("does not have") && err(&o).contains("(names)"), "{}", err(&o));
+    assert!(!target.exists());
+}
+
+#[test]
+fn the_import_outputs_follow_the_import_rules() {
+    let w = world();
+    let (d, mesh, ani, gltf, glb) = exported(&w);
+    let target = d.join("out").join("o.ANI");
+    assert_eq!(code(&import(&w, &[p(&glb), "-o", p(&target), "--like", p(&ani)])), 0);
+    // an existing output is exit 4, --force replaces
+    let o = import(&w, &[p(&glb), "-o", p(&target), "--like", p(&ani)]);
+    assert_eq!(code(&o), 4, "{}", err(&o));
+    assert_eq!(code(&import(&w, &[p(&glb), "-o", p(&target), "--like", p(&ani), "--force"])), 0);
+    // the like file cannot be overwritten (the input cannot be named by -o: its extension differs)
+    let before = std::fs::read(&ani).unwrap();
+    let o = import(&w, &[p(&glb), "-o", p(&ani), "--like", p(&ani), "--force"]);
+    assert_eq!(code(&o), 4, "{}", err(&o));
+    assert_eq!(std::fs::read(&ani).unwrap(), before);
+    // inside a client folder: exit 4 before anything is read
+    let inside = w.client.join("n.3DC");
+    let o = import(&w, &[p(&glb), "-o", p(&inside), "--like", p(&mesh)]);
+    assert_eq!(code(&o), 4, "{}", err(&o));
+    assert!(!inside.exists());
+    // a missing folder is exit 3; a name Windows cannot hold is exit 4
+    assert_eq!(code(&import(&w, &[p(&glb), "-o", p(&d.join("nope").join("n.3DC")), "--like", p(&mesh)])), 3);
+    assert_eq!(code(&import(&w, &[p(&glb), "-o", p(&d.join("out").join("CON.3DC")), "--like", p(&mesh)])), 4);
+    // the like file in an archive (--from)
+    let c = w.tmp.path().join("cl");
+    std::fs::create_dir_all(&c).unwrap();
+    SahBuilder::new(0).file(b"Monster/ANI/Mob_A_Att1.ANI", &arm_ani(30)).write_to(&c);
+    let t2 = d.join("out").join("arc.ANI");
+    let o = import(&w, &[p(&gltf), "-o", p(&t2), "--like", "Monster/ANI/Mob_A_Att1.ANI", "--from", p(&c)]);
+    assert_eq!(code(&o), 0, "{}", err(&o));
+    assert_eq!(code(&import(&w, &[p(&gltf), "-o", p(&d.join("out").join("z.ANI")), "--from", p(&c)])), 2);
+}
+
+#[test]
+fn a_refused_gltf_is_exit_3_with_its_reason_and_nothing_is_written() {
+    let w = world();
+    let (d, mesh, ani, gltf, _) = exported(&w);
+    let edit = |f: &dyn Fn(&mut serde_json::Value), name: &str| -> PathBuf {
+        let mut g = gltf_of(&gltf);
+        f(&mut g);
+        let path = d.join(name);
+        write(&path, serde_json::to_string(&g).unwrap().as_bytes());
+        path
+    };
+    let cases: Vec<(PathBuf, &str)> = vec![
+        (edit(&|g| g["extensionsRequired"] = serde_json::json!(["KHR_draco_mesh_compression"]), "draco.gltf"), "compressed"),
+        (edit(&|g| g["buffers"][0]["uri"] = serde_json::json!("../arm.bin"), "up.gltf"), "outside the file's folder"),
+        (edit(&|g| g["buffers"][0]["uri"] = serde_json::json!("http://example.com/arm.bin"), "url.gltf"), "URL"),
+        (edit(&|g| g["buffers"][0]["uri"] = serde_json::json!("missing.bin"), "nofile.gltf"), "cannot be read"),
+    ];
+    for (input, words) in cases {
+        for (name, like) in [("r.ANI", &ani), ("r.3DC", &mesh)] {
+            let target = d.join("out").join(name);
+            let o = import(&w, &[p(&input), "-o", p(&target), "--like", p(like)]);
+            assert_eq!(code(&o), 3, "{words}/{name}: {}", err(&o));
+            assert!(err(&o).contains(words), "{words}/{name}: {}", err(&o));
+            assert!(!target.exists());
+        }
+    }
+    // a renamed root: the .ANI needs every bone's node, the .3DC only reads the skin (whose joints are still named)
+    let renamed = edit(&|g| g["nodes"][0]["name"] = serde_json::json!("Spine"), "renamed.gltf");
+    let o = import(&w, &[p(&renamed), "-o", p(&d.join("out").join("r.ANI")), "--like", p(&ani)]);
+    assert_eq!(code(&o), 3, "{}", err(&o));
+    assert!(err(&o).contains("no node (Bone_NNN or --map)"), "{}", err(&o));
+    assert!(!d.join("out").join("r.ANI").exists());
+    // a primitive that is not triangles
+    let lines = edit(&|g| g["meshes"][0]["primitives"][0]["mode"] = serde_json::json!(1), "lines.gltf");
+    let o = import(&w, &[p(&lines), "-o", p(&d.join("out").join("l.3DC")), "--like", p(&mesh)]);
+    assert_eq!(code(&o), 3, "{}", err(&o));
+    assert!(err(&o).contains("mode is 1"), "{}", err(&o));
+    // --map names a node; a map that names no node is exit 3
+    let map = d.join("map.txt");
+    write(&map, b"# the root\nSpine = 0\n");
+    let target = d.join("out").join("m.ANI");
+    let o = import(&w, &[p(&renamed), "-o", p(&target), "--like", p(&ani), "--map", p(&map)]);
+    assert_eq!(code(&o), 0, "{}", err(&o));
+    write(&map, b"Hand = 0\n");
+    let o = import(&w, &[p(&renamed), "-o", p(&d.join("out").join("m2.ANI")), "--like", p(&ani), "--map", p(&map)]);
+    assert_eq!(code(&o), 3, "{}", err(&o));
+    // a file that is not glTF at all
+    let junk = d.join("junk.glb");
+    write(&junk, b"not a glTF");
+    let o = import(&w, &[p(&junk), "-o", p(&d.join("out").join("j.3DC")), "--like", p(&mesh)]);
+    assert_eq!(code(&o), 3, "{}", err(&o));
+}
+
+#[test]
+fn import_help_carries_the_lossy_view_sentence_and_the_flags() {
+    let w = world();
+    let o = sh(&w.data, &["anim", "import", "--help"]);
+    let flat = out(&o).split_whitespace().collect::<Vec<_>>().join(" ");
+    assert!(flat.contains("glTF, OBJ and BVH are a lossy view of the game file"), "{flat}");
+    assert!(flat.contains("an import builds a new file and runs the same checks as `shaiya anim import` before it writes"), "{flat}");
+    for f in ["--map", "--reduce-influences", "--reduce", "--keys"] {
+        assert!(flat.contains(f), "{f}");
+    }
+}

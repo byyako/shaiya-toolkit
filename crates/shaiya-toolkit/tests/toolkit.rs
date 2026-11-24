@@ -3950,3 +3950,252 @@ fn the_gltf_command_is_disabled_for_other_files() {
         assert!(!w.h.app.app.archive.offers_export_gltf(p));
     }
 }
+
+// ------------------------------------------------------------------------------------------------ T12 W13: Import glTF...
+
+fn import_done(w: &mut World) -> bool {
+    w.h.wait_until(WAIT, |h| h.app.app.archive.gltf_import().is_some_and(|c| !c.is_running()))
+}
+
+fn import_saved(w: &mut World) -> bool {
+    w.h.wait_until(WAIT, |h| h.app.app.archive.gltf_import().is_some_and(|c| !c.is_saving()))
+}
+
+const TORSO_PATH: &str = "Character/Human/3DC/huwm_torso001.3DC";
+const BOX_PATH: &str = "Item/3DO/box.3DO";
+
+/// [`ani_world`] with a `.3DO` too.
+fn import_world(tag: &str) -> World {
+    let mut w = world(tag);
+    SahBuilder::new(0)
+        .file(b"Character/Human/ANI/huwm_117_test.ANI", &shaiya_testkit::anim::arm_ani(60))
+        .file(b"Character/Human/3DC/huwm_torso001.3DC", &shaiya_testkit::anim::arm_mesh_3dc())
+        .file(b"Item/3DO/box.3DO", &shaiya_testkit::anim::box_3do())
+        .file(b"Character/Human/ANI/huwm_odd_test.ANI", &odd_ani())
+        .write_to(w.client.path());
+    w.h.frames(2);
+    let dir = w.client_dir();
+    with_cx(&mut w.h, |app, cx| app.add_client("US test", &dir, true, cx)).unwrap();
+    assert!(w.h.wait_until(WAIT, |h| h.app.app.archive.is_open()), "the archive opens");
+    w.h.frames(2);
+    w
+}
+
+/// Exports the archive file `path` as glTF to `out` with the Toolkit's own export.
+fn export_for_import(w: &mut World, path: &str, out: &std::path::Path) {
+    with_cx(&mut w.h, |app, cx| app.archive.select_path(path, cx));
+    assert!(preview_ready(&mut w.h));
+    with_cx(&mut w.h, |app, cx| app.archive.export_gltf_to(out, cx));
+    assert!(gltf_done(w), "the export ends");
+    assert!(out.exists());
+}
+
+fn import_settings(input: &std::path::Path) -> shaiya_toolkit::import_gltf::Settings {
+    shaiya_toolkit::import_gltf::Settings { input: Some(input.to_path_buf()), ..Default::default() }
+}
+
+#[test]
+fn importing_a_gltf_animation_makes_a_new_ani_that_passes_and_saves_it() {
+    let mut w = import_world("t12-w13-ani");
+    let d = TempDir::new("t12-w13-ani-files");
+    let glb = d.path().join("a.glb");
+    export_for_import(&mut w, ANI_PATH, &glb);
+    let before = tree(w.client.path());
+    let s = shaiya_toolkit::import_gltf::Settings { keys_exact: true, ..import_settings(&glb) };
+    with_cx(&mut w.h, |app, cx| app.archive.import_gltf_with(ANI_PATH, s, cx));
+    assert!(import_done(&mut w), "the import ends");
+    w.h.frames(3);
+    let (summary, kind) = {
+        let c = w.h.app.app.archive.gltf_import().expect("the window is open");
+        let m = c.made().unwrap_or_else(|| panic!("nothing made: {:?}", c.result.as_ref().map(|r| r.as_ref().err())));
+        (m.summary(), c.kind())
+    };
+    assert_eq!(kind, shaiya_clientdata::interchange::import::ImportKind::Ani);
+    assert!(summary.starts_with(".ANI: 3 bones") && summary.contains("passes the rig check"), "{summary}");
+    let t = w.h.text();
+    assert!(t.contains("Import glTF") && t.contains("a lossy view of the game file") && t.contains("Save as new file..."), "{t}");
+    // save it as a new file
+    let out = d.path().join("new.ani");
+    with_cx(&mut w.h, |app, cx| app.archive.gltf_import_mut().unwrap().save_new(out.clone(), cx));
+    assert!(import_saved(&mut w));
+    w.h.frames(2);
+    let new = shaiya_clientdata::Ani::parse(&std::fs::read(&out).expect("the new file is written"), "new.ani").unwrap();
+    let like = shaiya_clientdata::Ani::parse(&shaiya_testkit::anim::arm_ani(60), "arm.ani").unwrap();
+    assert!(shaiya_clientdata::anim::passes(&new, &like), "the saved animation passes against its like file");
+    assert!(w.h.app.shell.banner_details().is_none(), "{:?}", w.h.app.shell.banner_details());
+    assert_eq!(tree(w.client.path()), before, "nothing was written to the client");
+    let names: Vec<String> = std::fs::read_dir(d.path()).unwrap().flatten().map(|e| e.file_name().to_string_lossy().into_owned()).collect();
+    assert!(!names.iter().any(|n| n.contains(".tmp") || n.starts_with('.')), "no temporary file stays: {names:?}");
+}
+
+#[test]
+fn a_gltf_that_cannot_be_imported_shows_its_reasons_and_cannot_be_saved() {
+    let mut w = import_world("t12-w13-refuse");
+    let d = TempDir::new("t12-w13-refuse-files");
+    let gltf = d.path().join("a.gltf");
+    export_for_import(&mut w, ANI_PATH, &gltf);
+    let mut g: serde_json::Value = serde_json::from_slice(&std::fs::read(&gltf).unwrap()).unwrap();
+    g["nodes"][1]["name"] = serde_json::json!("Spine");
+    let bad = d.path().join("bad.gltf");
+    std::fs::write(&bad, serde_json::to_string(&g).unwrap()).unwrap();
+    std::fs::copy(d.path().join("a.bin"), d.path().join("bad.bin")).unwrap();
+    g["buffers"][0]["uri"] = serde_json::json!("bad.bin");
+    std::fs::write(&bad, serde_json::to_string(&g).unwrap()).unwrap();
+    with_cx(&mut w.h, |app, cx| app.archive.import_gltf_with(ANI_PATH, import_settings(&bad), cx));
+    assert!(import_done(&mut w));
+    w.h.frames(3);
+    {
+        let c = w.h.app.app.archive.gltf_import().unwrap();
+        assert!(c.made().is_none());
+        let Some(Err(r)) = &c.result else { panic!("{:?}", c.result.as_ref().map(|r| r.as_ref().ok().map(|m| m.summary()))) };
+        assert!(!r.does_not_pass);
+        assert!(r.lines.iter().any(|l| l.contains("no node (Bone_NNN or --map)") && l.contains("(names)")), "{:?}", r.lines);
+    }
+    let t = w.h.text();
+    assert!(t.contains("Not imported") && t.contains("no node (Bone_NNN or --map)"), "{t}");
+    // the same file with a map file that names the node
+    let map = d.path().join("map.txt");
+    std::fs::write(&map, "Spine = 1\n").unwrap();
+    let s = shaiya_toolkit::import_gltf::Settings { map: Some(map.clone()), ..import_settings(&bad) };
+    with_cx(&mut w.h, |app, _cx| app.archive.gltf_import_mut().unwrap().settings = s);
+    with_cx(&mut w.h, |app, cx| app.archive.gltf_import_mut().unwrap().start(cx));
+    assert!(import_done(&mut w));
+    assert!(w.h.app.app.archive.gltf_import().unwrap().made().is_some(), "the map names the renamed node");
+    // nothing made for a changed setting: the earlier answer does not stand for the new settings
+    with_cx(&mut w.h, |app, _| app.archive.gltf_import_mut().unwrap().settings.keys_exact = true);
+    assert!(w.h.app.app.archive.gltf_import().unwrap().made().is_none());
+    // refused and nothing started: a missing file, a file that is not glTF
+    let junk = d.path().join("junk.glb");
+    std::fs::write(&junk, b"not a glTF").unwrap();
+    with_cx(&mut w.h, |app, cx| app.archive.import_gltf_with(ANI_PATH, import_settings(&junk), cx));
+    assert!(import_done(&mut w));
+    let c = w.h.app.app.archive.gltf_import().unwrap();
+    assert!(matches!(&c.result, Some(Err(r)) if r.lines[0].contains("junk.glb")), "{:?}", c.result.as_ref().map(|r| r.as_ref().err()));
+    // saving with nothing made is refused with a message
+    with_cx(&mut w.h, |app, cx| app.archive.gltf_import_mut().unwrap().save_new(d.path().join("x.ani"), cx));
+    assert!(!d.path().join("x.ani").exists());
+    assert!(w.h.app.shell.banner_details().is_some_and(|b| b.contains("no imported file")), "{:?}", w.h.app.shell.banner_details());
+}
+
+#[test]
+fn importing_a_3dc_gives_the_bytes_of_the_file_it_is_like_and_a_3do_makes_a_mesh() {
+    let mut w = import_world("t12-w13-mesh");
+    let d = TempDir::new("t12-w13-mesh-files");
+    let (glb, box_glb) = (d.path().join("t.glb"), d.path().join("b.glb"));
+    export_for_import(&mut w, TORSO_PATH, &glb);
+    export_for_import(&mut w, BOX_PATH, &box_glb);
+    with_cx(&mut w.h, |app, cx| app.archive.import_gltf_with(TORSO_PATH, import_settings(&glb), cx));
+    assert!(import_done(&mut w));
+    let out = d.path().join("t.3DC");
+    with_cx(&mut w.h, |app, cx| app.archive.gltf_import_mut().unwrap().save_new(out.clone(), cx));
+    assert!(import_saved(&mut w));
+    assert_eq!(std::fs::read(&out).unwrap(), shaiya_testkit::anim::arm_mesh_3dc(), "the .3DC comes back byte for byte");
+    // a .3DO row: a static mesh, no like file
+    with_cx(&mut w.h, |app, cx| app.archive.import_gltf_with(BOX_PATH, import_settings(&box_glb), cx));
+    assert!(import_done(&mut w));
+    let out = d.path().join("b.3DO");
+    with_cx(&mut w.h, |app, cx| app.archive.gltf_import_mut().unwrap().save_new(out.clone(), cx));
+    assert!(import_saved(&mut w));
+    assert_eq!(std::fs::read(&out).unwrap(), shaiya_testkit::anim::box_3do());
+    // a flag of another kind is refused with its reason
+    let s = shaiya_toolkit::import_gltf::Settings { reduce: true, ..import_settings(&glb) };
+    with_cx(&mut w.h, |app, cx| app.archive.import_gltf_with(TORSO_PATH, s, cx));
+    assert!(import_done(&mut w));
+    let c = w.h.app.app.archive.gltf_import().unwrap();
+    assert!(matches!(&c.result, Some(Err(r)) if r.lines[0].contains("for an .ANI")), "{:?}", c.result.as_ref().map(|r| r.as_ref().err()));
+}
+
+#[test]
+fn saving_an_imported_file_follows_the_new_file_rules() {
+    let mut w = import_world("t12-w13-guard");
+    let d = TempDir::new("t12-w13-guard-files");
+    let glb = d.path().join("a.glb");
+    export_for_import(&mut w, ANI_PATH, &glb);
+    with_cx(&mut w.h, |app, cx| app.archive.import_gltf_with(ANI_PATH, import_settings(&glb), cx));
+    assert!(import_done(&mut w));
+    assert!(w.h.app.app.archive.gltf_import().unwrap().made().is_some());
+    let before = tree(w.client.path());
+    let try_save = |w: &mut World, out: PathBuf, want: &str| {
+        with_cx(&mut w.h, |app, cx| app.archive.gltf_import_mut().unwrap().save_new(out.clone(), cx));
+        assert!(!w.h.app.app.archive.gltf_import().unwrap().is_saving(), "{want}: nothing started");
+        assert!(!out.exists(), "{want}: {} was written", out.display());
+        let b = w.h.app.shell.banner_details().unwrap_or_else(|| panic!("{want}: no message")).to_string();
+        assert!(b.contains(want), "{want}: {b}");
+    };
+    try_save(&mut w, d.path().join("x.json"), "must end in .ANI");
+    let inside = w.client_dir().join("x.ani");
+    try_save(&mut w, inside, "Choose a folder outside the client");
+    // an existing file is not replaced
+    let there = d.path().join("there.ani");
+    std::fs::write(&there, b"keep me").unwrap();
+    with_cx(&mut w.h, |app, cx| app.archive.gltf_import_mut().unwrap().save_new(there.clone(), cx));
+    assert_eq!(std::fs::read(&there).unwrap(), b"keep me");
+    assert!(!w.h.app.app.archive.gltf_import().unwrap().is_saving());
+    // a name Windows cannot hold
+    with_cx(&mut w.h, |app, cx| app.archive.gltf_import_mut().unwrap().save_new(d.path().join("CON.ani"), cx));
+    assert!(!w.h.app.app.archive.gltf_import().unwrap().is_saving());
+    assert_eq!(tree(w.client.path()), before, "the client folder is as it was");
+}
+
+#[test]
+fn the_import_command_is_offered_for_the_four_kinds_only() {
+    let mut w = import_world("t12-w13-offer");
+    for p in [ANI_PATH, TORSO_PATH, BOX_PATH] {
+        assert!(w.h.app.app.archive.offers_import_gltf(p), "{p}");
+        with_cx(&mut w.h, |app, cx| app.archive.select_path(p, cx));
+        assert!(preview_ready(&mut w.h));
+        let cmd = w.h.app.app.archive.commands().into_iter().find(|c| c.id == "archive-import-gltf").expect("the command is listed");
+        assert!(cmd.enabled && cmd.label == "Import glTF...", "{p}");
+    }
+    let client = client_of("t12-w13-other", &[("tex/a.dds", b"DDS not really"), ("Monster/VANI/a.vani", b"not a vani")]);
+    let mut w = world("t12-w13-other");
+    let dir = client.path().to_path_buf();
+    add_saved(&mut w, "Other", &dir);
+    open_saved(&mut w, "Other", &dir);
+    for p in ["tex/a.dds", "Monster/VANI/a.vani"] {
+        with_cx(&mut w.h, |app, cx| app.archive.select_path(p, cx));
+        assert!(preview_ready(&mut w.h));
+        assert!(!w.h.app.app.archive.offers_import_gltf(p), "{p}");
+        let cmd = w.h.app.app.archive.commands().into_iter().find(|c| c.id == "archive-import-gltf").unwrap();
+        assert!(!cmd.enabled, "{p}");
+    }
+}
+
+const ODD_PATH: &str = "Character/Human/ANI/huwm_odd_test.ANI";
+
+/// An animation whose bone 1 names a parent after it (the validator calls that an error): the arm's skeleton otherwise.
+fn odd_ani() -> Vec<u8> {
+    let bone = |parent: i32, y: f32| shaiya_testkit::anim::BoneSpec { parent, matrix: shaiya_testkit::anim::translation_bits(0.0, y, 0.0), rot: vec![], trans: vec![] };
+    shaiya_testkit::anim::ani_bytes(0, 60, &[bone(-1, 0.0), bone(2, 1.0), bone(-1, 2.0)])
+}
+
+#[test]
+fn an_ani_that_does_not_pass_the_rig_check_is_shown_and_cannot_be_saved() {
+    let mut w = import_world("t12-w13-pass");
+    let d = TempDir::new("t12-w13-pass-files");
+    let gltf = d.path().join("a.gltf");
+    export_for_import(&mut w, ANI_PATH, &gltf);
+    // the glTF gets the tree of the odd file (node 2 holds node 1)
+    let mut g: serde_json::Value = serde_json::from_slice(&std::fs::read(&gltf).unwrap()).unwrap();
+    g["nodes"][0].as_object_mut().unwrap().remove("children");
+    g["nodes"][1].as_object_mut().unwrap().remove("children");
+    g["nodes"][2]["children"] = serde_json::json!([1]);
+    g["scenes"][0]["nodes"] = serde_json::json!([0, 2]);
+    let odd = d.path().join("odd.gltf");
+    std::fs::write(&odd, serde_json::to_string(&g).unwrap()).unwrap();
+    std::fs::copy(d.path().join("a.bin"), d.path().join("odd.bin")).unwrap();
+    g["buffers"][0]["uri"] = serde_json::json!("odd.bin");
+    std::fs::write(&odd, serde_json::to_string(&g).unwrap()).unwrap();
+    with_cx(&mut w.h, |app, cx| app.archive.import_gltf_with(ODD_PATH, import_settings(&odd), cx));
+    assert!(import_done(&mut w));
+    w.h.frames(3);
+    {
+        let c = w.h.app.app.archive.gltf_import().unwrap();
+        assert!(c.made().is_none());
+        let Some(Err(r)) = &c.result else { panic!("{:?}", c.result.as_ref().map(|r| r.as_ref().ok().map(|m| m.summary()))) };
+        assert!(r.does_not_pass && r.lines.iter().any(|l| l.contains("parent-order")), "{:?}", r.lines);
+    }
+    assert!(w.h.text().contains("does not pass the rig check"), "{}", w.h.text());
+    with_cx(&mut w.h, |app, cx| app.archive.gltf_import_mut().unwrap().save_new(d.path().join("n.ani"), cx));
+    assert!(!d.path().join("n.ani").exists());
+}

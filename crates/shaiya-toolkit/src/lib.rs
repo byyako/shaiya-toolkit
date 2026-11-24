@@ -11,6 +11,7 @@ pub mod clients;
 pub mod explain;
 pub mod export_interchange;
 pub mod export_json;
+pub mod import_gltf;
 pub mod health;
 pub mod inspect;
 pub mod keys;

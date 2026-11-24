@@ -2,10 +2,12 @@
 //!
 //! The mapping: one mirror (`z` becomes `-z`, triangles swap two corners, quaternions become `(-x, -y, z, w)`, matrices `S M S` copied
 //! without transposition), time `(key - start) / 30` seconds, two bone influences per vertex, names only for textures. glTF, OBJ and BVH
-//! are a lossy view of the game file: the game file's own round trip (JSON) stays byte for byte. Nothing here writes a file.
+//! are a lossy view of the game file: the game file's own round trip (JSON) stays byte for byte. The import ([`import`]) reads a glTF into the model of a new game file and refuses what the game
+//! format cannot hold. Nothing here writes a file.
 
 pub mod gltf_read;
 pub mod gltf_write;
+pub mod import;
 pub mod mesh;
 pub mod selfcheck;
 pub mod xform;
@@ -34,6 +36,20 @@ pub enum RefusalKind {
     Empty,
     Index,
     CloakAnimation,
+    // the import
+    Format,
+    Extension,
+    Buffer,
+    Unsupported,
+    Scale,
+    Morph,
+    Influences,
+    Joint,
+    Names,
+    Transform,
+    Like,
+    Limit,
+    Animation,
 }
 
 impl RefusalKind {
@@ -51,6 +67,19 @@ impl RefusalKind {
             RefusalKind::Empty => "empty",
             RefusalKind::Index => "index",
             RefusalKind::CloakAnimation => "cloak-animation",
+            RefusalKind::Format => "format",
+            RefusalKind::Extension => "extension",
+            RefusalKind::Buffer => "buffer",
+            RefusalKind::Unsupported => "unsupported",
+            RefusalKind::Scale => "scale",
+            RefusalKind::Morph => "morph",
+            RefusalKind::Influences => "influences",
+            RefusalKind::Joint => "joint",
+            RefusalKind::Names => "names",
+            RefusalKind::Transform => "transform",
+            RefusalKind::Like => "like",
+            RefusalKind::Limit => "limit",
+            RefusalKind::Animation => "animation",
         }
     }
 }

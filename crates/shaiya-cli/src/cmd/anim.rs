@@ -21,6 +21,7 @@ use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
 mod gltf;
+mod gltf_import;
 
 #[derive(clap::Subcommand)]
 pub enum Cmd {
@@ -76,6 +77,18 @@ pub enum Cmd {
     /// field, no validation error); exit 1 and nothing written otherwise. Writes only the -o file, as a new file (an existing one only with
     /// --force), never inside a client folder. Put the result into a client with Replace or `archive replace`.
     ///
+    /// With IN.gltf or IN.glb (made by `export --format gltf|glb`, or by another program) the file is read as glTF 2.0 and -o must end in .ani,
+    /// .3dc, .3do or .3de. An .ANI and a .3DC need --like (the file they replace; for a .3DC also the .ANI of its rig): the skeleton, the
+    /// reference matrices and the first field come from it, and a node maps to a bone by its name `Bone_NNN` (any number of digits) or by a
+    /// --map FILE of lines `node name = bone index`. The animation is sampled at every whole key (--keys exact uses the file's own keys,
+    /// --reduce drops the keys that the others reproduce within 1e-5); a vertex with more than two influences is refused unless
+    /// --reduce-influences keeps the two largest. Refused (exit 3, the reason names the node, bone or vertex): scale on a bone, morph targets,
+    /// sparse or normalized or quantized data, compressed buffers, required extensions, buffers outside the file's folder, URLs, a skeleton
+    /// that is not the like file's. An .ANI that does not pass the rig check is exit 1 and nothing is written. glTF, OBJ and BVH are a lossy
+    /// view of the game file: the game file's own round trip (JSON) stays byte for byte; an import builds a new file and runs the same checks
+    /// as `shaiya anim import` before it writes. Exit 2 for a bad argument (no --like for .ANI or .3DC).
+    ///
+    /// Example: shaiya anim import wave.glb -o new.ani --like "character/human/ani/huwm_117_x.ani" --from "@us" --keys exact
     /// Example: shaiya anim import wave.json -o new.ani --like "character/human/ani/huwm_117_x.ani" --from "@us"
     Import(ImportArgs),
     /// Retime, trim or copy tracks of an .ANI into a new file (`edit retime`, `edit trim`, `edit copy-track`)
@@ -251,10 +264,10 @@ pub struct DiffArgs {
 
 #[derive(clap::Args)]
 pub struct ImportArgs {
-    /// The JSON file made by `export`
-    #[arg(value_name = "IN.json")]
+    /// The JSON file made by `export`, or a glTF file (.gltf or .glb)
+    #[arg(value_name = "IN.json|IN.gltf|IN.glb")]
     pub input: String,
-    /// The file to write; its extension must be the JSON's format (.ANI, .3DC, .VANI, .MANI, .3DO or .3DE)
+    /// The file to write; its extension must be the JSON's format (.ANI, .3DC, .VANI, .MANI, .3DO or .3DE); for a glTF input .ani, .3dc, .3do or .3de
     #[arg(short = 'o', long = "out", value_name = "OUT")]
     pub out: PathBuf,
     /// For .ANI only (required there): the file the new animation will replace, a file or with --from its path in the archive
@@ -266,6 +279,24 @@ pub struct ImportArgs {
     /// Replace an existing output
     #[arg(long)]
     pub force: bool,
+    /// glTF import only: a text file of lines `node name = bone index` for nodes that are not named `Bone_NNN`
+    #[arg(long, value_name = "FILE")]
+    pub map: Option<String>,
+    /// glTF import to .3DC: a vertex with more than two bone influences keeps its two largest (renormalised) instead of refusing the file
+    #[arg(long)]
+    pub reduce_influences: bool,
+    /// glTF import to .ANI: drop the keys that the keys around them reproduce within 1e-5
+    #[arg(long)]
+    pub reduce: bool,
+    /// glTF import to .ANI: `exact` uses the file's own key times (each a multiple of 1/30 s) and linear values, with no resampling
+    #[arg(long, value_enum, value_name = "MODE")]
+    pub keys: Option<KeysMode>,
+}
+
+/// The key rule of a glTF import to .ANI.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum)]
+pub enum KeysMode {
+    Exact,
 }
 
 /// Why a command stopped: a usage error (exit 2), an error (the exit code of its kind) or a bug of the toolkit (exit 5).
@@ -1333,6 +1364,9 @@ fn export_one(ctx: &Ctx, a: &ExportArgs, input: &str, out_file: &Path) -> Res {
 }
 
 fn import(ctx: &Ctx, a: &ImportArgs) -> Res {
+    if has_ext(&a.input, &["gltf", "glb"]) {
+        return gltf_import::run(ctx, a);
+    }
     let in_path = resolve(ctx, &a.input)?;
     let json_bytes = read_capped(&in_path, Some(&in_path), MAX_JSON_BYTES)?;
     let format = modeljson::format_of(&json_bytes).map_err(|e| json_failure(&a.input, e))?;

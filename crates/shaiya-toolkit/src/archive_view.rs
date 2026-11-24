@@ -585,6 +585,8 @@ pub struct ArchiveView {
     anim_compare: Option<crate::anim_compare::AnimCompare>,
     /// The "Edit animation..." window of one `.ANI` (see `anim_edit`).
     anim_edit: Option<crate::anim_edit::AnimEdit>,
+    /// The "Import glTF..." window (see `import_gltf`).
+    gltf_import: Option<crate::import_gltf::ImportGltf>,
     /// The "Rig" filter inside `Character/<race>/ANI`: an index into `anim::RIGS`.
     pub rig: Option<usize>,
     apply: ApplyFlow,
@@ -697,6 +699,7 @@ impl ArchiveView {
             folder_exports: Default::default(),
             anim_compare: None,
             anim_edit: None,
+            gltf_import: None,
             rig: None,
             apply: ApplyFlow::Idle,
             confirm_rows: Vec::new(),
@@ -766,6 +769,7 @@ impl ArchiveView {
         self.folder_exports.cancel();
         self.anim_compare = None;
         self.anim_edit = None;
+        self.gltf_import = None;
     }
 
     /// Opens a saved client folder (changes are possible) or any archive file (read only), as a task.
@@ -891,6 +895,9 @@ impl ArchiveView {
             c.poll(cx);
         }
         if let Some(c) = &mut self.anim_edit {
+            c.poll(cx);
+        }
+        if let Some(c) = &mut self.gltf_import {
             c.poll(cx);
         }
         self.poll_check(cx);
@@ -2004,6 +2011,42 @@ impl ArchiveView {
         self.anim_edit.as_mut()
     }
 
+    /// Opens the "Import glTF..." window for the file in row `row` (an `.ANI` or `.3DC` row is the like file; a `.3DO` or `.3DE` row names
+    /// the kind of the new file).
+    fn open_import_gltf(&mut self, row: usize) {
+        let Some(l) = &self.loaded else { return };
+        let (Some(a), Some(r)) = (l.archive.clone(), l.rows.get(row)) else { return };
+        self.gltf_import = crate::import_gltf::ImportGltf::new(r.path.clone(), a, l.client_dir.clone());
+    }
+
+    /// Test hook: "Import glTF..." for the file at `path` with `settings` chosen; the worker starts at once.
+    #[doc(hidden)]
+    pub fn import_gltf_with(&mut self, path: &str, settings: crate::import_gltf::Settings, cx: &mut ToolkitCx<'_>) {
+        let Some(i) = self.find_row(path) else { return };
+        self.open_import_gltf(i);
+        if let Some(c) = &mut self.gltf_import {
+            c.settings = settings;
+            c.start(cx);
+        }
+    }
+
+    /// The window of "Import glTF...", when open.
+    #[doc(hidden)]
+    pub fn gltf_import(&self) -> Option<&crate::import_gltf::ImportGltf> {
+        self.gltf_import.as_ref()
+    }
+
+    #[doc(hidden)]
+    pub fn gltf_import_mut(&mut self) -> Option<&mut crate::import_gltf::ImportGltf> {
+        self.gltf_import.as_mut()
+    }
+
+    /// Whether the row menu of the file at `path` offers "Import glTF..." (needs the data.saf and one of the four kinds).
+    #[doc(hidden)]
+    pub fn offers_import_gltf(&self, path: &str) -> bool {
+        self.offers_export_gltf(path)
+    }
+
     /// Whether the row menu of the file at `path` offers "Edit animation..." (an `.ANI` with the `data.saf` open).
     #[doc(hidden)]
     pub fn offers_edit(&self, path: &str) -> bool {
@@ -2276,6 +2319,7 @@ enum Act {
     Extract { all: bool, flat: bool },
     ExportJson(usize),
     ExportGltf(usize),
+    ImportGltf(usize),
     ExportFolderJson(usize),
     CompareAni(usize),
     EditAni(usize),
@@ -2333,6 +2377,7 @@ impl ArchiveView {
             c("archive-extract-all", "Extract all shown files...", Some(K::new(M::COMMAND | M::SHIFT, Key::E)), open),
             c("archive-export-json", "Export as JSON...", None, self.export_json_row().is_some()),
             c("archive-export-gltf", "Export as glTF...", None, self.export_gltf_row().is_some()),
+            c("archive-import-gltf", "Import glTF...", None, self.export_gltf_row().is_some()),
             c("archive-add", "Add files to the archive...", Some(K::new(M::NONE, Key::Insert)), edit),
             c("archive-remove", "Queue removal of selected files", Some(K::new(M::NONE, Key::Delete)), edit && !self.selected.is_empty()),
             c("archive-apply", "Apply pending changes to the client...", Some(K::new(M::COMMAND, Key::Enter)), edit && !busy && writes && !self.pending.is_empty()),
@@ -2361,6 +2406,7 @@ impl ArchiveView {
             "archive-extract-all" => Some(Act::Extract { all: true, flat: false }),
             "archive-export-json" => self.export_json_row().map(Act::ExportJson),
             "archive-export-gltf" => self.export_gltf_row().map(Act::ExportGltf),
+            "archive-import-gltf" => self.export_gltf_row().map(Act::ImportGltf),
             "archive-add" => Some(Act::AddFiles),
             "archive-remove" => Some(Act::QueueRemove),
             "archive-apply" => Some(Act::ApplyPending),
@@ -2678,6 +2724,7 @@ impl ArchiveView {
                                 ("Decrypt to file...", MenuChoice::Decrypt),
                                 ("Export as JSON...", MenuChoice::ExportJson),
                                 ("Export as glTF...", MenuChoice::ExportGltf),
+                                ("Import glTF...", MenuChoice::ImportGltf),
                                 ("Compare with...", MenuChoice::CompareWith),
                                 ("Edit animation...", MenuChoice::EditAnimation),
                             ] {
@@ -2687,6 +2734,9 @@ impl ArchiveView {
                                 if matches!(choice, MenuChoice::ExportGltf) && !matches!(v, ViewRow::File(i) if l.archive.is_some() && crate::export_interchange::is_gltf_path(&l.rows[i].path)) {
                                     continue;
                                 }
+                                if matches!(choice, MenuChoice::ImportGltf) && !matches!(v, ViewRow::File(i) if l.archive.is_some() && crate::export_interchange::is_gltf_path(&l.rows[i].path)) {
+                                    continue;
+                                }
                                 if matches!(choice, MenuChoice::EditAnimation) && !matches!(v, ViewRow::File(i) if l.archive.is_some() && is_ani_path(&l.rows[i].path)) {
                                     continue;
                                 }
@@ -2694,7 +2744,7 @@ impl ArchiveView {
                                     continue;
                                 }
                                 let mut b = ui.button(label);
-                                if matches!(choice, MenuChoice::ExportGltf) {
+                                if matches!(choice, MenuChoice::ExportGltf | MenuChoice::ImportGltf) {
                                     b = b.on_hover_text(crate::export_interchange::LOSSY_SENTENCE);
                                 }
                                 if b.clicked() {
@@ -2766,6 +2816,11 @@ impl ArchiveView {
                 MenuChoice::ExportGltf => {
                     if let ViewRow::File(i) = self.view[vi] {
                         acts.push(Act::ExportGltf(i));
+                    }
+                }
+                MenuChoice::ImportGltf => {
+                    if let ViewRow::File(i) = self.view[vi] {
+                        acts.push(Act::ImportGltf(i));
                     }
                 }
                 MenuChoice::CompareWith => {
@@ -3011,6 +3066,12 @@ impl ArchiveView {
             c.draw(&ctx, cx);
             if !c.open {
                 self.anim_edit = None;
+            }
+        }
+        if let Some(c) = &mut self.gltf_import {
+            c.draw(&ctx, cx);
+            if !c.open {
+                self.gltf_import = None;
             }
         }
         self.finish_ani_edit_queue(cx);
@@ -3397,6 +3458,10 @@ impl ArchiveView {
                 }
                 Act::CompareAni(i) => self.open_compare(i, cx),
                 Act::EditAni(i) => self.open_edit(i),
+                Act::ImportGltf(i) => {
+                    cx.shell.status(crate::export_interchange::LOSSY_SENTENCE);
+                    self.open_import_gltf(i);
+                }
                 Act::PlayAnimation(path) => self.play_animation_on_mesh(&path, cx),
                 Act::ExportJson(i) => {
                     let name = self.loaded.as_ref().and_then(|l| l.rows.get(i)).map(|r| r.name().to_string());
@@ -3524,6 +3589,7 @@ enum MenuChoice {
     Decrypt,
     ExportJson,
     ExportGltf,
+    ImportGltf,
     ExportFolderJson,
     CompareWith,
     EditAnimation,
