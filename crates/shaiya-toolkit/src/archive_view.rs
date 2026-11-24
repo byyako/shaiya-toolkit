@@ -2474,6 +2474,7 @@ impl ArchiveView {
         };
         let Some(l) = &self.loaded else { return };
         let Some(r) = l.rows.get(row) else { return };
+        let switch = crate::preview_tex::switch_applies(&r.path);
         ui.label(RichText::new(r.name()).strong());
         ui.label(RichText::new(format!("{}  ·  {}", r.path, human_size(r.entry.length as u64))).color(pal.weak));
         if self.preview.handle.is_some() {
@@ -2519,7 +2520,7 @@ impl ArchiveView {
                 }
             }
             Some(data @ PreviewData::Anim { .. }) => {
-                if textures_switch(&mut self.preview.textured, ui, cx) {
+                if switch && textures_switch(&mut self.preview.textured, ui, cx) {
                     acts.push(Act::Open("texture-choice".into()));
                 }
                 if anim_view::draw(ui, &pal, &mut self.preview.player, data, &mut self.preview.anim_tex, &mut self.preview.anim_mesh, &mut self.preview.controls) {
@@ -2547,7 +2548,7 @@ impl ArchiveView {
                         }
                     }
                 }
-                if textures_switch(&mut self.preview.textured, ui, cx) {
+                if switch && textures_switch(&mut self.preview.textured, ui, cx) {
                     acts.push(Act::Open("texture-choice".into()));
                 }
                 for note in notes {

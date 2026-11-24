@@ -34,7 +34,7 @@ fn image_at(src: &dyn FileSource, job: &Job, path: &str) -> Option<shaiya_client
     if job.check().is_err() {
         return None;
     }
-    shaiya_clientdata::texture::decode(&src.read(path, preview_tex::TEXTURE_CAP, job).ok()?, path).ok()
+    shaiya_clientdata::texture::decode(&src.read(path, preview_tex::TEXTURE_CAP, &crate::source::quiet(job)).ok()?, path).ok()
 }
 
 fn prepared_note(step: f32, unit: &str) -> Option<String> {
@@ -111,7 +111,7 @@ fn pick_3do(src: &dyn FileSource, path: &str, name: &str, textures: &TextureInde
     let built = textures.get_or_build(src, job).ok_or_else(cancelled)?;
     if let Some(r) = built.0.for_mesh(path).first() {
         let alpha = preview_tex::alpha_mode(r.alpha);
-        let line = format!("texture {} from {} (record {}); {}", file_name(&r.texture), r.list, r.record, preview_tex::alpha_words(r.alpha));
+        let line = preview_tex::line_of(r);
         return Ok(if r.found { Picked { path: Some(r.texture.clone()), alpha, notes: vec![line] } } else { Picked { path: None, alpha, notes: vec![preview_tex::not_in_archive(&r.texture)] } });
     }
     let name = name.trim();

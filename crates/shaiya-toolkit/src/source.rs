@@ -29,6 +29,12 @@ pub trait FileSource: Send + Sync {
     }
 }
 
+/// A job that shares `job`'s cancel but reports no progress: the side reads of one preview (list files, textures, candidate meshes) use it,
+/// so the progress shown is the main file's only.
+pub fn quiet(job: &Job) -> Job<'static> {
+    Job::new(&shaiya_core::Silent, job.cancel_token().clone())
+}
+
 fn not_found(path: &str) -> Error {
     Error::io(path, std::io::Error::new(std::io::ErrorKind::NotFound, "not in the archive"))
 }

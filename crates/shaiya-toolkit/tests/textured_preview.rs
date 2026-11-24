@@ -309,6 +309,114 @@ fn a_cancelled_textured_preview_ends_cancelled() {
     assert_eq!(counting.reads_of("Character/Human/DDS/skin.dds"), 0, "no texture is decoded after the cancel");
 }
 
+/// A source that cancels the job at the first read of a path that ends with `trigger` and then reads on like the archive (whose read
+/// ends `Cancelled`); every read is logged in order.
+struct Cancelling<'a> {
+    inner: &'a Archive,
+    trigger: &'static str,
+    cancel: Cancel,
+    log: Mutex<Vec<String>>,
+}
+
+impl FileSource for Cancelling<'_> {
+    fn paths(&self) -> Vec<String> {
+        self.inner.paths()
+    }
+    fn len(&self, path: &str) -> Option<u64> {
+        self.inner.len(path)
+    }
+    fn read(&self, path: &str, cap: u64, job: &Job) -> Result<Vec<u8>> {
+        self.log.lock().unwrap().push(path.to_lowercase());
+        if path.to_lowercase().ends_with(self.trigger) {
+            self.cancel.cancel();
+        }
+        FileSource::read(self.inner, path, cap, job)
+    }
+    fn read_range(&self, path: &str, from: u64, n: usize) -> Result<Vec<u8>> {
+        FileSource::read_range(self.inner, path, from, n)
+    }
+    fn stamp(&self, path: &str) -> Option<(u64, u64)> {
+        self.inner.stamp(path)
+    }
+}
+
+fn two_skins(d: &TempDir) -> Archive {
+    let mlt = mlt_bytes(&["huwm_torso001.3DC", "huwm_lower001.3DC"], &["skin.dds", "skin2.dds"], &[(0, 0, 0), (1, 1, 0)]);
+    open(d, &[(ANI, arm_ani(60)), (TORSO, arm_mesh_3dc()), (LOWER, arm_mesh_3dc()), (MLT, mlt), ("Character/Human/DDS/skin.dds", skin()), ("Character/Human/DDS/skin2.dds", skin())])
+}
+
+#[test]
+fn a_cancel_inside_the_list_read_keeps_no_index_and_reads_no_texture() {
+    let d = TempDir::new("w6fix-cancel-mlt");
+    let a = two_skins(&d);
+    let cancel = Cancel::new();
+    let src = Cancelling { inner: &a, trigger: ".mlt", cancel: cancel.clone(), log: Mutex::new(Vec::new()) };
+    let cache = TextureIndexCache::default();
+    let job = Job::new(&Silent, cancel);
+    let e = make_preview_look(&src, ANI, false, 0, &MeshChoice::Default, &MeshInfoCache::default(), &cache, &Look::default(), &job).unwrap_err();
+    assert!(matches!(e, Error::Cancelled), "{e:?}");
+    assert!(!cache.is_built(), "a build that was cancelled keeps nothing");
+    assert!(!src.log.lock().unwrap().iter().any(|p| p.ends_with(".dds")), "no texture is read after the cancel");
+}
+
+#[test]
+fn a_cancel_inside_the_first_texture_read_reads_no_second_texture() {
+    let d = TempDir::new("w6fix-cancel-tex");
+    let a = two_skins(&d);
+    let cache = TextureIndexCache::default();
+    assert!(cache.get_or_build(&a, &Job::silent()).is_some());
+    let cancel = Cancel::new();
+    let src = Cancelling { inner: &a, trigger: ".dds", cancel: cancel.clone(), log: Mutex::new(Vec::new()) };
+    let job = Job::new(&Silent, cancel);
+    let e = make_preview_look(&src, ANI, false, 0, &MeshChoice::Default, &MeshInfoCache::default(), &cache, &Look::default(), &job).unwrap_err();
+    assert!(matches!(e, Error::Cancelled), "{e:?}");
+    assert_eq!(src.log.lock().unwrap().iter().filter(|p| p.ends_with(".dds")).count(), 1, "the second texture is not read");
+    assert!(cache.is_built(), "the index was built before the cancel and stays");
+}
+
+/// Counts how often a read announces its size.
+#[derive(Default)]
+struct Totals(std::cell::Cell<usize>);
+
+impl shaiya_core::Progress for Totals {
+    fn total(&self, _total: Option<u64>, _unit: shaiya_core::Unit) {
+        self.0.set(self.0.get() + 1);
+    }
+}
+
+#[test]
+fn only_the_main_file_reports_progress() {
+    let d = TempDir::new("w6fix-progress");
+    let a = two_skins(&d);
+    for p in [ANI, TORSO] {
+        let totals = Totals::default();
+        let job = Job::new(&totals, Cancel::new());
+        make_preview_look(&a, p, false, 0, &MeshChoice::Default, &MeshInfoCache::default(), &TextureIndexCache::default(), &Look::default(), &job).unwrap();
+        assert_eq!(totals.0.get(), 1, "{p}: the list files, the candidate meshes and the textures report nothing");
+    }
+}
+
+#[test]
+fn a_texture_found_in_another_folder_says_so() {
+    let d = TempDir::new("w6fix-elsewhere");
+    let mlt = mlt_bytes(&["huwm_torso001.3DC"], &["skin.dds"], &[(0, 0, 0)]);
+    let a = open(&d, &[(TORSO, arm_mesh_3dc()), (MLT, mlt), ("Character/Orc/DDS/skin.dds", skin())]);
+    let m = model(preview(&a, TORSO, &Look::default()));
+    assert_eq!(m.line.as_deref(), Some("texture skin.dds (found in another folder) from Character/Human/huwm.MLT (record 0); alpha used as transparency"));
+    assert!(coloured(&m.rgba) > 0);
+}
+
+#[test]
+fn the_textures_switch_shows_only_where_it_does_something() {
+    use shaiya_toolkit::preview_tex::switch_applies;
+    for p in ["Character/Human/3DC/a.3DC", "Character/Human/ANI/a.ANI", "Item/3DO/a.3do", "Effect/3DE/a.3de"] {
+        assert!(switch_applies(p), "{p}");
+    }
+    for p in ["Entity/Model/a.smod", "Entity/Model/a.VANI", "a.dds", "noext"] {
+        assert!(!switch_applies(p), "{p}");
+    }
+}
+
 #[test]
 fn a_plain_archive_without_lists_previews_as_before_apart_from_the_notes() {
     let d = TempDir::new("w6-tex-plain");

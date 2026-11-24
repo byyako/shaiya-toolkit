@@ -244,7 +244,7 @@ pub fn model_preview(src: &dyn FileSource, data: &[u8], path: &str, job: &Job) -
             return None;
         }
         let c = shaiya_clientdata::texture_candidates("Entity/Texture", name).into_iter().find(|c| src.has(c))?;
-        shaiya_clientdata::texture::decode(&src.read(&c, preview_tex::TEXTURE_CAP, job).ok()?, &c).ok()
+        shaiya_clientdata::texture::decode(&src.read(&c, preview_tex::TEXTURE_CAP, &crate::source::quiet(job)).ok()?, &c).ok()
     });
     let n = |n: usize, one: &str, many: &str| shaiya_inspect::counted(n as u64, one, many);
     let header = format!("{}, {}, {} ({} missing)", n(p.modules, "module", "modules"), n(p.triangles, "triangle", "triangles"), n(p.textures, "texture", "textures"), p.missing.len());
@@ -332,7 +332,8 @@ impl TextureIndexCache {
             return Some(done);
         }
         let paths = src.paths();
-        let built = shaiya_clientdata::TextureIndex::build(&paths, &mut |p| src.read(p, LIST_CAP, job).ok(), &mut || job.check().is_err())?;
+        let quiet = crate::source::quiet(job);
+        let built = shaiya_clientdata::TextureIndex::build(&paths, &mut |p| src.read(p, LIST_CAP, &quiet).ok(), &mut || job.check().is_err())?;
         // a list read while the job was being cancelled counts as unreadable: keep nothing of such a build
         job.check().ok()?;
         let mut slot = self.0.lock().unwrap_or_else(|e| e.into_inner());
@@ -415,9 +416,10 @@ pub fn anim_preview(src: &dyn FileSource, data: &[u8], path: &str, mesh: &MeshCh
         })
         .collect();
 
+    let quiet = crate::source::quiet(job);
     let mut read = |p: &str| -> Option<Vec<u8>> {
         job.check().ok()?;
-        src.read(p, MESH_CANDIDATE_LIMIT, job).ok()
+        src.read(p, MESH_CANDIDATE_LIMIT, &quiet).ok()
     };
     let (compatible, defaults) = mesh_candidates(src, path, ani.bones.len(), cache, &mut read);
     let mesh = match mesh {

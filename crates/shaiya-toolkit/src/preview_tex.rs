@@ -5,7 +5,7 @@
 use crate::preview::file_name;
 use crate::source::FileSource;
 use shaiya_clientdata::render::{mip_image_capped, AlphaMode, MipImage};
-use shaiya_clientdata::{AlphaUse, TexRef, TextureIndex};
+use shaiya_clientdata::{AlphaUse, Found, TexRef, TextureIndex};
 use shaiya_core::Job;
 use std::collections::HashMap;
 
@@ -55,6 +55,13 @@ pub fn alpha_words(a: AlphaUse) -> &'static str {
     }
 }
 
+/// Whether the "Textures" switch does anything for the file at `path`: the `.3DC`, `.ANI`, `.3DO` and `.3DE` previews take their textures from
+/// the list files; a `.smod` or `.VANI` is always drawn with its own textures, so it shows no switch.
+pub fn switch_applies(path: &str) -> bool {
+    let ext = path.rsplit_once('.').map(|(_, e)| e.to_ascii_lowercase()).unwrap_or_default();
+    matches!(ext.as_str(), "3dc" | "ani" | "3do" | "3de")
+}
+
 /// The note for a mesh no list file names a texture for.
 pub const NOT_LISTED: &str = "no list file names a texture for this mesh; drawn grey";
 
@@ -76,7 +83,7 @@ pub fn unreadable(name: &str) -> String {
 /// (the caller asks the job again to tell the last case apart).
 pub fn decode_mip(src: &dyn FileSource, path: &str, job: &Job) -> Option<MipImage> {
     job.check().ok()?;
-    let bytes = src.read(path, TEXTURE_CAP, job).ok()?;
+    let bytes = src.read(path, TEXTURE_CAP, &crate::source::quiet(job)).ok()?;
     job.check().ok()?;
     let img = shaiya_clientdata::texture::decode(&bytes, path).ok()?;
     Some(mip_image_capped(&img))
@@ -140,11 +147,17 @@ pub fn for_meshes(src: &dyn FileSource, index: &TextureIndex, mesh_paths: &[Stri
     Some(out)
 }
 
+/// "texture NAME from LIST (record N); ALPHA", with " (found in another folder)" after the name when the list's own folder has no such file.
+pub fn line_of(r: &TexRef) -> String {
+    let elsewhere = if r.by == Found::Elsewhere { " (found in another folder)" } else { "" };
+    format!("texture {}{elsewhere} from {} (record {}); {}", file_name(&r.texture), r.list, r.record, alpha_words(r.alpha))
+}
+
 /// The texture line and choices for the textures `refs` of one `.3DC`; `chosen` is already clamped.
 pub fn info_of(refs: &[TexRef], chosen: usize) -> TextureInfo {
     let r = &refs[chosen];
     TextureInfo {
-        line: format!("texture {} from {} (record {}); {}", file_name(&r.texture), r.list, r.record, alpha_words(r.alpha)),
+        line: line_of(r),
         choices: refs.iter().map(|r| format!("{} (record {})", file_name(&r.texture), r.record)).collect(),
         chosen,
     }
