@@ -23,7 +23,7 @@ i32 collision flag               0, or 1 followed by a collision mesh
   collision mesh:                i32 point count, f32[3] x point count, i32 face count, faces (the same as in a .smod)
 ```
 
-A vertex is 36 bytes: position (3 x f32), normal (3 x f32), a diffuse colour (u32) and texture coordinates (2 x f32).
+A vertex is 36 bytes: position (3 x f32), normal (3 x f32), a diffuse colour (u32) and texture coordinates (2 x f32). The colour reads as ARGB with the alpha byte 0xFF in nearly every vertex (US EP4.5: 548,801 of 549,055; the 254 with alpha 0 have the whole word 0 and lie in 4 files; test `the_vani_vertex_word_has_alpha_ff_almost_everywhere`). Shaiya-GX names this word a bone; the values are not bone indices.
 
 The toolkit keeps floats exactly as stored (NaN bits included) and texture names as raw bytes (displayed as text up to the first NUL), so a file written back is the same bytes as the file read. Before it allocates, the reader checks that `vertices per step x step count x 36` fits in the bytes left. `Vani::to_bytes` writes in memory; the only program that writes a `.VANI` file is `shaiya anim import`, from its JSON and only to the `-o` file.
 

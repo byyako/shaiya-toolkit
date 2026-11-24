@@ -8,7 +8,7 @@ A `.MANI` is exactly 108 bytes, with no counts and no header, little-endian. A f
 
 | Offset | Name (the toolkit's) | Type | Meaning (inferred) |
 |---|---|---|---|
-| 0 | `tick_ms` | i32 | the motion steps once per this many milliseconds |
+| 0 | `tick_ms` | i32 | the motion steps once per this many time units (about 30 steps a second if the unit is milliseconds); 33 in all 23 files on US EP4.5 (test `every_mani_starts_with_33`); read from the client binary (US EP4.5): the client waits until its counter reaches this value before each step, and its default is 33 (unit inferred as milliseconds). Shaiya-GX calls this field a version and requires 33 |
 | 4 | `swing_on` | i32 | rocking about `swing_axis` (0 or 1) |
 | 8 | `swing_axis` | f32 x 3 | axis of the rocking |
 | 20 | `swing_limit` | f32 | radians; the direction flips at this angle |

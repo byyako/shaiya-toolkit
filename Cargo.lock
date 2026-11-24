@@ -2718,6 +2718,7 @@ name = "shaiya-sdata"
 version = "0.4.1"
 dependencies = [
  "serde_json",
+ "shaiya-archive",
  "shaiya-core",
  "shaiya-seed",
  "shaiya-testkit",

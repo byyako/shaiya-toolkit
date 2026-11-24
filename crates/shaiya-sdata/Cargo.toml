@@ -18,3 +18,4 @@ serde_json = { workspace = true }
 
 [dev-dependencies]
 shaiya-testkit = { workspace = true }
+shaiya-archive = { workspace = true }

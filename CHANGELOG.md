@@ -38,6 +38,7 @@ All notable changes are listed here, newest first. The format follows [Keep a Ch
 ### Documentation
 
 - New format pages [.MLT](docs/formats/mlt.md), [.MON](docs/formats/mon.md) and [.ITM](docs/formats/itm.md) (layout, evidence per field, "Verified on"); the [.3DC](docs/formats/3dc.md) page says the mesh names no texture; the version matrix has six new rows (index counts on all nine clients, contents on `us-108`).
+- Format pages corrected after a cross-check with the Shaiya-GX docs and parsers (re-measured on US EP4.5, validated offline): [.3DE](docs/formats/3de.md) frame entries are absolute positions and the two refused files are explained (JSON key names and format version unchanged; the frame label in the JSON `inferred` block now says absolute positions), [NpcQuest.SData](docs/formats/npcquest.md) stock entries are two bytes (type, type id), [.3DC](docs/formats/3dc.md) vertex bytes 18-19 and [.MANI](docs/formats/mani.md) offset 0 and [.VANI](docs/formats/vani.md) vertex colour are documented with their measured numbers, and [skill tables](docs/formats/skill-sdata.md) note that `NpcSkill.SData` offset 4 is a 16-bit number. Tests: `the_3de_frame_entries_are_absolute_positions`, `the_3dc_pad_byte_18_is_a_valid_bone_when_set`, `every_mani_starts_with_33`, `the_vani_vertex_word_has_alpha_ff_almost_everywhere`, `npcquest_stock_pairs_resolve_as_two_bytes`, `npcskill_offset_4_is_a_u16_above_255_in_4_rows` (opt-in, need a client folder).
 
 ### Fixed
 

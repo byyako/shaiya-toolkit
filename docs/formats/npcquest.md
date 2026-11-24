@@ -35,7 +35,7 @@ Each section is `i32 count` followed by the records. A record is:
 | faction | `i32` |
 | name | string |
 | welcome message | string |
-| stock (type 1 only) | `i32 count`, then count x `i16` |
+| stock (type 1 only) | `i32 count`, then count x {`u8` type, `u8` type id}; `0, 0` is an empty slot |
 | **gates** (type 2 only) | 3 x {`u16 map`, `f32 x, y, z`, string name, `u32 cost`} |
 | in-quest list | `i32 count`, then count x `u16` |
 | out-quest list | `i32 count`, then count x `u16` |

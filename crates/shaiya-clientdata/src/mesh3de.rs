@@ -27,7 +27,9 @@ pub struct Vertex3de {
     pub uv: [f32; 2],
 }
 
-/// One frame entry per vertex, 20 bytes: a triple (inferred: a position change) and texture coordinates.
+/// One frame entry per vertex, 20 bytes: an absolute position (x, y, z) and texture coordinates (validated on file contents: US EP4.5
+/// entries equal their vertex position exactly in 153,048 cases; read in Shaiya-GX docs). The field is called `delta` for historical
+/// reasons; it is not a change.
 #[derive(Clone, Debug, PartialEq)]
 pub struct FrameVertex3de {
     pub delta: [f32; 3],

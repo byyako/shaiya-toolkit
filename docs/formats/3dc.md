@@ -30,7 +30,7 @@ A vertex is 40 bytes, in this order:
 | position | f32 x 3 | x, y, z |
 | weight | f32 | the share of `bone1`; the rest goes to `bone2` |
 | `bone1`, `bone2` | u8, u8 | bone indices |
-| `pad` | u16 | not always 0: kept as read |
+| `pad` | u16 | bytes 18 and 19; not always 0: kept as read. Byte 18 is non-zero in 1,185 of the 1,328,909 vertices of meshes with a bone block of US EP4.5 (69 files) and then always a valid bone index of its mesh (measured by the opt-in test `the_3dc_pad_byte_18_is_a_valid_bone_when_set`); Shaiya-GX reads it as a possible third bone slot. Read from the client binary (US EP4.5): the client's skinning code reads only `bone1` and `bone2`, so these two bytes are not used for skinning. The toolkit does not use them |
 | normal | f32 x 3 | |
 | uv | f32 x 2 | texture coordinates |
 

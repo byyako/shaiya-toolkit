@@ -58,7 +58,7 @@ pub(super) fn export(bytes: &[u8], source: &str, json_cap: u64) -> Result<String
     let out = Out {
         format: ModelFormat::Mesh3de.schema(),
         source,
-        inferred: Inferred { max_key: "inferred", frame_vertices: "dx, dy, dz: inferred to be a position change" },
+        inferred: Inferred { max_key: "inferred", frame_vertices: "x, y, z: absolute positions (the key names are historical)" },
         columns: Columns { vertices: &VERTEX_COLUMNS, frame_vertices: &FRAME_COLUMNS },
         layout: if m.block.is_some() { "standard" } else { "static" },
         texture_hex: hex_encode(&m.texture),
@@ -202,7 +202,7 @@ mod tests {
   "source": "tiny.3DE",
   "inferred": {
     "max_key": "inferred",
-    "frame_vertices": "dx, dy, dz: inferred to be a position change"
+    "frame_vertices": "x, y, z: absolute positions (the key names are historical)"
   },
   "columns": {
     "vertices": [
