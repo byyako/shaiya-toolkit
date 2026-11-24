@@ -138,21 +138,72 @@ pub struct ModelPicture {
     pub plain_px: usize,
 }
 
-/// The fixed view of the preview (35 degrees yaw, 25 degrees pitch, orthographic) fitted into [`PREVIEW_SIZE`].
+/// How a texture's alpha channel is used: `Cutout` drops texels under half alpha (the 0.4.1 rule and the default), `Opaque` ignores
+/// alpha and draws the colour.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum AlphaMode {
+    #[default]
+    Cutout,
+    Opaque,
+}
+
+/// How a texture is read at a pixel: the nearest texel of the chosen mip, or a wrap-aware blend of the four nearest.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Filter {
+    Nearest,
+    Bilinear,
+}
+
+/// The orthographic view of the preview: yaw and pitch in degrees, and a zoom that multiplies the fitted scale around the picture's middle.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct View {
+    pub yaw_deg: f32,
+    pub pitch_deg: f32,
+    pub zoom: f32,
+}
+
+impl View {
+    /// The view of 0.4.1: 35 degrees yaw, 25 degrees pitch, no zoom.
+    pub const DEFAULT: View = View { yaw_deg: 35.0, pitch_deg: 25.0, zoom: 1.0 };
+
+    /// Pitch kept within -89..89, zoom within 0.25..8, yaw taken modulo 360; a view with a non-finite number is [`View::DEFAULT`].
+    pub fn sanitized(self) -> View {
+        if !(self.yaw_deg.is_finite() && self.pitch_deg.is_finite() && self.zoom.is_finite()) {
+            return View::DEFAULT;
+        }
+        View { yaw_deg: self.yaw_deg.rem_euclid(360.0), pitch_deg: self.pitch_deg.clamp(-89.0, 89.0), zoom: self.zoom.clamp(0.25, 8.0) }
+    }
+}
+
+impl Default for View {
+    fn default() -> Self {
+        View::DEFAULT
+    }
+}
+
+/// The view of the preview (orthographic) fitted into [`PREVIEW_SIZE`]: `view` turns the model, `scale` is the fitted scale, and the
+/// zoom of `view` multiplies it around the middle.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct PreviewFit {
     pub mid: [f32; 2],
     pub scale: f32,
+    pub view: View,
 }
 
-/// Model space to view space: x right, y up, z away from the viewer, who looks down from above (a rotation, so nothing is
-/// mirrored: the far side of the model is higher in the picture, and a higher point is nearer).
-pub fn preview_view(v: V3) -> V3 {
-    let (sy, cy) = 35f32.to_radians().sin_cos();
-    let (sp, cp) = 25f32.to_radians().sin_cos();
+/// Model space to view space for `view` (yaw, then pitch; zoom is applied by [`PreviewFit::to_points`]): x right, y up, z away from the
+/// viewer, who looks down from above (a rotation, so nothing is mirrored: the far side of the model is higher in the picture, and a
+/// higher point is nearer).
+pub fn view_transform(v: V3, view: View) -> V3 {
+    let (sy, cy) = view.yaw_deg.to_radians().sin_cos();
+    let (sp, cp) = view.pitch_deg.to_radians().sin_cos();
     let x = v[0] * cy + v[2] * sy;
     let z = -v[0] * sy + v[2] * cy;
     [x, v[1] * cp + z * sp, -v[1] * sp + z * cp]
+}
+
+/// [`view_transform`] with [`View::DEFAULT`]: the fixed view of 0.4.1.
+pub fn preview_view(v: V3) -> V3 {
+    view_transform(v, View::DEFAULT)
 }
 
 /// The extent of points in view space, grown point by point (non-finite points are skipped); [`ViewBounds::fit`] is [`PreviewFit::of`].
@@ -160,6 +211,7 @@ pub fn preview_view(v: V3) -> V3 {
 pub struct ViewBounds {
     lo: [f32; 2],
     hi: [f32; 2],
+    view: View,
 }
 
 impl Default for ViewBounds {
@@ -170,11 +222,16 @@ impl Default for ViewBounds {
 
 impl ViewBounds {
     pub fn new() -> ViewBounds {
-        ViewBounds { lo: [f32::MAX; 2], hi: [f32::MIN; 2] }
+        ViewBounds::with_view(View::DEFAULT)
+    }
+
+    /// Bounds in the (sanitized) `view`.
+    pub fn with_view(view: View) -> ViewBounds {
+        ViewBounds { lo: [f32::MAX; 2], hi: [f32::MIN; 2], view: view.sanitized() }
     }
 
     pub fn add(&mut self, p: V3) {
-        let v = preview_view(p);
+        let v = view_transform(p, self.view);
         if !(v[0].is_finite() && v[1].is_finite()) {
             return;
         }
@@ -188,24 +245,35 @@ impl ViewBounds {
             return None;
         }
         let scale = ((PREVIEW_SIZE[0] - 16.0) / (hi[0] - lo[0]).max(0.01)).min((PREVIEW_SIZE[1] - 16.0) / (hi[1] - lo[1]).max(0.01));
-        Some(PreviewFit { mid: [(lo[0] + hi[0]) * 0.5, (lo[1] + hi[1]) * 0.5], scale })
+        Some(PreviewFit { mid: [(lo[0] + hi[0]) * 0.5, (lo[1] + hi[1]) * 0.5], scale, view: self.view })
     }
 }
 
 impl PreviewFit {
     /// The fit of model-space points into the picture with an 8 point margin; `None` without points.
     pub fn of(points: impl Iterator<Item = V3>) -> Option<PreviewFit> {
-        let mut b = ViewBounds::new();
+        PreviewFit::of_view(points, View::DEFAULT)
+    }
+
+    /// [`PreviewFit::of`] in `view`.
+    pub fn of_view(points: impl Iterator<Item = V3>, view: View) -> Option<PreviewFit> {
+        let mut b = ViewBounds::with_view(view);
         for p in points {
             b.add(p);
         }
         b.fit()
     }
 
+    /// Picture points per model unit: the fitted scale times the zoom.
+    pub fn effective_scale(self) -> f32 {
+        self.scale * self.view.zoom
+    }
+
     /// A model-space point in picture points (origin top left), with its view depth.
     pub fn to_points(self, v: V3) -> [f32; 3] {
-        let q = preview_view(v);
-        [PREVIEW_SIZE[0] * 0.5 + (q[0] - self.mid[0]) * self.scale, PREVIEW_SIZE[1] * 0.5 - (q[1] - self.mid[1]) * self.scale, q[2]]
+        let q = view_transform(v, self.view);
+        let s = self.effective_scale();
+        [PREVIEW_SIZE[0] * 0.5 + (q[0] - self.mid[0]) * s, PREVIEW_SIZE[1] * 0.5 - (q[1] - self.mid[1]) * s, q[2]]
     }
 }
 
@@ -228,6 +296,47 @@ pub fn render_picture(tris: &[PreviewTri], textures: &[MipImage], edges: &[[V3; 
 /// [`render_picture`] at `scale` pixels per point (the editor and the model preview use [`PICTURE_SCALE`]; animation frames use
 /// [`ANIM_PICTURE_SCALE`]).
 pub fn render_picture_at(tris: &[PreviewTri], textures: &[MipImage], edges: &[[V3; 2]], fit: PreviewFit, scale: f32) -> ModelPicture {
+    render_picture_with(tris, textures, &[], edges, fit, scale, Filter::Nearest)
+}
+
+/// What a texture gives at (`u`, `v`) on mip `level`: the colour, or `None` where the alpha rule cuts the texel out. Row 0 of the image
+/// is at v = 0; coordinates repeat.
+fn sample(m: &MipImage, level: usize, u: f32, v: f32, mode: AlphaMode, filter: Filter) -> Option<[u8; 3]> {
+    let (lw, lh) = ((m.width >> level).max(1) as usize, (m.height >> level).max(1) as usize);
+    let texel = &m.mips[level];
+    let px = match filter {
+        Filter::Nearest => {
+            let tx = ((u.rem_euclid(1.0) * lw as f32) as usize).min(lw - 1);
+            let ty = ((v.rem_euclid(1.0) * lh as f32) as usize).min(lh - 1);
+            let s = &texel[(ty * lw + tx) * 4..][..4];
+            [s[0], s[1], s[2], s[3]]
+        }
+        Filter::Bilinear => {
+            // texel centres sit at half steps; the four neighbours wrap
+            let (fx, fy) = (u.rem_euclid(1.0) * lw as f32 - 0.5, v.rem_euclid(1.0) * lh as f32 - 0.5);
+            let (x0, y0) = (fx.floor(), fy.floor());
+            let (ax, ay) = (fx - x0, fy - y0);
+            let wrap = |i: f32, n: usize| (i as i64).rem_euclid(n as i64) as usize;
+            let (xa, xb, ya, yb) = (wrap(x0, lw), wrap(x0 + 1.0, lw), wrap(y0, lh), wrap(y0 + 1.0, lh));
+            let at = |x: usize, y: usize, c: usize| texel[(y * lw + x) * 4 + c] as f32;
+            let mut out = [0u8; 4];
+            for (c, o) in out.iter_mut().enumerate() {
+                let top = at(xa, ya, c) * (1.0 - ax) + at(xb, ya, c) * ax;
+                let bottom = at(xa, yb, c) * (1.0 - ax) + at(xb, yb, c) * ax;
+                *o = (top * (1.0 - ay) + bottom * ay).round().clamp(0.0, 255.0) as u8;
+            }
+            out
+        }
+    };
+    if mode == AlphaMode::Cutout && px[3] < 128 {
+        return None;
+    }
+    Some([px[0], px[1], px[2]])
+}
+
+/// [`render_picture_at`] with the texture alpha rule per texture (`alpha[i]` for `textures[i]`; a missing entry is
+/// [`AlphaMode::Cutout`], the 0.4.1 rule) and the texture filter. [`Filter::Nearest`] with no `alpha` is exactly [`render_picture_at`].
+pub fn render_picture_with(tris: &[PreviewTri], textures: &[MipImage], alpha: &[AlphaMode], edges: &[[V3; 2]], fit: PreviewFit, scale: f32, filter: Filter) -> ModelPicture {
     let (w, h) = ((PREVIEW_SIZE[0] * scale) as usize, (PREVIEW_SIZE[1] * scale) as usize);
     let mut rgba = vec![0u8; w * h * 4];
     let mut depth = vec![f32::MAX; w * h];
@@ -251,7 +360,7 @@ pub fn render_picture_at(tris: &[PreviewTri], textures: &[MipImage], edges: &[[V
             continue;
         }
         // the light: a face normal in view space, turned towards the viewer (-z)
-        let v = t.pos.map(preview_view);
+        let v = t.pos.map(|p| view_transform(p, fit.view));
         let (a, b) = ([v[1][0] - v[0][0], v[1][1] - v[0][1], v[1][2] - v[0][2]], [v[2][0] - v[0][0], v[2][1] - v[0][1], v[2][2] - v[0][2]]);
         let mut n = [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
         let nl = (n[0] * n[0] + n[1] * n[1] + n[2] * n[2]).sqrt().max(1e-12);
@@ -261,6 +370,7 @@ pub fn render_picture_at(tris: &[PreviewTri], textures: &[MipImage], edges: &[[V
         let lit = 0.5 + 0.6 * ((n[0] * light[0] + n[1] * light[1] + n[2] * light[2]) / nl).clamp(0.0, 1.0);
         // the mip level: texels per pixel over the triangle
         let tex = t.tex.and_then(|i| textures.get(i)).filter(|m| !m.mips.is_empty());
+        let mode = t.tex.and_then(|i| alpha.get(i)).copied().unwrap_or_default();
         let level = tex.map_or(0, |m| {
             let (u, q) = (t.uv, [m.width as f32, m.height as f32]);
             let uv_area = ((u[1][0] - u[0][0]) * (u[2][1] - u[0][1]) - (u[2][0] - u[0][0]) * (u[1][1] - u[0][1])).abs() * q[0] * q[1];
@@ -289,16 +399,12 @@ pub fn render_picture_at(tris: &[PreviewTri], textures: &[MipImage], edges: &[[V
                 }
                 let (texel, k) = match tex {
                     Some(m) => {
-                        let (lw, lh) = ((m.width >> level).max(1) as usize, (m.height >> level).max(1) as usize);
                         let u = w0 * t.uv[0][0] + w1 * t.uv[1][0] + w2 * t.uv[2][0];
                         let v = w0 * t.uv[0][1] + w1 * t.uv[1][1] + w2 * t.uv[2][1];
-                        let tx = ((u.rem_euclid(1.0) * lw as f32) as usize).min(lw - 1);
-                        let ty = ((v.rem_euclid(1.0) * lh as f32) as usize).min(lh - 1);
-                        let s = &m.mips[level][(ty * lw + tx) * 4..][..4];
-                        if s[3] < 128 {
-                            continue;
+                        match sample(m, level, u, v, mode, filter) {
+                            Some(c) => (c, 1),
+                            None => continue,
                         }
-                        ([s[0], s[1], s[2]], 1)
                     }
                     None => ([170, 170, 170], 2),
                 };
@@ -315,7 +421,7 @@ pub fn render_picture_at(tris: &[PreviewTri], textures: &[MipImage], edges: &[[V
     let textured_px = kind.iter().filter(|k| **k == 1).count();
     let plain_px = kind.iter().filter(|k| **k == 2).count();
     // an edge lies on its own surface, so it may be a little behind the depth there: two points of depth
-    let bias = 2.0 / fit.scale.max(1e-6);
+    let bias = 2.0 / fit.effective_scale().max(1e-6);
     let wire = [170u8, 200, 230];
     let mut on_wire = vec![false; w * h];
     for e in edges {
@@ -500,8 +606,8 @@ fn mesh_edges(faces: &[(usize, [usize; 3])]) -> Vec<(usize, usize, usize)> {
     out
 }
 
-fn tris_of(faces: &[(usize, [usize; 3])], meshes: &[&C3dcMesh], pos: &[Vec<V3>]) -> Vec<PreviewTri> {
-    faces.iter().map(|&(k, c)| PreviewTri { pos: c.map(|i| pos[k][i]), uv: c.map(|i| meshes[k].vertices[i].uv), tex: None }).collect()
+fn tris_of(faces: &[(usize, [usize; 3])], meshes: &[&C3dcMesh], pos: &[Vec<V3>], tex: &[Option<usize>]) -> Vec<PreviewTri> {
+    faces.iter().map(|&(k, c)| PreviewTri { pos: c.map(|i| pos[k][i]), uv: c.map(|i| meshes[k].vertices[i].uv), tex: tex.get(k).copied().flatten() }).collect()
 }
 
 fn edges_of(edges: &[(usize, usize, usize)], pos: &[Vec<V3>]) -> Vec<[V3; 2]> {
@@ -511,6 +617,12 @@ fn edges_of(edges: &[(usize, usize, usize)], pos: &[Vec<V3>]) -> Vec<[V3; 2]> {
 /// The first mesh of a `.3DC` at rest (its raw vertex positions) as a plain grey picture with the wire, at [`PICTURE_SCALE`]; `None` when
 /// the file has no mesh or no face that names existing vertices.
 pub fn c3dc_picture(c: &C3dc) -> Option<ModelPicture> {
+    c3dc_picture_with(c, None, View::DEFAULT)
+}
+
+/// [`c3dc_picture`] in `view`, with `tex` on the mesh when given (bilinear filter, the alpha rule of its [`AlphaMode`]); without `tex` it is
+/// plain grey, as in 0.4.1.
+pub fn c3dc_picture_with(c: &C3dc, tex: Option<(&MipImage, AlphaMode)>, view: View) -> Option<ModelPicture> {
     let mesh = c.meshes.first()?;
     let meshes = [mesh];
     let faces = mesh_faces(&meshes);
@@ -518,10 +630,13 @@ pub fn c3dc_picture(c: &C3dc) -> Option<ModelPicture> {
         return None;
     }
     let pos = vec![mesh.vertices.iter().map(|v| v.pos).collect::<Vec<V3>>()];
-    let tris = tris_of(&faces, &meshes, &pos);
+    let tris = tris_of(&faces, &meshes, &pos, &[tex.map(|_| 0)]);
     let edges = edges_of(&mesh_edges(&faces), &pos);
-    let fit = PreviewFit::of(tris.iter().flat_map(|t| t.pos))?;
-    Some(render_picture(&tris, &[], &edges, fit))
+    let fit = PreviewFit::of_view(tris.iter().flat_map(|t| t.pos), view)?;
+    Some(match tex {
+        Some((m, a)) => render_picture_with(&tris, std::slice::from_ref(m), &[a], &edges, fit, PICTURE_SCALE, Filter::Bilinear),
+        None => render_picture(&tris, &[], &edges, fit),
+    })
 }
 
 /// The pre-rendered frames of an animation: one picture per `step` key units, the same view in every frame.
@@ -551,6 +666,18 @@ pub struct AnimFrames {
 /// the bone origins. Without meshes there are no pictures, only bones (the view fits the bone origins). `cancelled` is asked once per frame
 /// in both passes; `None` when it said yes.
 pub fn anim_frames(ani: &Ani, meshes: &[&C3dcMesh], cancelled: &mut dyn FnMut() -> bool) -> Option<AnimFrames> {
+    let meshes: Vec<(&C3dcMesh, Option<usize>)> = meshes.iter().map(|m| (*m, None)).collect();
+    anim_frames_with(ani, &meshes, &[], &[], View::DEFAULT, cancelled)
+}
+
+/// [`anim_frames`] in `view`, each mesh with the index of its texture in `textures` (`None`: grey; an index past the list: grey) and the
+/// alpha rule of each texture (`alpha[i]` for `textures[i]`; missing = cut-out). Frames use the nearest filter and share the textures; the
+/// number of frames is the same as without textures (at most [`MAX_ANIM_FRAMES`]).
+pub fn anim_frames_with(ani: &Ani, meshes: &[(&C3dcMesh, Option<usize>)], textures: &[MipImage], alpha: &[AlphaMode], view: View, cancelled: &mut dyn FnMut() -> bool) -> Option<AnimFrames> {
+    let view = view.sanitized();
+    let tex_of: Vec<Option<usize>> = meshes.iter().map(|m| m.1).collect();
+    let meshes: Vec<&C3dcMesh> = meshes.iter().map(|m| m.0).collect();
+    let meshes = meshes.as_slice();
     let end = i64::from(ani.end_key.max(0));
     let max_frames = MAX_ANIM_FRAMES as i64;
     let step = ((end + max_frames) / max_frames).max(1);
@@ -574,7 +701,7 @@ pub fn anim_frames(ani: &Ani, meshes: &[&C3dcMesh], cancelled: &mut dyn FnMut() 
     };
 
     // pass 1: the view over every frame
-    let mut bounds = ViewBounds::new();
+    let mut bounds = ViewBounds::with_view(view);
     let mut unposed_vertices = 0;
     for i in 0..count {
         if cancelled() {
@@ -592,7 +719,7 @@ pub fn anim_frames(ani: &Ani, meshes: &[&C3dcMesh], cancelled: &mut dyn FnMut() 
             bounds.add(*v);
         }
     }
-    let fit = bounds.fit().unwrap_or(PreviewFit { mid: [0.0, 0.0], scale: 1.0 });
+    let fit = bounds.fit().unwrap_or(PreviewFit { mid: [0.0, 0.0], scale: 1.0, view });
 
     // pass 2: the pictures and the bone points
     let mut frames = Vec::new();
@@ -618,7 +745,7 @@ pub fn anim_frames(ani: &Ani, meshes: &[&C3dcMesh], cancelled: &mut dyn FnMut() 
         );
         if !faces.is_empty() {
             let (pos, _) = skin_all(&world);
-            let pic = render_picture_at(&tris_of(&faces, meshes, &pos), &[], &edges_of(&edges, &pos), fit, ANIM_PICTURE_SCALE);
+            let pic = render_picture_with(&tris_of(&faces, meshes, &pos, &tex_of), textures, alpha, &edges_of(&edges, &pos), fit, ANIM_PICTURE_SCALE, Filter::Nearest);
             (width, height) = (pic.width, pic.height);
             frames.push(pic.rgba);
         }
@@ -631,16 +758,24 @@ pub fn anim_frames(ani: &Ani, meshes: &[&C3dcMesh], cancelled: &mut dyn FnMut() 
 /// The rest picture of one mesh given as vertices and faces (plain grey with the wire), at [`PICTURE_SCALE`]; `None` when no face names
 /// existing vertices. Used for the `.3DO` and `.3DE` previews.
 pub fn plain_mesh_picture(pos: &[V3], uv: &[[f32; 2]], faces: &[[u16; 3]]) -> Option<ModelPicture> {
+    mesh_picture(pos, uv, faces, None, View::DEFAULT)
+}
+
+/// [`plain_mesh_picture`] in `view`, with `tex` on every triangle when given (bilinear filter, the alpha rule of its [`AlphaMode`]).
+pub fn mesh_picture(pos: &[V3], uv: &[[f32; 2]], faces: &[[u16; 3]], tex: Option<(&MipImage, AlphaMode)>, view: View) -> Option<ModelPicture> {
     let n = pos.len().min(uv.len());
     let valid: Vec<[usize; 3]> = faces.iter().map(|f| f.map(|i| i as usize)).filter(|c| c.iter().all(|&i| i < n)).take(PREVIEW_TRIS).collect();
     if valid.is_empty() {
         return None;
     }
-    let tris: Vec<PreviewTri> = valid.iter().map(|c| PreviewTri { pos: c.map(|i| pos[i]), uv: c.map(|i| uv[i]), tex: None }).collect();
+    let tris: Vec<PreviewTri> = valid.iter().map(|c| PreviewTri { pos: c.map(|i| pos[i]), uv: c.map(|i| uv[i]), tex: tex.map(|_| 0) }).collect();
     let tagged: Vec<(usize, [usize; 3])> = valid.into_iter().map(|c| (0, c)).collect();
     let edges: Vec<[V3; 2]> = mesh_edges(&tagged).into_iter().map(|(_, a, b)| [pos[a], pos[b]]).collect();
-    let fit = PreviewFit::of(tris.iter().flat_map(|t| t.pos))?;
-    Some(render_picture(&tris, &[], &edges, fit))
+    let fit = PreviewFit::of_view(tris.iter().flat_map(|t| t.pos), view)?;
+    Some(match tex {
+        Some((m, a)) => render_picture_with(&tris, std::slice::from_ref(m), &[a], &edges, fit, PICTURE_SCALE, Filter::Bilinear),
+        None => render_picture(&tris, &[], &edges, fit),
+    })
 }
 
 /// One item of a model that is drawn from vertex positions that change from frame to frame: the texture name (may be empty), the faces
@@ -665,15 +800,24 @@ pub struct MorphFrames {
 /// triangles are drawn grey). Pass 1 fits one view over every picture's points, pass 2 renders; `cancelled` is asked once per picture in both
 /// passes and the result is `None` when it said yes. No pictures when no face names a vertex.
 pub fn morph_frames(items: &[MorphItem], count: usize, pos: &mut dyn FnMut(usize, usize) -> Vec<V3>, tex: &mut dyn FnMut(&str) -> Option<Image>, cancelled: &mut dyn FnMut() -> bool) -> Option<MorphFrames> {
+    morph_frames_with(items, &[], count, View::DEFAULT, pos, tex, cancelled)
+}
+
+/// [`morph_frames`] in `view`, with the alpha rule per item (`alpha[k]` for `items[k]`; missing = cut-out; a texture shared by items takes the
+/// rule of the first item that names it).
+pub fn morph_frames_with(items: &[MorphItem], alpha: &[AlphaMode], count: usize, view: View, pos: &mut dyn FnMut(usize, usize) -> Vec<V3>, tex: &mut dyn FnMut(&str) -> Option<Image>, cancelled: &mut dyn FnMut() -> bool) -> Option<MorphFrames> {
+    let view = view.sanitized();
     let step = count.div_ceil(MAX_ANIM_FRAMES).max(1);
     let shown = if count == 0 { 0 } else { (count - 1) / step + 1 };
     // textures, once per distinct name
     let mut textures = Vec::new();
     let mut missing = Vec::new();
+    let mut tex_alpha = Vec::new();
     let mut tex_of: std::collections::HashMap<String, Option<usize>> = std::collections::HashMap::new();
     let item_tex: Vec<Option<usize>> = items
         .iter()
-        .map(|it| {
+        .enumerate()
+        .map(|(k, it)| {
             let name = it.texture.trim();
             if name.is_empty() {
                 return None;
@@ -681,6 +825,7 @@ pub fn morph_frames(items: &[MorphItem], count: usize, pos: &mut dyn FnMut(usize
             *tex_of.entry(name.to_ascii_lowercase()).or_insert_with(|| match tex(name) {
                 Some(i) => {
                     textures.push(mip_image_capped(&i));
+                    tex_alpha.push(alpha.get(k).copied().unwrap_or_default());
                     Some(textures.len() - 1)
                 }
                 None => {
@@ -707,7 +852,7 @@ pub fn morph_frames(items: &[MorphItem], count: usize, pos: &mut dyn FnMut(usize
     let source = |i: usize| i * step;
     let positions = |pos: &mut dyn FnMut(usize, usize) -> Vec<V3>, i: usize| -> Vec<Vec<V3>> { (0..items.len()).map(|k| pos(k, source(i))).collect() };
 
-    let mut bounds = ViewBounds::new();
+    let mut bounds = ViewBounds::with_view(view);
     for i in 0..shown {
         if cancelled() {
             return None;
@@ -716,7 +861,7 @@ pub fn morph_frames(items: &[MorphItem], count: usize, pos: &mut dyn FnMut(usize
             bounds.add(*p);
         }
     }
-    let fit = bounds.fit().unwrap_or(PreviewFit { mid: [0.0, 0.0], scale: 1.0 });
+    let fit = bounds.fit().unwrap_or(PreviewFit { mid: [0.0, 0.0], scale: 1.0, view });
 
     let mut frames = Vec::new();
     let (mut width, mut height) = ((PREVIEW_SIZE[0] * ANIM_PICTURE_SCALE) as usize, (PREVIEW_SIZE[1] * ANIM_PICTURE_SCALE) as usize);
@@ -733,7 +878,7 @@ pub fn morph_frames(items: &[MorphItem], count: usize, pos: &mut dyn FnMut(usize
             .map(|&(k, c)| PreviewTri { pos: c.map(|v| p[k].get(v).copied().unwrap_or([0.0; 3])), uv: c.map(|v| items[k].uv[v]), tex: item_tex[k] })
             .collect();
         let wire: Vec<[V3; 2]> = edges.iter().filter_map(|&(k, a, b)| Some([*p[k].get(a)?, *p[k].get(b)?])).collect();
-        let pic = render_picture_at(&tris, &textures, &wire, fit, ANIM_PICTURE_SCALE);
+        let pic = render_picture_with(&tris, &textures, &tex_alpha, &wire, fit, ANIM_PICTURE_SCALE, Filter::Nearest);
         (width, height) = (pic.width, pic.height);
         frames.push(pic.rgba);
     }
@@ -969,7 +1114,7 @@ mod tests {
         let m = &c.meshes[0];
         let faces = mesh_faces(&[m]);
         let pos = vec![m.vertices.iter().map(|v| v.pos).collect::<Vec<V3>>()];
-        let tris = tris_of(&faces, &[m], &pos);
+        let tris = tris_of(&faces, &[m], &pos, &[]);
         let edges = edges_of(&mesh_edges(&faces), &pos);
         let fit = PreviewFit::of(tris.iter().flat_map(|t| t.pos)).unwrap();
         let (a, b) = (render_picture(&tris, &[], &edges, fit), render_picture_at(&tris, &[], &edges, fit, 2.0));
@@ -1112,5 +1257,281 @@ mod tests {
         assert!(plain_mesh_picture(&pos, &uv, &[[0, 1, 3]]).is_none(), "an index past the vertices is not drawn");
         assert!(plain_mesh_picture(&pos, &uv, &[]).is_none());
         assert!(plain_mesh_picture(&[], &[], &[[0, 0, 0]]).is_none());
+    }
+
+    // ---- alpha modes, filters, views and per-mesh textures (T12 W4) -----------------------------------------------------------------
+
+    fn mip(w: u32, h: u32, rgba: Vec<u8>) -> MipImage {
+        MipImage { width: w, height: h, mips: mip_chain(w, h, rgba) }
+    }
+
+    /// A square standing in the x-y plane (x 0..2, y 0..2), `uv` at its corners in the order (0,0) (2,0) (2,2) (0,2) of x, y.
+    fn quad(uv: [[f32; 2]; 4], tex: Option<usize>) -> Vec<PreviewTri> {
+        let p = [[0.0, 0.0, 0.0], [2.0, 0.0, 0.0], [2.0, 2.0, 0.0], [0.0, 2.0, 0.0]];
+        vec![PreviewTri { pos: [p[0], p[1], p[2]], uv: [uv[0], uv[1], uv[2]], tex }, PreviewTri { pos: [p[0], p[2], p[3]], uv: [uv[0], uv[2], uv[3]], tex }]
+    }
+
+    fn fit_of(tris: &[PreviewTri], view: View) -> PreviewFit {
+        PreviewFit::of_view(tris.iter().flat_map(|t| t.pos), view).unwrap()
+    }
+
+    fn textured(alpha: &[AlphaMode], filter: Filter, tris: &[PreviewTri], tex: &[MipImage]) -> ModelPicture {
+        render_picture_with(tris, tex, alpha, &[], fit_of(tris, View::DEFAULT), 1.0, filter)
+    }
+
+    #[test]
+    fn opaque_draws_texels_whatever_their_alpha() {
+        let tex = [mip(1, 1, vec![200, 40, 40, 0])];
+        // v = 0 on the bottom edge of the quad, 1 on the top
+        let tris = quad([[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]], Some(0));
+        let cut = textured(&[], Filter::Nearest, &tris, &tex);
+        assert_eq!(cut.textured_px, 0, "the default rule drops alpha 0");
+        let opaque = textured(&[AlphaMode::Opaque], Filter::Nearest, &tris, &tex);
+        assert!(opaque.textured_px > 500, "{}", opaque.textured_px);
+        assert!(opaque.rgba.as_chunks::<4>().0.iter().any(|p| p[3] == 255 && p[0] > p[1] + 30), "the texel colour shows");
+    }
+
+    #[test]
+    fn cutout_drops_texels_under_half_alpha() {
+        // left texel opaque, right texel alpha 127 (dropped), and 128 (kept)
+        let tris = quad([[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]], Some(0));
+        let count = |a: u8| textured(&[AlphaMode::Cutout], Filter::Nearest, &tris, &[mip(2, 1, vec![9, 9, 9, 255, 9, 9, 9, a])]).textured_px;
+        let (all, kept, dropped) = (count(255), count(128), count(127));
+        assert_eq!(all, kept, "alpha 128 stays");
+        assert!(dropped * 10 < all * 7 && dropped * 10 > all * 3, "about half is cut out: {dropped} of {all}");
+    }
+
+    #[test]
+    fn a_textured_quad_puts_texel_row_0_at_v_0() {
+        // row 0 red, row 1 blue; v = 0 at the top edge of the quad (y = 2), v = 1 at the bottom (y = 0)
+        let tex = [mip(1, 2, vec![250, 0, 0, 255, 0, 0, 250, 255])];
+        let tris = quad([[0.0, 1.0], [1.0, 1.0], [1.0, 0.0], [0.0, 0.0]], Some(0));
+        let pic = textured(&[], Filter::Nearest, &tris, &tex);
+        let rows: Vec<usize> = (0..pic.height).filter(|&y| (0..pic.width).any(|x| pic.rgba[(y * pic.width + x) * 4 + 3] == 255)).collect();
+        let (top, bottom) = (*rows.first().unwrap(), *rows.last().unwrap());
+        let at = |y: usize| {
+            let x = (0..pic.width).find(|&x| pic.rgba[(y * pic.width + x) * 4 + 3] == 255).unwrap();
+            [pic.rgba[(y * pic.width + x) * 4], pic.rgba[(y * pic.width + x) * 4 + 2]]
+        };
+        let (t, b) = (at(top + 2), at(bottom - 2));
+        assert!(t[0] > t[1] && b[1] > b[0], "top {t:?} bottom {b:?}: row 0 is at v = 0, no flip");
+    }
+
+    #[test]
+    fn uv_outside_0_1_repeats() {
+        let tex = [mip(2, 1, vec![250, 0, 0, 255, 0, 0, 250, 255])];
+        let base = [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]];
+        let shifted = |du: f32, dv: f32| base.map(|c| [c[0] + du, c[1] + dv]);
+        let a = textured(&[], Filter::Nearest, &quad(base, Some(0)), &tex);
+        for (du, dv) in [(3.0, 0.0), (-2.0, 1.0), (4.0, -3.0)] {
+            let b = textured(&[], Filter::Nearest, &quad(shifted(du, dv), Some(0)), &tex);
+            assert!(a.rgba == b.rgba, "shift ({du}, {dv}) repeats the texture");
+        }
+        // two whole repeats across the quad show the pattern twice as often: the colour changes more often along a row
+        let changes = |p: &ModelPicture| {
+            let y = p.height / 2;
+            let row: Vec<bool> = (0..p.width).filter(|&x| p.rgba[(y * p.width + x) * 4 + 3] == 255).map(|x| p.rgba[(y * p.width + x) * 4] > p.rgba[(y * p.width + x) * 4 + 2]).collect();
+            row.windows(2).filter(|w| w[0] != w[1]).count()
+        };
+        let twice = textured(&[], Filter::Nearest, &quad([[0.0, 0.0], [2.0, 0.0], [2.0, 1.0], [0.0, 1.0]], Some(0)), &tex);
+        assert!(changes(&twice) > changes(&a), "{} vs {}", changes(&twice), changes(&a));
+    }
+
+    #[test]
+    fn bilinear_blends_neighbours_and_wraps_at_the_edge() {
+        // two texels, black then white; their centres are at u = 0.25 and 0.75
+        let m = mip(2, 1, vec![0, 0, 0, 255, 255, 255, 255, 255]);
+        let s = |u: f32, f: Filter| sample(&m, 0, u, 0.5, AlphaMode::Cutout, f).unwrap()[0];
+        assert_eq!((s(0.25, Filter::Bilinear), s(0.75, Filter::Bilinear)), (0, 255), "on a centre the texel itself");
+        assert_eq!(s(0.5, Filter::Bilinear), 128, "half way between the centres");
+        assert_eq!(s(0.0, Filter::Bilinear), 128, "at the edge the white texel on the far side blends in (wrap)");
+        assert_eq!(s(1.0, Filter::Bilinear), 128);
+        assert_eq!((s(0.4, Filter::Nearest), s(0.6, Filter::Nearest)), (0, 255), "nearest does not blend");
+        assert!(s(0.4, Filter::Bilinear) > 0 && s(0.4, Filter::Bilinear) < 128);
+        // alpha is filtered before the test: opaque next to clear is 128 at the middle, and kept
+        let edge = mip(2, 1, vec![9, 9, 9, 255, 9, 9, 9, 0]);
+        assert!(sample(&edge, 0, 0.5, 0.5, AlphaMode::Cutout, Filter::Bilinear).is_some());
+        assert!(sample(&edge, 0, 0.7, 0.5, AlphaMode::Cutout, Filter::Bilinear).is_none());
+        assert!(sample(&edge, 0, 0.7, 0.5, AlphaMode::Opaque, Filter::Bilinear).is_some());
+    }
+
+    #[test]
+    fn the_default_view_matches_preview_view_exactly() {
+        // the 0.4.1 formula, copied
+        fn old(v: V3) -> V3 {
+            let (sy, cy) = 35f32.to_radians().sin_cos();
+            let (sp, cp) = 25f32.to_radians().sin_cos();
+            let x = v[0] * cy + v[2] * sy;
+            let z = -v[0] * sy + v[2] * cy;
+            [x, v[1] * cp + z * sp, -v[1] * sp + z * cp]
+        }
+        let mut state = 0x1234_5678u32;
+        let mut next = || {
+            state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            (state >> 8) as f32 / (1u32 << 24) as f32 * 400.0 - 200.0
+        };
+        for _ in 0..1000 {
+            let p = [next(), next(), next()];
+            let bits = |v: V3| v.map(f32::to_bits);
+            assert_eq!(bits(preview_view(p)), bits(old(p)));
+            assert_eq!(bits(view_transform(p, View::DEFAULT)), bits(old(p)));
+            assert_eq!(bits(view_transform(p, View::DEFAULT.sanitized())), bits(old(p)));
+        }
+        // and the fit: the default view's picture points are those of 0.4.1 (zoom 1 multiplies by exactly 1)
+        let fit = PreviewFit { mid: [0.3, -0.7], scale: 17.25, view: View::DEFAULT };
+        let p = [1.5, -2.0, 0.25];
+        let q = old(p);
+        let want = [PREVIEW_SIZE[0] * 0.5 + (q[0] - 0.3) * 17.25, PREVIEW_SIZE[1] * 0.5 - (q[1] + 0.7) * 17.25, q[2]];
+        assert_eq!(fit.to_points(p).map(f32::to_bits), want.map(f32::to_bits));
+    }
+
+    #[test]
+    fn yaw_pitch_turn_and_zoom_scales_around_the_middle() {
+        let flat = View { yaw_deg: 0.0, pitch_deg: 0.0, zoom: 1.0 };
+        let q = view_transform([1.0, 2.0, 3.0], flat);
+        assert!(near(q[0], 1.0, 1e-6) && near(q[1], 2.0, 1e-6) && near(q[2], 3.0, 1e-6), "{q:?}");
+        let q = view_transform([1.0, 2.0, 3.0], View { yaw_deg: 90.0, ..flat });
+        assert!(near(q[0], 3.0, 1e-5) && near(q[1], 2.0, 1e-5) && near(q[2], -1.0, 1e-5), "{q:?}");
+        let q = view_transform([1.0, 2.0, 3.0], View { pitch_deg: 90.0, ..flat });
+        assert!(near(q[0], 1.0, 1e-5) && near(q[1], 3.0, 1e-5) && near(q[2], -2.0, 1e-5), "{q:?}");
+        // zoom: a point 10 units right of the middle is 10 * scale * zoom points right of the picture's middle
+        let mid = [PREVIEW_SIZE[0] * 0.5, PREVIEW_SIZE[1] * 0.5];
+        for zoom in [0.5f32, 1.0, 2.0] {
+            let fit = PreviewFit { mid: [0.0, 0.0], scale: 3.0, view: View { zoom, ..flat } };
+            let p = fit.to_points([10.0, 0.0, 0.0]);
+            assert!(near(p[0] - mid[0], 30.0 * zoom, 1e-4) && near(p[1], mid[1], 1e-4), "zoom {zoom}: {p:?}");
+            assert_eq!(fit.to_points([0.0, 0.0, 0.0])[..2], mid, "the middle stays put");
+        }
+        // sanitized limits
+        let s = View { yaw_deg: -90.0, pitch_deg: 200.0, zoom: 100.0 }.sanitized();
+        assert_eq!((s.yaw_deg, s.pitch_deg, s.zoom), (270.0, 89.0, 8.0));
+        let s = View { yaw_deg: 725.0, pitch_deg: -200.0, zoom: 0.0 }.sanitized();
+        assert_eq!((s.yaw_deg, s.pitch_deg, s.zoom), (5.0, -89.0, 0.25));
+        // a fit in another view differs, and zoom 2 doubles the effective scale
+        let pts = [[0.0, 0.0, 0.0], [4.0, 1.0, 2.0]];
+        let a = PreviewFit::of_view(pts.into_iter(), View::DEFAULT).unwrap();
+        let b = PreviewFit::of_view(pts.into_iter(), View { yaw_deg: 120.0, ..View::DEFAULT }).unwrap();
+        let c = PreviewFit::of_view(pts.into_iter(), View { zoom: 2.0, ..View::DEFAULT }).unwrap();
+        assert!(a != b && a.scale == c.scale && c.effective_scale() == 2.0 * a.scale);
+    }
+
+    #[test]
+    fn a_nan_view_falls_back_to_the_default() {
+        for v in [View { yaw_deg: f32::NAN, ..View::DEFAULT }, View { pitch_deg: f32::INFINITY, ..View::DEFAULT }, View { zoom: f32::NAN, ..View::DEFAULT }] {
+            assert_eq!(v.sanitized(), View::DEFAULT);
+        }
+        let (ani, c) = arm();
+        let m = [(&c.meshes[0], None)];
+        let a = anim_frames_with(&ani, &m, &[], &[], View::DEFAULT, &mut || false).unwrap();
+        let b = anim_frames_with(&ani, &m, &[], &[], View { yaw_deg: f32::NAN, pitch_deg: 3.0, zoom: 2.0 }, &mut || false).unwrap();
+        assert!(a.frames == b.frames && a.bones.len() == b.bones.len());
+        // and the plain function is the default view
+        let plain = anim_frames(&ani, &[&c.meshes[0]], &mut || false).unwrap();
+        assert!(plain.frames == a.frames);
+    }
+
+    /// The arm as two meshes: the first box's faces and the second's (they share the vertices).
+    fn two_arm_meshes() -> (Ani, C3dcMesh, C3dcMesh) {
+        let (ani, c) = arm();
+        let (mut a, mut b) = (c.meshes[0].clone(), c.meshes[0].clone());
+        let all = std::mem::take(&mut a.faces);
+        a.faces = all[..12].to_vec();
+        b.faces = all[12..].to_vec();
+        (ani, a, b)
+    }
+
+    /// (red-ish, blue-ish) opaque pixel counts of a frame.
+    fn colours(frame: &[u8]) -> (usize, usize) {
+        let px = frame.as_chunks::<4>().0;
+        (px.iter().filter(|p| p[3] == 255 && i32::from(p[0]) > i32::from(p[2]) + 60).count(), px.iter().filter(|p| p[3] == 255 && i32::from(p[2]) > i32::from(p[0]) + 60).count())
+    }
+
+    #[test]
+    fn per_mesh_textures_go_to_their_own_triangles() {
+        let (ani, a, b) = two_arm_meshes();
+        let tex = [mip(1, 1, vec![250, 0, 0, 255]), mip(1, 1, vec![0, 0, 250, 255])];
+        let f = anim_frames_with(&ani, &[(&a, Some(0)), (&b, Some(1))], &tex, &[], View::DEFAULT, &mut || false).unwrap();
+        let (red, blue) = colours(&f.frames[0]);
+        assert!(red > 300 && blue > 300, "red {red} blue {blue}: both boxes show their own texture");
+        let g = anim_frames_with(&ani, &[(&a, Some(1)), (&b, Some(0))], &tex, &[], View::DEFAULT, &mut || false).unwrap();
+        let (gred, gblue) = colours(&g.frames[0]);
+        assert!(gred > 300 && gblue > 300 && f.frames[0] != g.frames[0], "swapping the indices swaps the boxes");
+        // a mesh without a texture, or past the list, is plain grey and drawn
+        let h = anim_frames_with(&ani, &[(&a, Some(0)), (&b, Some(9))], &tex, &[], View::DEFAULT, &mut || false).unwrap();
+        let (hred, hblue) = colours(&h.frames[0]);
+        assert!(hred > 300 && hblue == 0 && drawn(&h.frames[0]) > hred, "red {hred} blue {hblue}");
+        // alpha: a cut-out texture of alpha 0 hides its box, the opaque rule shows it
+        let clear = [mip(1, 1, vec![250, 0, 0, 0])];
+        let hidden = anim_frames_with(&ani, &[(&a, Some(0))], &clear, &[], View::DEFAULT, &mut || false).unwrap();
+        let shown = anim_frames_with(&ani, &[(&a, Some(0))], &clear, &[AlphaMode::Opaque], View::DEFAULT, &mut || false).unwrap();
+        assert_eq!(colours(&hidden.frames[0]).0, 0);
+        assert!(colours(&shown.frames[0]).0 > 300);
+    }
+
+    #[test]
+    fn a_textured_animation_has_at_most_241_frames() {
+        let (_, a, b) = two_arm_meshes();
+        let tex = [mip(1, 1, vec![250, 0, 0, 255])];
+        for (end, count) in [(240, 241), (1000, 201), (5000, 239)] {
+            let ani = Ani::parse(&arm_ani(end), "t.ani").unwrap();
+            let f = anim_frames_with(&ani, &[(&a, Some(0)), (&b, Some(0))], &tex, &[], View::DEFAULT, &mut || false).unwrap();
+            assert_eq!((f.frames.len(), f.bones.len()), (count, count), "end key {end}");
+            assert!(f.frames.len() <= MAX_ANIM_FRAMES);
+        }
+    }
+
+    #[test]
+    fn cancel_stops_textured_frames_in_both_passes() {
+        let (ani, a, b) = two_arm_meshes();
+        let tex = [mip(1, 1, vec![250, 0, 0, 255])];
+        let meshes = [(&a, Some(0)), (&b, Some(0))];
+        let mut asked = 0;
+        assert!(anim_frames_with(&ani, &meshes, &tex, &[], View::DEFAULT, &mut || {
+            asked += 1;
+            asked >= 3
+        })
+        .is_none());
+        assert_eq!(asked, 3, "stops at the first yes (pass 1)");
+        let mut asked = 0;
+        assert!(anim_frames_with(&ani, &meshes, &tex, &[], View::DEFAULT, &mut || {
+            asked += 1;
+            asked > 61 + 5
+        })
+        .is_none());
+        assert_eq!(asked, 61 + 6, "stops in pass 2 after five frames");
+    }
+
+    #[test]
+    fn the_textured_still_pictures_use_the_texture_and_the_view() {
+        let (_, c) = arm();
+        let red = mip(2, 2, [250, 0, 0, 255].repeat(4));
+        let grey = c3dc_picture(&c).unwrap();
+        let tex = c3dc_picture_with(&c, Some((&red, AlphaMode::Cutout)), View::DEFAULT).unwrap();
+        assert!(tex.textured_px > 100 && tex.plain_px == 0 && grey.rgba != tex.rgba);
+        assert!(c3dc_picture_with(&c, None, View::DEFAULT).unwrap().rgba == grey.rgba, "no texture is the 0.4.1 picture");
+        let turned = c3dc_picture_with(&c, None, View { yaw_deg: 200.0, ..View::DEFAULT }).unwrap();
+        assert!(turned.rgba != grey.rgba);
+        let pos = [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]];
+        let uv = [[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]];
+        let m = mesh_picture(&pos, &uv, &[[0, 1, 2]], Some((&red, AlphaMode::Opaque)), View::DEFAULT).unwrap();
+        assert!(m.textured_px > 100 && m.plain_px == 0);
+        assert!(mesh_picture(&pos, &uv, &[[0, 1, 2]], None, View::DEFAULT).unwrap().rgba == plain_mesh_picture(&pos, &uv, &[[0, 1, 2]]).unwrap().rgba);
+    }
+
+    #[test]
+    fn morph_frames_with_gives_each_item_its_own_alpha_rule_and_view() {
+        let v = crate::vani::Vani::parse(&shaiya_testkit::anim::box_vani(2, 33), "b.vani").unwrap();
+        let mut items = box_vani_items(&v);
+        items[0].texture = "t.tga".to_string();
+        let clear = |_: &str| Some(Image { width: 1, height: 1, rgba: vec![250, 0, 0, 0] });
+        let mut pos = |_: usize, f: usize| -> Vec<V3> { v.step_vertices(0, f).iter().map(|x| x.pos).collect() };
+        let cut = morph_frames_with(&items, &[AlphaMode::Cutout], 2, View::DEFAULT, &mut pos, &mut |n| clear(n), &mut || false).unwrap();
+        let opaque = morph_frames_with(&items, &[AlphaMode::Opaque], 2, View::DEFAULT, &mut pos, &mut |n| clear(n), &mut || false).unwrap();
+        assert_eq!(colours(&cut.frames.frames[0]).0, 0);
+        assert!(colours(&opaque.frames.frames[0]).0 > 100);
+        let plain = morph_frames(&items, 2, &mut pos, &mut |n| clear(n), &mut || false).unwrap();
+        assert!(plain.frames.frames == cut.frames.frames, "morph_frames is the cut-out default view");
+        let turned = morph_frames_with(&items, &[], 2, View { yaw_deg: 100.0, ..View::DEFAULT }, &mut pos, &mut |n| clear(n), &mut || false).unwrap();
+        assert!(turned.frames.frames != cut.frames.frames);
     }
 }

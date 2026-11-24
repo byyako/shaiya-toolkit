@@ -11,6 +11,7 @@ All notable changes are listed here, newest first. The format follows [Keep a Ch
 ### Libraries
 
 - `shaiya-clientdata`: the new `modellist` module reads the list files `.MLT`, `.MON` and `.ITM` to the last byte (`Mlt`, `Mon`, `Itm`), keeps names as raw bytes and numbers as read, refuses another episode's signature with a reason and checks every count and name length before allocating. On US EP4.5, all 112 `.MLT` (2,176 records), 16 `.MON` (785 records, 2,005 parts) and 17 `.ITM` (1,540 records) files read and write back byte for byte (validated offline); the eight other matrix clients are index only.
+- `shaiya-clientdata`: the renderer draws textures on skinned meshes; alpha is used as cut-out or ignored per texture (`AlphaMode`). New `render_picture_with`, `anim_frames_with`, `c3dc_picture_with`, `mesh_picture` and `morph_frames_with` take a texture per mesh, an alpha rule per texture and a `View` (yaw, pitch, zoom); the still picture filters bilinearly, animation frames use the nearest texel. The default view is the one of 0.4.1 and its pictures are unchanged (tests: `the_default_view_matches_preview_view_exactly`, `per_mesh_textures_go_to_their_own_triangles`, `opaque_draws_texels_whatever_their_alpha`, `cutout_drops_texels_under_half_alpha`).
 - `cargo xtask guard` also refuses tracked files ending `.mlt`, `.mon` and `.itm`.
 
 ### Documentation
