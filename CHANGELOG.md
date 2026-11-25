@@ -4,6 +4,18 @@ All notable changes are listed here, newest first. The format follows [Keep a Ch
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-11-25
+
+Highlights. The entries below give the detail and the test behind each sentence. Everything here was validated offline on synthetic files and, where a line says so, on the US EP4.5 reference client (opt-in tests); nothing was tried in the game by the toolkit's tests, and none of it was tried on a real Shaiya-GX install.
+
+- **Textured and animated previews.** The Archive tab draws models with their textures (from the `.MLT`, `.MON` and `.ITM` lists, DDS, TGA, BMP, JPG and PNG), plays animations on a mesh with pause, step, speed, turn, zoom and Save as PNG, and compares two animations. See [Textures](docs/formats/textures.md).
+- **Animation edits.** Retime, trim and copy tracks into a new `.ANI` (command line and Toolkit), checked before anything is written.
+- **Other programs.** Export models and animations as glTF, OBJ and BVH, and import them back as new files, in the command line and the Toolkit. This is a lossy view of the game files; the exports say so. See [Models and animations in glTF](docs/guides/interchange.md).
+- **Sounds and pictures.** A `.wav` player (PCM and IMA ADPCM), `.ogg` header lines, `.jpg` and `.png` previews.
+- **Loose data folders and Shaiya-GX.** A client that is a folder of plain files opens like an archive and can be changed with a journal and undo in a backup folder you confirm; `svmap check` reads a server whose INIs and maps are in two folders. See [Works with Shaiya-GX](docs/guides/shaiya-gx.md).
+- **New readers and corrections.** `.MLT`, `.MON` and `.ITM` list files are read to the last byte, and several format pages were corrected after a cross-check with the Shaiya-GX documents.
+- **Not in this release.** Effect files (`.EFT`, `.SEFF`) are not read or edited; that work moves to a later release. The sound player was not tried on a real audio device, and the exports were not opened in other programs by the author.
+
 ### shaiya (CLI)
 
 - `shaiya svmap check` takes `--maps MAPS` beside `--server-data GAME` for a server whose INIs and maps are in two folders (Shaiya-GX documents `data/game` and `data/maps`): `check --server-data GAME --maps MAPS` reads the maps from `MAPS` (instead of the first argument; both together, or `--maps` without `--server-data`, exit 2), and with `--maps` a missing `MapWar.ini` is the note `info: MapWar.ini not found (optional with separate map and server folders)...` and not the plain note; the exit code still follows the findings. Validated offline on a synthetic tree, not on a Shaiya-GX install. Tests: `check_with_split_server_folders`, `the_maps_option_needs_server_data_and_excludes_the_target`, `sdata_in_place_on_a_gx_server_tree_keeps_a_bak` (an in-place decrypt or encrypt of a server `NpcQuest.SData` keeps `NpcQuest.SData.bak` and touches no other file).

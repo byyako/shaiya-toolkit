@@ -17,7 +17,7 @@ Every release has two zips per platform:
 
 `SHA256SUMS.txt` on the release page lists `<sha256>  <file>` for every zip. Compare:
 
-- Windows (PowerShell): `Get-FileHash .\shaiya-0.4.1-windows-x86_64.zip -Algorithm SHA256`
+- Windows (PowerShell): `Get-FileHash .\shaiya-0.5.0-windows-x86_64.zip -Algorithm SHA256`
 - Linux: `sha256sum -c SHA256SUMS.txt --ignore-missing`
 - macOS: `shasum -a 256 -c SHA256SUMS.txt --ignore-missing`
 

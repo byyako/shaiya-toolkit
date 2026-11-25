@@ -437,7 +437,7 @@ pub fn import_obj(bytes: &[u8], kind: ImportKind, cancel: Option<&shaiya_core::j
         return Err(ImportError::one(RefusalKind::Unsupported, "materials", format!("the faces use {} materials ({}); a .3DO or .3DE holds one texture name", used.len(), names.join(", "))));
     }
     if let Some(f) = faces.iter().find(|f| f.corners[..f.n].iter().any(|c| c.vt.is_none())) {
-        return Err(ImportError::one(RefusalKind::Format, format!("line {}", f.line), "a corner has no texture coordinate (`vt`); a mesh without them cannot be textured in the game"));
+        return Err(ImportError::one(RefusalKind::Format, format!("line {}", f.line), "a corner has no texture coordinate (`vt`); a mesh without them cannot be textured"));
     }
     let all_normals = faces.iter().all(|f| f.corners[..f.n].iter().all(|c| c.vn.is_some()));
     let want_normals = kind == ImportKind::Mesh3do;

@@ -2752,7 +2752,7 @@ dependencies = [
 
 [[package]]
 name = "shaiya-archive"
-version = "0.4.1"
+version = "0.5.0"
 dependencies = [
  "encoding_rs",
  "serde",
@@ -2763,14 +2763,14 @@ dependencies = [
 
 [[package]]
 name = "shaiya-build"
-version = "0.4.1"
+version = "0.5.0"
 dependencies = [
  "embed-resource",
 ]
 
 [[package]]
 name = "shaiya-cli"
-version = "0.4.1"
+version = "0.5.0"
 dependencies = [
  "clap",
  "serde",
@@ -2791,7 +2791,7 @@ dependencies = [
 
 [[package]]
 name = "shaiya-clientdata"
-version = "0.4.1"
+version = "0.5.0"
 dependencies = [
  "encoding_rs",
  "png",
@@ -2806,7 +2806,7 @@ dependencies = [
 
 [[package]]
 name = "shaiya-core"
-version = "0.4.1"
+version = "0.5.0"
 dependencies = [
  "encoding_rs",
  "serde",
@@ -2816,7 +2816,7 @@ dependencies = [
 
 [[package]]
 name = "shaiya-inspect"
-version = "0.4.1"
+version = "0.5.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -2830,7 +2830,7 @@ dependencies = [
 
 [[package]]
 name = "shaiya-matrix-tests"
-version = "0.4.1"
+version = "0.5.0"
 dependencies = [
  "shaiya-archive",
  "shaiya-clientdata",
@@ -2844,7 +2844,7 @@ dependencies = [
 
 [[package]]
 name = "shaiya-patch"
-version = "0.4.1"
+version = "0.5.0"
 dependencies = [
  "ed25519-dalek",
  "rand_core",
@@ -2858,7 +2858,7 @@ dependencies = [
 
 [[package]]
 name = "shaiya-sdata"
-version = "0.4.1"
+version = "0.5.0"
 dependencies = [
  "serde_json",
  "shaiya-archive",
@@ -2869,7 +2869,7 @@ dependencies = [
 
 [[package]]
 name = "shaiya-seed"
-version = "0.4.1"
+version = "0.5.0"
 dependencies = [
  "serde",
  "shaiya-core",
@@ -2878,7 +2878,7 @@ dependencies = [
 
 [[package]]
 name = "shaiya-svmap"
-version = "0.4.1"
+version = "0.5.0"
 dependencies = [
  "base64",
  "serde",
@@ -2888,7 +2888,7 @@ dependencies = [
 
 [[package]]
 name = "shaiya-svmap-editor"
-version = "0.4.1"
+version = "0.5.0"
 dependencies = [
  "bytemuck",
  "eframe",
@@ -2911,7 +2911,7 @@ dependencies = [
 
 [[package]]
 name = "shaiya-svmap-tools"
-version = "0.4.1"
+version = "0.5.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -2925,11 +2925,11 @@ dependencies = [
 
 [[package]]
 name = "shaiya-testkit"
-version = "0.4.1"
+version = "0.5.0"
 
 [[package]]
 name = "shaiya-toolkit"
-version = "0.4.1"
+version = "0.5.0"
 dependencies = [
  "cpal",
  "egui",
@@ -2949,7 +2949,7 @@ dependencies = [
 
 [[package]]
 name = "shaiya-ui"
-version = "0.4.1"
+version = "0.5.0"
 dependencies = [
  "eframe",
  "egui",
@@ -4268,7 +4268,7 @@ checksum = "e450f9b2ed1dff33c94c12589a87338689467b9c4f5d8a5710bd09a847d2c8a7"
 
 [[package]]
 name = "xtask"
-version = "0.4.1"
+version = "0.5.0"
 dependencies = [
  "miniz_oxide 0.9.1",
  "serde_json",

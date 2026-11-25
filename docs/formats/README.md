@@ -48,13 +48,11 @@ These extensions are in the archives of the nine matrix clients and no page cove
 
 | Extension | `us-108` | Range over nine clients | Clients with any | Planned for |
 |---|---|---|---|---|
-| `.EFT` | 446 | 423 to 969 | 9 | 0.5.0 effects |
-| `.SEFF` | 4 | 4 to 5 | 9 | 0.5.0 effects |
-| `.FX` | 0 | 0 to 6 | 2 | 0.5.0 effects |
+| `.EFT` | 446 | 423 to 969 | 9 | 0.6.0 effects |
+| `.SEFF` | 4 | 4 to 5 | 9 | 0.6.0 effects |
+| `.FX` | 0 | 0 to 6 | 2 | 0.6.0 effects |
 | `.ALT` | 16 | 16 to 19 | 9 | not planned |
-| `.WAV` | 1,019 | 1,019 to 1,679 | 9 | not planned |
 | `.BMP` | 29 | 24 to 209 | 9 | not planned |
-| `.JPG` | 22 | 12 to 148 | 9 | not planned |
 | `.ENV` | 0 | 0 to 139 | 2 | not planned |
 | `.PC` | 128 | 128 | 9 | not planned |
 | `.XML` | 0 | 0 to 88 | 3 | not planned |
@@ -69,7 +67,6 @@ These extensions are in the archives of the nine matrix clients and no page cove
 | `.CFG` | 0 | 0 to 3 | 5 | not planned |
 | `.3DC_` | 0 | 0 to 2 | 5 | not planned |
 | `.TOL` | 0 | 0 to 2 | 7 | not planned |
-| `.PNG` | 0 | 0 to 2 | 1 | not planned |
 | `.EXE` | 0 | 0 to 1 | 8 | not planned |
 | `.ZIP` | 0 | 0 to 1 | 3 | not planned |
 | `.PSD` | 0 | 0 to 1 | 2 | not planned |
