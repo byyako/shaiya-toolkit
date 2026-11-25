@@ -16,6 +16,10 @@ const CHUNK_BIN: u32 = 0x004E_4942;
 pub const MAX_BUFFER_BYTES: usize = 128 << 20;
 /// The most values (elements times components) one accessor may hold; a bigger one is refused before anything is allocated.
 pub const MAX_ACCESSOR_VALUES: usize = 1 << 23;
+/// The most bytes of JSON text one file may hold (the whole `.gltf` text, or the `.glb`'s JSON chunk). The toolkit's own JSON is far below
+/// this; `serde_json` builds a tree of about 16 times the text for a list of small numbers, so the cap bounds that tree. A `.gltf` that
+/// embeds its buffers as data uris counts them, so a bigger model is read as a `.glb`, or as a `.gltf` with a `.bin` beside it.
+pub const MAX_JSON_BYTES: usize = 16 << 20;
 /// The most nodes, accessors, views and animations an imported file may list.
 pub const MAX_LIST: usize = 1 << 20;
 
@@ -69,6 +73,9 @@ pub fn type_width(t: &str) -> Option<usize> {
 impl Gltf {
     /// A `.gltf` text and the bytes of its buffer.
     pub fn from_parts(json: &[u8], bin: &[u8]) -> Result<Gltf, String> {
+        if json.len() > MAX_JSON_BYTES {
+            return Err(format!("the JSON text is over {} MiB (a bigger file is not read; a .gltf with its buffers inside counts them, so write a .glb or a .gltf with a .bin)", MAX_JSON_BYTES >> 20));
+        }
         let json: Value = serde_json::from_slice(json).map_err(|e| format!("the JSON does not parse: {e}"))?;
         Ok(Gltf { json, bin: bin.to_vec(), more: Vec::new() })
     }
@@ -119,6 +126,14 @@ impl Gltf {
 
     pub fn array(&self, key: &str) -> &[Value] {
         self.json.get(key).and_then(Value::as_array).map_or(&[], Vec::as_slice)
+    }
+
+    /// The number of values (elements times components) accessor `idx` says it holds, before anything is decoded; `None` when the entry or its
+    /// `count` or `type` is missing or the product overflows.
+    pub fn accessor_values(&self, idx: usize) -> Option<usize> {
+        let a = self.array("accessors").get(idx)?;
+        let count = usize::try_from(a.get("count")?.as_u64()?).ok()?;
+        count.checked_mul(a.get("type").and_then(Value::as_str).and_then(type_width)?)
     }
 
     /// Reads accessor `idx`: bounds are checked against the view and the buffer before the values are allocated. A sparse or normalized

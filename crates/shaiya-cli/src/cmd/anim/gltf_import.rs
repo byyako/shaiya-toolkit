@@ -6,7 +6,7 @@
 //! never one of the inputs, written through `write_atomic_checked` (the temporary file is read back and checked again).
 
 use super::*;
-use shaiya_clientdata::interchange::gltf_read::{read_beside, Gltf};
+use shaiya_clientdata::interchange::gltf_read::{buffer_name, read_beside, Gltf};
 use shaiya_clientdata::interchange::import::{finish, import_gltf, parse_name_map, ImportError, ImportKind, ImportOptions, ImportReport, Imported, Like};
 
 const MAX_MAP_BYTES: u64 = 1 << 20;
@@ -75,6 +75,12 @@ pub(super) fn run(ctx: &Ctx, a: &ImportArgs) -> Res {
     let bytes = read_capped(&in_path, Some(&in_path), MAX_MODEL_BYTES)?;
     let folder = in_path.parent().filter(|p| !p.as_os_str().is_empty()).map_or_else(|| PathBuf::from("."), Path::to_path_buf);
     let g = Gltf::open(&bytes, &mut |name| read_beside(&folder, name)).map_err(|(_, m)| Error::format(&a.input, None, m))?;
+    // the buffer files read next to the input are inputs too: the output may not be one of them
+    let buffers: Vec<PathBuf> = g.array("buffers").iter().filter_map(|b| b.get("uri").and_then(|u| u.as_str())).filter_map(|u| buffer_name(u).ok()).map(|n| folder.join(n)).collect();
+    if !buffers.is_empty() {
+        let all: Vec<&Path> = protected.iter().copied().chain(buffers.iter().map(PathBuf::as_path)).collect();
+        check_output(ctx, &a.out, a.force, &all)?;
+    }
     let like = match &a.like {
         None => None,
         Some(l) => {
@@ -93,7 +99,7 @@ pub(super) fn run(ctx: &Ctx, a: &ImportArgs) -> Res {
         }
         None => Vec::new(),
     };
-    let opts = ImportOptions { map, reduce_influences: a.reduce_influences, reduce: a.reduce, keys_exact: a.keys.is_some() };
+    let opts = ImportOptions { map, reduce_influences: a.reduce_influences, reduce: a.reduce, keys_exact: a.keys.is_some(), cancel: None };
     let (imp, report) = import_gltf(&g, kind, like.as_ref(), &opts).map_err(|e| Error::format(&a.input, None, reasons(&e)))?;
     // an .ANI is written only when it passes the rig check against its like file, as `anim import` does
     let mut rig = None;

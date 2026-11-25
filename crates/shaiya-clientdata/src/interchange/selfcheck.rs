@@ -477,9 +477,24 @@ fn skinned_pose(g: &Gltf, c3dc: &C3dc, anims: &[Ani]) -> Result<(), String> {
             cases.push((Some((ai, (key - start) / 30.0)), Some((ai, key))));
         }
     }
+    // the exporter takes the rest placement of a bone from the first mesh that has it, so a mesh whose own matrices differ from those
+    // has its own skin and is not expected at its source positions at rest (every animated pose is still compared exactly)
+    let rest_ok: Vec<bool> = c3dc
+        .meshes
+        .iter()
+        .map(|mesh| {
+            mesh.bones.iter().enumerate().all(|(i, b)| {
+                let owner = c3dc.meshes.iter().find(|m| m.bones.len() > i).map_or(b, |m| &m.bones[i]);
+                b.iter().zip(owner).all(|(x, y)| x.to_bits() == y.to_bits())
+            })
+        })
+        .collect();
     for (gl, game) in cases {
         let worlds = sc.worlds(gl, &acc)?;
         for (k, mesh) in c3dc.meshes.iter().enumerate() {
+            if game.is_none() && !rest_ok[k] {
+                continue;
+            }
             let node = &g.array("nodes")[mesh_node[k]];
             let skin_i = idx(node, "skin").ok_or("a skinned mesh node has no skin")?;
             let skin_j = &g.array("skins")[skin_i];
@@ -553,6 +568,15 @@ fn rig_pose(g: &Gltf, a: &Ani) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+/// True for the inputs [`semantic`] poses (a skinned `.3DC` and an animation alone).
+pub fn has_pose_check(input: &GltfInput) -> bool {
+    match input {
+        GltfInput::Mesh { c3dc, .. } => c3dc.layout != crate::mesh3dc::C3dcLayout::Cloak,
+        GltfInput::Anim(_) => true,
+        _ => false,
+    }
 }
 
 /// The semantic pass for `input`.

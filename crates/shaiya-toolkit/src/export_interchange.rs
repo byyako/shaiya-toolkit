@@ -108,11 +108,18 @@ fn run(archive: &Archive, entry: &Entry, path: &str, with_mesh: Option<&str>, ou
             Err(Error::Unsupported("internal error (a bug): the file written did not read back the same".to_string()))
         }
     };
+    // a .bin made new for this export is removed again when the .gltf beside it cannot be written (a replaced one cannot be restored)
+    let bin_is_new = bin_path.as_ref().is_some_and(|b| !b.exists());
     if let Some(b) = &bin_path {
         write_atomic_checked(b, &o.bin, &same(o.bin.clone()))?;
     }
     let main = o.glb.clone().unwrap_or_else(|| o.json.clone());
-    write_atomic_checked(out, &main, &same(main.clone()))?;
+    if let Err(e) = write_atomic_checked(out, &main, &same(main.clone())) {
+        if let (true, Some(b)) = (bin_is_new, &bin_path) {
+            let _ = std::fs::remove_file(b);
+        }
+        return Err(e);
+    }
     Ok(o.report.notes)
 }
 

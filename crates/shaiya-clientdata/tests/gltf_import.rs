@@ -810,3 +810,306 @@ fn more_refusals_and_the_placement_of_a_static_mesh() {
     // a skin on a static import is refused with the way out
     expect(run(&mesh_g, ImportKind::Mesh3do, None, &plain()), RefusalKind::Unsupported, "has a skin", "a skinned mesh as a .3DO");
 }
+
+// ---- ancestors, memory, time and the like-file restoration (the W13 fix) ----------------------------------------------------------------
+
+/// `g` with a new node `name` holding the scene's root nodes, placed by `trs` (a JSON object of translation/rotation/scale).
+fn wrap_scene_roots(g: &mut Gltf, name: &str, trs: serde_json::Value) {
+    let roots = g.json["scenes"][0]["nodes"].clone();
+    let mut node = json!({"name": name, "children": roots});
+    for (k, v) in trs.as_object().unwrap() {
+        node[k] = v.clone();
+    }
+    let nodes = g.json["nodes"].as_array_mut().unwrap();
+    nodes.push(node);
+    let at = nodes.len() - 1;
+    g.json["scenes"][0]["nodes"] = json!([at]);
+}
+
+#[test]
+fn a_transformed_node_above_the_skeleton_is_refused_by_name_and_an_identity_one_is_not() {
+    let ani = rig(0, [0, 8, 20]);
+    let like = Like::Ani(ani.clone());
+    let base = opened(&export(GltfInput::Anim(ani.clone()), "t.ANI"));
+    // an armature object turned 90 degrees, scaled, or moved: the bones below it would move, the game file has no place for that
+    for (case, trs) in [("turned", json!({"rotation": [0.0, std::f64::consts::FRAC_1_SQRT_2, 0.0, std::f64::consts::FRAC_1_SQRT_2]})), ("scaled", json!({"scale": [0.01, 0.01, 0.01]})), ("moved", json!({"translation": [0.0, 5.0, 0.0]}))] {
+        let mut g = base.clone();
+        wrap_scene_roots(&mut g, "Armature", trs);
+        expect(run(&g, ImportKind::Ani, Some(&like), &plain()), RefusalKind::Transform, "\"Armature\"", case);
+        expect(run(&g, ImportKind::Ani, Some(&like), &plain()), RefusalKind::Transform, "is above the skeleton", case);
+    }
+    // an identity parent changes nothing
+    let mut g = base.clone();
+    wrap_scene_roots(&mut g, "Armature", json!({}));
+    let back = ani_of(run(&g, ImportKind::Ani, Some(&like), &ImportOptions { keys_exact: true, ..plain() }).unwrap().0);
+    assert!(passes(&back, &ani));
+    // a chain of two: the one with the transform is named
+    let mut g = base.clone();
+    wrap_scene_roots(&mut g, "Outer", json!({"scale": [2.0, 2.0, 2.0]}));
+    wrap_scene_roots(&mut g, "Inner", json!({}));
+    expect(run(&g, ImportKind::Ani, Some(&like), &plain()), RefusalKind::Transform, "\"Outer\"", "the outer node of two");
+    // the same for a .3DC with a skin
+    let mesh = mesh_for_rig();
+    let mesh_g = opened(&export(GltfInput::Mesh { c3dc: mesh.clone(), anims: vec![rig(0, [0, 8, 20])] }, "t.3DC"));
+    let mut g = mesh_g.clone();
+    // only the bones' root goes below the armature: the mesh node stays at the top
+    let bone_root = g.json["scenes"][0]["nodes"][0].clone();
+    let armature = json!({"name": "Armature", "children": [bone_root], "rotation": [0.0, std::f64::consts::FRAC_1_SQRT_2, 0.0, std::f64::consts::FRAC_1_SQRT_2]});
+    g.json["nodes"].as_array_mut().unwrap().push(armature);
+    let at = g.json["nodes"].as_array().unwrap().len() - 1;
+    g.json["scenes"][0]["nodes"][0] = json!(at);
+    expect(run(&g, ImportKind::C3dc, Some(&Like::C3dc(mesh)), &plain()), RefusalKind::Transform, "\"Armature\"", "a .3DC under a turned armature");
+}
+
+/// A file whose animation has no samplers or channels yet (the caller adds them), and its like file.
+fn aliasing_file() -> (Gltf, Like) {
+    let ani = two_bone_like();
+    let mut g = opened(&export(GltfInput::Anim(ani.clone()), "t.ANI"));
+    g.json["animations"][0]["samplers"] = json!([]);
+    g.json["animations"][0]["channels"] = json!([]);
+    (g, Like::Ani(ani))
+}
+
+/// Gives bone 0's rotation the samplers `pairs` (input accessor, output accessor), one channel each.
+fn set_rotation_samplers(g: &mut Gltf, pairs: &[(usize, usize)]) {
+    let n0 = node_index(g, "Bone_000");
+    let anim = &mut g.json["animations"][0];
+    anim["samplers"] = json!(pairs.iter().map(|(i, o)| json!({"input": i, "output": o, "interpolation": "LINEAR"})).collect::<Vec<_>>());
+    anim["channels"] = json!(pairs.iter().enumerate().map(|(k, _)| json!({"sampler": k, "target": {"node": n0, "path": "rotation"}})).collect::<Vec<_>>());
+}
+
+/// Adds an accessor entry (no data of its own) over view `view` and returns it.
+fn push_accessor_entry(g: &mut Gltf, view: usize, count: usize, ty: &str) -> usize {
+    let accs = g.json["accessors"].as_array_mut().unwrap();
+    accs.push(json!({"bufferView": view, "componentType": 5126, "count": count, "type": ty}));
+    accs.len() - 1
+}
+
+fn push_view(g: &mut Gltf, bytes: usize) -> usize {
+    while !g.bin.len().is_multiple_of(4) {
+        g.bin.push(0);
+    }
+    let off = g.bin.len();
+    g.bin.resize(off + bytes, 0);
+    let len = g.bin.len();
+    g.json["buffers"][0]["byteLength"] = json!(len);
+    let views = g.json["bufferViews"].as_array_mut().unwrap();
+    views.push(json!({"buffer": 0, "byteOffset": off, "byteLength": bytes}));
+    views.len() - 1
+}
+
+/// An accessor of `n` increasing float times.
+fn push_times(g: &mut Gltf, n: usize) -> usize {
+    let view = push_view(g, n * 4);
+    let off = g.json["bufferViews"][view]["byteOffset"].as_u64().unwrap() as usize;
+    for k in 0..n {
+        g.bin[off + k * 4..off + k * 4 + 4].copy_from_slice(&(k as f32 / 30.0).to_le_bytes());
+    }
+    push_accessor_entry(g, view, n, "SCALAR")
+}
+
+#[test]
+fn many_samplers_on_one_large_accessor_are_decoded_once_and_a_sampler_over_the_key_limit_is_refused() {
+    use shaiya_clientdata::interchange::import::{MAX_IMPORT_VALUES, MAX_SAMPLER_KEYS};
+    // 400 samplers read the same 100,000 times and the same 100,000 rotations; the file holds them once. The refusal of a second
+    // rotation channel on one bone is the answer, and it comes without a copy of the data per sampler.
+    let (mut g, like) = aliasing_file();
+    let times = push_times(&mut g, 100_000);
+    let view = push_view(&mut g, 100_000 * 16);
+    let off = g.json["bufferViews"][view]["byteOffset"].as_u64().unwrap() as usize;
+    for k in 0..100_000 {
+        g.bin[off + k * 16 + 12..off + k * 16 + 16].copy_from_slice(&1.0f32.to_le_bytes());
+    }
+    let quats = push_accessor_entry(&mut g, view, 100_000, "VEC4");
+    set_rotation_samplers(&mut g, &vec![(times, quats); 400]);
+    let started = std::time::Instant::now();
+    expect(run(&g, ImportKind::Ani, Some(&like), &plain()), RefusalKind::Animation, "a second rotation channel", "400 channels on one bone");
+    assert!(started.elapsed().as_secs() < 120, "the aliasing file took {:?}", started.elapsed());
+    // a sampler of more key times than a game animation can use is refused before its output is read
+    let (mut g, like) = aliasing_file();
+    let times = push_times(&mut g, MAX_SAMPLER_KEYS + 1);
+    let small = push_view(&mut g, 16);
+    let out = push_accessor_entry(&mut g, small, 1, "VEC4");
+    set_rotation_samplers(&mut g, &[(times, out)]);
+    expect(run(&g, ImportKind::Ani, Some(&like), &plain()), RefusalKind::Limit, "more than", "a sampler over the key limit");
+    // many distinct accessors that together hold more values than one import decodes: the one past the budget is refused
+    let (mut g, like) = aliasing_file();
+    let big = push_view(&mut g, (1 << 23) * 4);
+    let short_times = push_times(&mut g, 4);
+    let n_acc = MAX_IMPORT_VALUES / (1 << 23) + 1;
+    let pairs: Vec<(usize, usize)> = (0..n_acc).map(|_| (short_times, push_accessor_entry(&mut g, big, 1 << 21, "VEC4"))).collect();
+    set_rotation_samplers(&mut g, &pairs);
+    expect(run(&g, ImportKind::Ani, Some(&like), &plain()), RefusalKind::Limit, "values together", "accessors over the budget of one import");
+}
+
+#[test]
+fn json_text_over_the_cap_is_refused_before_it_is_parsed() {
+    use shaiya_clientdata::interchange::gltf_read::MAX_JSON_BYTES;
+    let none = |_: &str| -> Result<Vec<u8>, String> { Err("no files".to_string()) };
+    // a .gltf text of small numbers: it would be a tree of many times its size
+    let mut text = Vec::with_capacity(MAX_JSON_BYTES + 16);
+    text.extend_from_slice(b"{\"asset\":{\"version\":\"2.0\"},\"x\":[");
+    while text.len() <= MAX_JSON_BYTES {
+        text.extend_from_slice(b"0,0,0,0,0,0,0,0,");
+    }
+    text.extend_from_slice(b"0]}");
+    let t = std::time::Instant::now();
+    expect_open(Gltf::open(&text, &mut |n| none(n)), RefusalKind::Format, "over 16 MiB", "a .gltf text over the cap");
+    // the same text as a .glb's JSON chunk
+    while text.len() % 4 != 0 {
+        text.push(b' ');
+    }
+    let mut glb = Vec::new();
+    glb.extend_from_slice(&0x4654_6C67u32.to_le_bytes());
+    glb.extend_from_slice(&2u32.to_le_bytes());
+    glb.extend_from_slice(&((12 + 8 + text.len()) as u32).to_le_bytes());
+    glb.extend_from_slice(&(text.len() as u32).to_le_bytes());
+    glb.extend_from_slice(&0x4E4F_534Au32.to_le_bytes());
+    glb.extend_from_slice(&text);
+    expect_open(Gltf::open(&glb, &mut |n| none(n)), RefusalKind::Format, "over 16 MiB", "a .glb JSON chunk over the cap");
+    assert!(t.elapsed().as_secs() < 60);
+    // the files the toolkit makes are far below the cap
+    let o = export(GltfInput::Mesh { c3dc: mesh_for_rig(), anims: vec![rig(0, [0, 8, 20])] }, "t.3DC");
+    assert!(o.json.len() < MAX_JSON_BYTES / 100, "{} bytes of JSON", o.json.len());
+}
+
+#[test]
+fn a_huge_key_time_is_refused_not_a_panic() {
+    let ani = rig(0, [0, 8, 20]);
+    let like = Like::Ani(ani.clone());
+    let base = opened(&export(GltfInput::Anim(ani), "t.ANI"));
+    // the last time of a rotation track becomes 1e30 s, then the largest finite f32: the span is far over the keys one animation holds
+    for t in [1e30f32, f32::MAX] {
+        let mut g = base.clone();
+        let anim = &g.json["animations"][0];
+        let c = anim["channels"].as_array().unwrap().iter().find(|c| c["target"]["path"] == "rotation" && c["target"]["node"] == 3).unwrap();
+        let acc = anim["samplers"][c["sampler"].as_u64().unwrap() as usize]["input"].as_u64().unwrap() as usize;
+        let view = g.json["accessors"][acc]["bufferView"].as_u64().unwrap() as usize;
+        let at = g.json["bufferViews"][view]["byteOffset"].as_u64().unwrap() as usize + g.json["accessors"][acc].get("byteOffset").and_then(|x| x.as_u64()).unwrap_or(0) as usize;
+        let n = g.json["accessors"][acc]["count"].as_u64().unwrap() as usize;
+        g.bin[at + (n - 1) * 4..at + n * 4].copy_from_slice(&t.to_le_bytes());
+        expect(run(&g, ImportKind::Ani, Some(&like), &plain()), RefusalKind::Limit, "keys", "a huge key time");
+    }
+}
+
+#[test]
+fn a_like_vertex_lends_its_second_bone_only_when_it_is_the_same_vertex() {
+    let mesh = mesh_for_rig();
+    let like = Like::C3dc(mesh.clone());
+    // vertex 2 is a one-bone vertex (weight 1) on bone 3 with the second bone 1; vertex 3 is weight 0 on bone 3 with the first bone 2
+    let o = export(GltfInput::Mesh { c3dc: mesh.clone(), anims: vec![] }, "t.3DC");
+    let base = opened(&o);
+    let bones = |g: &Gltf| -> Vec<(u8, u8, f32)> {
+        let Imported::C3dc(c) = run(g, ImportKind::C3dc, Some(&like), &plain()).unwrap().0 else { panic!() };
+        c.meshes[0].vertices.iter().map(|v| (v.bone1, v.bone2, v.weight)).collect()
+    };
+    let same = bones(&base);
+    assert_eq!(same[2], (3, 1, 1.0), "the same vertex borrows its partner bone");
+    assert_eq!(same[3], (2, 3, 0.0));
+    // change the position of vertex 2 and the texture coordinate of vertex 3 by one bit: they are no longer those vertices
+    let attr = |g: &Gltf, n: &str| g.array("meshes")[0]["primitives"][0]["attributes"][n].as_u64().unwrap() as usize;
+    let offset = |g: &Gltf, acc: usize| {
+        let a = &g.array("accessors")[acc];
+        g.array("bufferViews")[a["bufferView"].as_u64().unwrap() as usize]["byteOffset"].as_u64().unwrap() as usize
+    };
+    let mut g = base.clone();
+    let p = offset(&g, attr(&g, "POSITION")) + 2 * 12;
+    let x = f32::from_le_bytes(g.bin[p..p + 4].try_into().unwrap());
+    g.bin[p..p + 4].copy_from_slice(&f32::from_bits(x.to_bits() ^ 1).to_le_bytes());
+    let u = offset(&g, attr(&g, "TEXCOORD_0")) + 3 * 8;
+    let uv = f32::from_le_bytes(g.bin[u..u + 4].try_into().unwrap());
+    g.bin[u..u + 4].copy_from_slice(&f32::from_bits(uv.to_bits() ^ 1).to_le_bytes());
+    let moved = bones(&g);
+    assert_eq!(moved[2], (3, 3, 1.0), "a vertex that is not the like vertex gets its bone twice");
+    assert_eq!(moved[3], (3, 3, 1.0), "a different texture coordinate is a different vertex too");
+    assert_eq!((moved[0], moved[1]), (same[0], same[1]));
+}
+
+// ---- read_beside: the buffer file next to the glTF -------------------------------------------------------------------------------------
+
+/// A new folder on a file system that can hold links (NTFS under `%LOCALAPPDATA%\Temp` on Windows, the temp folder elsewhere; the scratch
+/// folder is exFAT and cannot).
+struct LinkDir(std::path::PathBuf);
+
+impl LinkDir {
+    fn new(tag: &str) -> LinkDir {
+        let base = std::env::var_os("LOCALAPPDATA").map(|p| std::path::PathBuf::from(p).join("Temp")).filter(|p| p.is_dir()).unwrap_or_else(std::env::temp_dir);
+        let d = base.join(format!("shaiya-w13fix-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        LinkDir(d)
+    }
+}
+
+impl Drop for LinkDir {
+    fn drop(&mut self) {
+        // junctions are removed as links first so the target's files are never touched
+        if let Ok(rd) = std::fs::read_dir(&self.0) {
+            for e in rd.flatten() {
+                if e.file_type().is_ok_and(|t| t.is_symlink()) || std::fs::symlink_metadata(e.path()).is_ok_and(|m| m.file_type().is_symlink()) {
+                    let _ = std::fs::remove_dir(e.path()).or_else(|_| std::fs::remove_file(e.path()));
+                }
+            }
+        }
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+#[test]
+fn a_buffer_next_to_the_file_is_read_and_a_link_out_of_the_folder_is_refused() {
+    use shaiya_clientdata::interchange::gltf_read::read_beside;
+    let t = LinkDir::new("beside");
+    let (home, outside) = (t.0.join("home"), t.0.join("outside"));
+    std::fs::create_dir_all(&home).unwrap();
+    std::fs::create_dir_all(&outside).unwrap();
+    std::fs::write(home.join("model.bin"), b"abcd").unwrap();
+    std::fs::write(outside.join("secret.bin"), b"zzzz").unwrap();
+    // the plain file next to the glTF is read
+    assert_eq!(read_beside(&home, "model.bin").unwrap(), b"abcd");
+    // a missing file and a folder are refused with a reason
+    assert!(read_beside(&home, "missing.bin").unwrap_err().contains("cannot be read"));
+    std::fs::create_dir_all(home.join("dir.bin")).unwrap();
+    assert!(read_beside(&home, "dir.bin").is_err());
+    // a link in the folder to a file outside it (a symbolic link; where that needs a privilege the case is skipped)
+    if link_file(&outside.join("secret.bin"), &home.join("link.bin")) {
+        let e = read_beside(&home, "link.bin").unwrap_err();
+        assert!(e.contains("outside the folder"), "{e}");
+    } else {
+        eprintln!("skipped the file link case: links cannot be made here");
+    }
+    // a folder that is itself a link (a junction on Windows) resolves to its real place: only its real files are read
+    let linked = t.0.join("viahome");
+    if link_dir(&home, &linked) {
+        assert_eq!(read_beside(&linked, "model.bin").unwrap(), b"abcd");
+        // a link inside the folder to the outside folder is not a file
+        if link_dir(&outside, &home.join("out")) {
+            assert!(read_beside(&home, "out").is_err(), "a link to a folder is not a file");
+        }
+    } else {
+        eprintln!("skipped the folder link case: links cannot be made here");
+    }
+}
+
+fn link_file(target: &std::path::Path, link: &std::path::Path) -> bool {
+    #[cfg(unix)]
+    return std::os::unix::fs::symlink(target, link).is_ok();
+    #[cfg(windows)]
+    return std::os::windows::fs::symlink_file(target, link).is_ok();
+    #[cfg(not(any(unix, windows)))]
+    {
+        let _ = (target, link);
+        false
+    }
+}
+
+fn link_dir(target: &std::path::Path, link: &std::path::Path) -> bool {
+    #[cfg(unix)]
+    return std::os::unix::fs::symlink(target, link).is_ok();
+    #[cfg(windows)]
+    return std::process::Command::new("cmd").args(["/C", "mklink", "/J"]).arg(link).arg(target).output().is_ok_and(|o| o.status.success());
+    #[cfg(not(any(unix, windows)))]
+    {
+        let _ = (target, link);
+        false
+    }
+}

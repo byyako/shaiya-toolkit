@@ -351,8 +351,9 @@ pub fn mat_inverse(m: &Mat4) -> Mat4 {
             if r != col {
                 let f = a[r][col];
                 if f != 0.0 {
-                    for c in 0..8 {
-                        a[r][c] -= f * a[col][c];
+                    let pivot_row = a[col];
+                    for (v, p) in a[r].iter_mut().zip(pivot_row) {
+                        *v -= f * p;
                     }
                 }
             }

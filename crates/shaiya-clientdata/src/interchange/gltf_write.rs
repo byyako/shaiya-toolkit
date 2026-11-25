@@ -134,13 +134,17 @@ fn bone_name(i: usize, width: usize) -> String {
     format!("Bone_{i:0width$}")
 }
 
-fn time_accessor(b: &mut Buf, cache: &mut HashMap<Vec<i32>, usize>, start: i32, keys: &[i32]) -> usize {
-    if let Some(&a) = cache.get(keys) {
+/// Time accessors already written, keyed by the clip's start key and the key list: the times are `(key - start) / 30`, so two clips with
+/// the same keys and different starts need their own accessor.
+type TimeCache = HashMap<(i32, Vec<i32>), usize>;
+
+fn time_accessor(b: &mut Buf, cache: &mut TimeCache, start: i32, keys: &[i32]) -> usize {
+    if let Some(&a) = cache.get(&(start, keys.to_vec())) {
         return a;
     }
     let times: Vec<f32> = keys.iter().map(|k| (i64::from(*k) - i64::from(start)) as f32 / 30.0).collect();
     let a = b.floats(&times, None, "SCALAR", 1, true);
-    cache.insert(keys.to_vec(), a);
+    cache.insert((start, keys.to_vec()), a);
     a
 }
 
@@ -168,7 +172,7 @@ fn primitive(b: &mut Buf, m: &Mesh3d, material: usize) -> Value {
     json!({"attributes": attrs, "indices": indices, "material": material, "mode": 4})
 }
 
-fn animation(b: &mut Buf, cache: &mut HashMap<Vec<i32>, usize>, clip: &Clip) -> Value {
+fn animation(b: &mut Buf, cache: &mut TimeCache, clip: &Clip) -> Value {
     let mut samplers = Vec::new();
     let mut channels = Vec::new();
     for (i, bone) in clip.bones.iter().enumerate() {

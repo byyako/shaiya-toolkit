@@ -420,3 +420,59 @@ fn import_help_carries_the_lossy_view_sentence_and_the_flags() {
         assert!(flat.contains(f), "{f}");
     }
 }
+
+#[test]
+fn the_json_import_refuses_the_gltf_only_flags_with_exit_2() {
+    let w = world();
+    let (d, _mesh, ani) = work(&w);
+    let json_path = d.join("x.json");
+    assert_eq!(code(&sh(&w.data, &["anim", "export", p(&ani), "-o", p(&json_path)])), 0);
+    for flag in [&["--reduce"][..], &["--reduce-influences"][..], &["--keys", "exact"][..], &["--map", "m.txt"][..]] {
+        let jout = d.join("out").join("j.ANI");
+        let mut args = vec![p(&json_path), "-o", p(&jout), "--like", p(&ani)];
+        args.extend_from_slice(flag);
+        let o = import(&w, &args);
+        assert_eq!(code(&o), 2, "{flag:?}: {}", err(&o));
+        assert!(err(&o).contains("glTF import"), "{}", err(&o));
+    }
+}
+
+#[test]
+fn a_buffer_file_read_beside_the_gltf_is_never_the_output() {
+    let w = world();
+    let (d, _mesh, ani, gltf, _glb) = exported(&w);
+    // the .gltf names its buffer `buf.ani`; the import to -o buf.ani --force would replace the file it read
+    let mut text: serde_json::Value = serde_json::from_slice(&std::fs::read(&gltf).unwrap()).unwrap();
+    text["buffers"][0]["uri"] = serde_json::json!("buf.ani");
+    let g2 = d.join("b.gltf");
+    std::fs::write(&g2, serde_json::to_vec(&text).unwrap()).unwrap();
+    let buf = d.join("buf.ani");
+    std::fs::copy(d.join("arm.bin"), &buf).unwrap();
+    let before = std::fs::read(&buf).unwrap();
+    let o = import(&w, &[p(&g2), "-o", p(&buf), "--like", p(&ani), "--force"]);
+    assert_eq!(code(&o), 4, "{}", err(&o));
+    assert_eq!(std::fs::read(&buf).unwrap(), before, "the buffer file is untouched");
+}
+
+#[test]
+fn allow_lossy_that_projects_something_says_the_pose_check_was_skipped() {
+    let w = world();
+    let (d, _mesh, ani) = work(&w);
+    let mut sheared = translation_bits(0.0, 1.0, 0.0);
+    sheared[1] = 0.5f32.to_bits();
+    let bone = BoneSpec { parent: -1, matrix: sheared, rot: vec![], trans: vec![] };
+    let input = d.join("in").join("shear.ANI");
+    write(&input, &ani_bytes(0, 10, &[bone]));
+    let target = d.join("shear.glb");
+    let o = export(&w, &[p(&input), "--format", "glb", "-o", p(&target)]);
+    assert_eq!(code(&o), 3, "{}", err(&o));
+    let o = export(&w, &[p(&input), "--format", "glb", "-o", p(&target), "--allow-lossy"]);
+    assert_eq!(code(&o), 0, "{}", err(&o));
+    assert!(err(&o).contains("projected") && err(&o).contains("the pose check was skipped for this file"), "{}", err(&o));
+    // a clean file is posed and the note is absent
+    let clean = export(&w, &[p(&ani), "--format", "glb", "-o", p(&d.join("clean.glb")), "--allow-lossy"]);
+    assert_eq!(code(&clean), 0, "{}", err(&clean));
+    assert!(!err(&clean).contains("pose check was skipped"), "{}", err(&clean));
+    let v = json(&export(&w, &[p(&ani), "--format", "glb", "-o", p(&d.join("clean2.glb")), "--json"]));
+    assert_eq!(v["pose_checked"].as_bool(), Some(true));
+}

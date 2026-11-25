@@ -187,6 +187,9 @@ pub struct Report {
     /// What `--allow-lossy` projected instead of refusing (counted in `projected`; empty without it).
     pub refused: Vec<Refusal>,
     pub projected: usize,
+    /// True when the pose of the skin or the rig was compared with the toolkit's own renderer: false when `--allow-lossy` projected
+    /// something (the file then differs from the game file on purpose) and for the layouts that have no pose check (.3DO, .3DE, a cloak).
+    pub pose_checked: bool,
     /// Things left out or written differently (frames not written, a second skin), in words.
     pub notes: Vec<String>,
     pub nodes: usize,
@@ -220,10 +223,12 @@ pub fn export_gltf(input: GltfInput, opts: &GltfOptions) -> Result<GltfOutput, I
         return Err(InterchangeError::Refused { list: c.refused, more: c.more });
     }
     let built = gltf_write::write(&scene, opts, &input);
+    let pose_checked = c.projected == 0 && selfcheck::has_pose_check(&input);
     selfcheck::check_output(&built.json, &built.bin, built.glb.as_deref(), &input, c.projected == 0)?;
     let report = Report {
         refused: c.overridden,
         projected: c.projected,
+        pose_checked,
         notes: scene.notes.clone(),
         nodes: scene.rig.as_ref().map_or(0, |r| r.parents.len()),
         meshes: scene.meshes.len(),

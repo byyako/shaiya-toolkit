@@ -113,12 +113,20 @@ fn read_like(archive: &Archive, path: &str) -> Result<Vec<u8>> {
     archive.read(path)
 }
 
+/// Reads at most `cap` bytes: a file that grows after the size check is still stopped.
 fn read_capped(path: &Path, cap: u64) -> Result<Vec<u8>> {
-    let meta = std::fs::metadata(path).map_err(|e| Error::io(path, e))?;
-    if meta.len() > cap {
-        return Err(Error::format(path.display().to_string(), None, format!("{} bytes is over the {cap}-byte limit", meta.len())));
+    use std::io::Read;
+    let f = std::fs::File::open(path).map_err(|e| Error::io(path, e))?;
+    let len = f.metadata().map_err(|e| Error::io(path, e))?.len();
+    if len > cap {
+        return Err(Error::format(path.display().to_string(), None, format!("{len} bytes is over the {cap}-byte limit")));
     }
-    std::fs::read(path).map_err(|e| Error::io(path, e))
+    let mut out = Vec::new();
+    f.take(cap + 1).read_to_end(&mut out).map_err(|e| Error::io(path, e))?;
+    if out.len() as u64 > cap {
+        return Err(Error::format(path.display().to_string(), None, format!("more than {cap} bytes: over the limit")));
+    }
+    Ok(out)
 }
 
 fn parse_error(path: &str, e: shaiya_clientdata::Error) -> Error {
@@ -129,7 +137,7 @@ fn parse_error(path: &str, e: shaiya_clientdata::Error) -> Error {
 }
 
 /// What the task does: the kind comes from the row at `path`; an `.ANI` or `.3DC` row is read as the like file.
-pub fn run(archive: &Archive, path: &str, s: &Settings) -> std::result::Result<Made, Refused> {
+pub fn run(archive: &Archive, path: &str, s: &Settings, cancel: shaiya_core::job::Cancel) -> std::result::Result<Made, Refused> {
     let Some(kind) = ImportKind::of_name(path) else { return Err(one("This kind of file is not imported from glTF")) };
     let Some(input) = &s.input else { return Err(one("Choose the glTF file")) };
     if kind != ImportKind::C3dc && s.reduce_influences {
@@ -159,7 +167,7 @@ pub fn run(archive: &Archive, path: &str, s: &Settings) -> std::result::Result<M
         }
         None => Vec::new(),
     };
-    let opts = ImportOptions { map, reduce_influences: s.reduce_influences, reduce: s.reduce, keys_exact: s.keys_exact };
+    let opts = ImportOptions { map, reduce_influences: s.reduce_influences, reduce: s.reduce, keys_exact: s.keys_exact, cancel: Some(cancel) };
     let (imp, report) = import_gltf(&g, kind, like.as_ref(), &opts).map_err(|e| refused_lines(&e))?;
     if let (Imported::Ani(candidate), Some(Like::Ani(target))) = (&imp, &like) {
         if !passes(candidate, target) {
@@ -240,7 +248,11 @@ impl ImportGltf {
         self.result = None;
         let (archive, path) = (self.archive.clone(), self.path.clone());
         let name = s.input.as_ref().and_then(|p| p.file_name()).map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-        self.handle = Some(cx.shell.tasks().spawn(TaskSpec { title: format!("Import {name} as {}", label(self.kind)), cancellable: false, exclusive: None }, move |_job| Ok(run(&archive, &path, &s))));
+        self.handle = Some(cx.shell.tasks().spawn(TaskSpec { title: format!("Import {name} as {}", label(self.kind)), cancellable: true, exclusive: None }, move |job| {
+            let r = run(&archive, &path, &s, job.cancel_token().clone());
+            job.check()?;
+            Ok(r)
+        }));
     }
 
     /// Takes in the worker's answer and the save's.
@@ -359,8 +371,11 @@ impl ImportGltf {
                 if ui.add_enabled(self.settings.input.is_some() && self.handle.is_none(), egui::Button::new("Import")).clicked() {
                     run_now = true;
                 }
-                if self.handle.is_some() {
+                if let Some(h) = &self.handle {
                     ui.label("Working...");
+                    if ui.button("Cancel").clicked() {
+                        h.cancel();
+                    }
                 }
             });
             match &self.result {

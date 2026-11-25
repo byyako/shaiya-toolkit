@@ -124,11 +124,18 @@ fn one(ctx: &Ctx, a: &ExportArgs, input: &str, out_file: &Path) -> Res {
     let o = export_gltf(gi, &options(a, &source, &bin_name, anim_names)).map_err(|e| export_failure(input, e))?;
     let bug = Cell::new(false);
     let fail = |e: Error| if bug.get() { Fail::Bug(e.to_string()) } else { Fail::Error(e) };
+    // a .bin made new for this export is removed again when the .gltf beside it cannot be written (a replaced one cannot be restored)
+    let bin_is_new = bin_path.as_ref().is_some_and(|b| !b.exists());
     if let Some(b) = &bin_path {
         write_atomic_checked(b, &o.bin, &same_bytes_check(&o.bin, &bug)).map_err(fail)?;
     }
     let main: &[u8] = o.glb.as_deref().unwrap_or(&o.json);
-    write_atomic_checked(out_file, main, &same_bytes_check(main, &bug)).map_err(fail)?;
+    if let Err(e) = write_atomic_checked(out_file, main, &same_bytes_check(main, &bug)) {
+        if let (true, Some(b)) = (bin_is_new, &bin_path) {
+            let _ = std::fs::remove_file(b);
+        }
+        return Err(fail(e));
+    }
     report(ctx, input, out_file, bin_path.as_deref(), &o, main.len());
     Ok(0)
 }
@@ -147,6 +154,7 @@ fn report(ctx: &Ctx, input: &str, out_file: &Path, bin: Option<&Path>, o: &GltfO
             "vertices": r.vertices,
             "animations": r.animations,
             "projected": r.projected,
+            "pose_checked": r.pose_checked,
             "notes": r.notes,
         }));
     } else {
@@ -169,7 +177,7 @@ fn report(ctx: &Ctx, input: &str, out_file: &Path, bin: Option<&Path>, o: &GltfO
     }
     if r.projected > 0 {
         let first = r.refused.first().map(|x| format!("; first: {x}")).unwrap_or_default();
-        note(ctx, &format!("note: --allow-lossy projected {} items{first}", r.projected));
+        note(ctx, &format!("note: --allow-lossy projected {} items{first}; the pose check was skipped for this file", r.projected));
     }
     note(ctx, "note: glTF is a lossy view of the game file; the JSON export stays the byte-exact round trip");
 }
@@ -287,10 +295,16 @@ fn entry(
     }
     let bug = Cell::new(false);
     let why = |x: Error| (x.to_string(), if bug.get() { Why::Bug } else { Why::Safety });
+    let bin_is_new = bin_target.as_ref().is_some_and(|b| !b.exists());
     if let Some(b) = &bin_target {
         write_atomic_checked(b, &o.bin, &same_bytes_check(&o.bin, &bug)).map_err(why)?;
     }
     let main: &[u8] = o.glb.as_deref().unwrap_or(&o.json);
-    write_atomic_checked(&target, main, &same_bytes_check(main, &bug)).map_err(why)?;
+    if let Err(e) = write_atomic_checked(&target, main, &same_bytes_check(main, &bug)) {
+        if let (true, Some(b)) = (bin_is_new, &bin_target) {
+            let _ = std::fs::remove_file(b);
+        }
+        return Err(why(e));
+    }
     Ok(target)
 }

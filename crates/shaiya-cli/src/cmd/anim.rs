@@ -59,7 +59,7 @@ pub enum Cmd {
     /// .bin is written next to it, or ends in .glb). glTF, OBJ and BVH are a lossy view of the game file: the game file's own round trip (JSON)
     /// stays byte for byte; an import builds a new file and runs the same checks as `shaiya anim import` before it writes. The result is checked
     /// by the toolkit before it is written (structure, ranges, finite numbers, weights, quaternions and the skinned pose against the toolkit's
-    /// renderer); a file that cannot be written as glTF is exit 3 and the reason names the bone or vertex, a failed check is exit 5.
+    /// renderer; the pose is not compared when --allow-lossy projected something, and the output says so); a file that cannot be written as glTF is exit 3 and the reason names the bone or vertex, a failed check is exit 5.
     ///
     /// Example: shaiya anim export character/human/3dc/huwm_torso001.3dc --from "@us" --format glb --anim character/human/ani/huwm_000_normal.ani -o torso.glb
     Export(ExportArgs),
@@ -1366,6 +1366,9 @@ fn export_one(ctx: &Ctx, a: &ExportArgs, input: &str, out_file: &Path) -> Res {
 fn import(ctx: &Ctx, a: &ImportArgs) -> Res {
     if has_ext(&a.input, &["gltf", "glb"]) {
         return gltf_import::run(ctx, a);
+    }
+    if a.map.is_some() || a.reduce || a.reduce_influences || a.keys.is_some() {
+        return Err(Fail::Usage("--map, --reduce, --reduce-influences and --keys are for a glTF import (IN.gltf or IN.glb) only".to_string()));
     }
     let in_path = resolve(ctx, &a.input)?;
     let json_bytes = read_capped(&in_path, Some(&in_path), MAX_JSON_BYTES)?;

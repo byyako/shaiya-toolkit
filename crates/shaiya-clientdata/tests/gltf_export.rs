@@ -490,6 +490,7 @@ fn bones_that_cannot_be_split_are_refused_by_name_and_projected_with_allow_lossy
     assert!(e.to_string().contains("bone 2"), "{e}");
     let o = export_gltf(GltfInput::Anim(ani), &GltfOptions { allow_lossy: true, ..opts("s.ani") }).unwrap();
     assert!(o.report.projected >= 1 && !o.report.refused.is_empty());
+    assert!(!o.report.pose_checked, "a file with a projection is not posed against the source");
     assert!(structure(&parse(&o)).is_empty());
     // a reflected rest matrix
     let mut ani = rig(0, [0, 8, 20]);
@@ -595,10 +596,26 @@ fn the_node_layout_follows_the_file() {
     assert_eq!(g.json["skins"][0]["skeleton"], 4);
     assert_eq!(g.json["scenes"][0]["nodes"], serde_json::json!([4, 5]));
     assert_eq!(g.json["nodes"][5]["mesh"], 0);
-    // the rest pose is the inverse of the mesh's matrices: inverse of the glTF inverse bind matrix is the node's world matrix
-    let mesh = mesh_for_rig();
-    let inv = mat_inverse(&mesh.meshes[0].bones[2]);
-    let _ = inv;
+    // the rest pose is the inverse of the mesh's matrices: the world matrix of node i times its inverse bind matrix is the identity, so a
+    // point goes through the inverse bind matrix and up the chain of nodes to itself (computed here by quaternion sandwiches)
+    let g = parse(&o);
+    let ev = Eval { g: &g };
+    let (trs, parents) = (ev.local(None, 0.0), parents_of(&g));
+    let ibm = ev.acc(g.json["skins"][0]["inverseBindMatrices"].as_u64().unwrap() as usize);
+    let p = [0.3, -0.7, 1.1];
+    for i in 0..4 {
+        let m = &ibm[i * 16..i * 16 + 16];
+        // column-major: element (r, c) is m[c * 4 + r]
+        let q: [f64; 3] = std::array::from_fn(|r| m[r] * p[0] + m[4 + r] * p[1] + m[8 + r] * p[2] + m[12 + r]);
+        let back = ev.up(&trs, &parents, i, q);
+        for r in 0..3 {
+            assert!((back[r] - p[r]).abs() < 1e-5, "node {i}: {back:?} is not {p:?}");
+        }
+    }
+    // and the node's own placement is the inverse of the mesh's matrix (the first bone, which has no parent): translation = -(B^-1 translation)
+    let b0 = mat_inverse(&mesh_for_rig().meshes[0].bones[0]);
+    let t = g.json["nodes"][0]["translation"].as_array().unwrap();
+    assert!((t[0].as_f64().unwrap() - f64::from(b0[12])).abs() < 1e-6 && (t[2].as_f64().unwrap() + f64::from(b0[14])).abs() < 1e-6, "{t:?} against {:?}", &b0[12..15]);
     // the same input twice gives the same bytes
     let a = export(GltfInput::Mesh { c3dc: mesh_for_rig(), anims: vec![rig(0, [0, 8, 20])] });
     assert_eq!((a.json, a.bin), (o.json, o.bin));
@@ -656,7 +673,105 @@ fn refusals_name_their_kind_and_a_bone_nobody_uses_is_not_one() {
     assert_eq!(parse(&o).json["asset"]["extras"]["shaiya"]["toolkit"], env!("CARGO_PKG_VERSION"));
 }
 
+#[test]
+fn two_clips_with_the_same_keys_and_different_starts_get_their_own_times() {
+    // both clips key the bones at [0, 8, 20]; the first has start 0, the second first field -1 so start -1: the times are (key - start) / 30
+    let (a, b) = (rig(0, [0, 8, 20]), rig(-1, [0, 8, 20]));
+    let mesh = mesh_for_rig();
+    // the export runs its own pose check on both clips (a clip that played one key late would fail it)
+    let o = export(GltfInput::Mesh { c3dc: mesh, anims: vec![a, b] });
+    let g = parse(&o);
+    assert!(o.report.pose_checked);
+    let first_time = |clip: usize| {
+        let anim = &g.array("animations")[clip];
+        let c = anim["channels"].as_array().unwrap().iter().find(|c| c["target"]["path"] == "rotation" && c["target"]["node"] == 3).unwrap();
+        let s = &anim["samplers"][c["sampler"].as_u64().unwrap() as usize];
+        g.accessor(s["input"].as_u64().unwrap() as usize).unwrap().data
+    };
+    let (t0, t1) = (first_time(0), first_time(1));
+    assert_eq!(t0[0], 0.0);
+    assert!((t1[0] - 1.0 / 30.0).abs() < 1e-7 && (t1[1] - 9.0 / 30.0).abs() < 1e-7, "{t1:?}");
+    // the same keys with the same start still share one accessor
+    let (a, b) = (rig(0, [0, 8, 20]), rig(0, [0, 8, 20]));
+    let g = parse(&export(GltfInput::Mesh { c3dc: mesh_for_rig(), anims: vec![a, b] }));
+    let input_of = |clip: usize| {
+        let anim = &g.array("animations")[clip];
+        let c = anim["channels"].as_array().unwrap().iter().find(|c| c["target"]["path"] == "rotation" && c["target"]["node"] == 3).unwrap();
+        anim["samplers"][c["sampler"].as_u64().unwrap() as usize]["input"].as_u64().unwrap()
+    };
+    assert_eq!(input_of(0), input_of(1));
+    // with --allow-lossy and a projection the clips are timed the same way
+    let mut sheared = rig(-1, [0, 8, 20]);
+    sheared.bones[2].matrix = {
+        let mut m = quat_matrix([0.0, 0.0, 0.0, 1.0]);
+        m[1] = 0.5;
+        m[13] = 2.0;
+        m
+    };
+    let o = export_gltf(GltfInput::Mesh { c3dc: mesh_for_rig(), anims: vec![rig(0, [0, 8, 20]), sheared] }, &GltfOptions { allow_lossy: true, ..opts("l.3DC") }).unwrap();
+    assert!(o.report.projected >= 1 && !o.report.pose_checked);
+    let g = parse(&o);
+    let anim = &g.array("animations")[1];
+    let c = anim["channels"].as_array().unwrap().iter().find(|c| c["target"]["path"] == "rotation" && c["target"]["node"] == 3).unwrap();
+    let t = g.accessor(anim["samplers"][c["sampler"].as_u64().unwrap() as usize]["input"].as_u64().unwrap() as usize).unwrap().data;
+    assert!((t[0] - 1.0 / 30.0).abs() < 1e-7, "{t:?}");
+}
+
+#[test]
+fn a_second_mesh_with_its_own_matrices_exports_and_is_posed_exactly_when_animated() {
+    // the second mesh differs from the first in the matrix of bone 2 (and the first in bone 1: it also differs from the rest pose's owner)
+    let first = mesh_for_rig();
+    let mut other = mesh_for_rig();
+    other.meshes[0].bones[2][13] += 0.4;
+    other.meshes[0].bones[2][12] -= 0.2;
+    let c3dc = C3dc::parse(&[first.to_bytes(), other.to_bytes()].concat(), "two.3dc").unwrap();
+    assert_eq!(c3dc.meshes.len(), 2);
+    assert_ne!(c3dc.meshes[0].bones[2], c3dc.meshes[1].bones[2]);
+    for anims in [vec![], vec![rig(0, [0, 8, 20])]] {
+        // before the fix this was refused as a bug: the rest check expected the source positions of the mesh that has its own skin
+        let o = export(GltfInput::Mesh { c3dc: c3dc.clone(), anims: anims.clone() });
+        let g = parse(&o);
+        assert_eq!(g.array("skins").len(), 2, "each mesh keeps its own skin");
+        assert!(o.report.notes.iter().any(|n| n.contains("different inverse bind matrices")), "{:?}", o.report.notes);
+        assert!(structure(&g).is_empty());
+        assert!(o.report.pose_checked);
+        // the animated pose of the second mesh is still compared exactly by the export's own check (semantic ran in export_gltf)
+        assert!(semantic(&g, &GltfInput::Mesh { c3dc: c3dc.clone(), anims }).is_ok());
+    }
+}
+
+#[test]
+fn positions_normals_texture_coordinates_and_winding_are_mirrored_exactly() {
+    let mesh = mesh_for_rig();
+    let o = export(GltfInput::Mesh { c3dc: mesh.clone(), anims: vec![] });
+    let g = parse(&o);
+    let attrs = &g.array("meshes")[0]["primitives"][0]["attributes"];
+    let (pos, nor, uv) = (g.accessor(attrs["POSITION"].as_u64().unwrap() as usize).unwrap().data, g.accessor(attrs["NORMAL"].as_u64().unwrap() as usize).unwrap().data, g.accessor(attrs["TEXCOORD_0"].as_u64().unwrap() as usize).unwrap().data);
+    for (i, v) in mesh.meshes[0].vertices.iter().enumerate() {
+        assert_eq!([pos[i * 3] as f32, pos[i * 3 + 1] as f32, pos[i * 3 + 2] as f32], [v.pos[0], v.pos[1], -v.pos[2]], "position {i}");
+        assert_eq!([nor[i * 3] as f32, nor[i * 3 + 1] as f32, nor[i * 3 + 2] as f32], [v.normal[0], v.normal[1], -v.normal[2]], "normal {i}");
+        assert_eq!([uv[i * 2] as f32, uv[i * 2 + 1] as f32], v.uv, "uv {i}");
+    }
+    let idx = g.accessor(g.array("meshes")[0]["primitives"][0]["indices"].as_u64().unwrap() as usize).unwrap().data;
+    for (k, f) in mesh.meshes[0].faces.iter().enumerate() {
+        assert_eq!([idx[k * 3] as u16, idx[k * 3 + 1] as u16, idx[k * 3 + 2] as u16], [f[0], f[2], f[1]], "face {k}");
+    }
+}
+
+#[test]
+fn the_pose_check_is_reported_and_skipped_only_when_lossy_projected_something() {
+    let ok = export(GltfInput::Anim(rig(0, [0, 8, 20])));
+    assert!(ok.report.pose_checked && ok.report.projected == 0);
+    let lossy_clean = export_gltf(GltfInput::Anim(rig(0, [0, 8, 20])), &GltfOptions { allow_lossy: true, ..opts("a.ani") }).unwrap();
+    assert!(lossy_clean.report.pose_checked, "--allow-lossy that projected nothing still poses the file");
+    let o = export(GltfInput::Mesh3do(Mesh3do::parse(&box_3do(), "b.3do").unwrap()));
+    assert!(!o.report.pose_checked, "a .3DO has no pose check");
+}
+
 // ---- opt-in: the Khronos validator --------------------------------------------------------------------------------------------------
+
+/// The version of `gltf-validator` the docs name.
+const VALIDATOR_VERSION: &str = "2.0.0-dev.3.10";
 
 /// The pinned driver of the validator (gltf-validator 2.0.0-dev.3.10, run offline under node): validates each file given, reading the `.bin`
 /// of a `.gltf` from its own folder, and prints one JSON array with the counts and the codes of every message.
@@ -725,6 +840,14 @@ fn the_khronos_validator_accepts_the_output() {
     }
     let nested = val.join("node_modules").join("gltf-validator");
     let validator = if nested.is_dir() { nested } else { val };
+    // the docs name this exact version: any other is not what the claim measured
+    let version = std::fs::read_to_string(validator.join("package.json")).ok().and_then(|t| serde_json::from_str::<Value>(&t).ok()).and_then(|v| v["version"].as_str().map(str::to_string)).unwrap_or_default();
+    if version != VALIDATOR_VERSION {
+        let require = std::env::var("SHAIYA_OPTIN_REQUIRE").unwrap_or_default();
+        assert!(!require.split(',').any(|n| n.trim() == "SHAIYA_GLTF_VALIDATOR"), "the validator is version {version:?}, the docs name {VALIDATOR_VERSION}");
+        eprintln!("skipped: the validator is version {version:?}, the docs name {VALIDATOR_VERSION}");
+        return;
+    }
     let dir = ScratchDir(scratch.join(format!("w12-validator-{}", std::process::id())));
     std::fs::create_dir_all(&dir.0).unwrap();
     let mut files = Vec::new();

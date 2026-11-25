@@ -15,9 +15,16 @@ use crate::mesh3dc::{C3dc, C3dcLayout, C3dcMesh, C3dcVertex};
 use crate::mesh3do::{Mesh3do, Vertex3do};
 use serde_json::Value;
 use std::collections::HashMap;
+use std::ops::Deref;
+use std::rc::Rc;
 
 /// The most refusals listed; the rest are counted.
 const LIST_CAP: usize = 200;
+/// The most accessor values (elements times components) one import decodes in all: an accessor that many samplers or primitives name is
+/// decoded once and counted once.
+pub const MAX_IMPORT_VALUES: usize = 1 << 25;
+/// The most key times one animation sampler may hold (eight times the keys one animation is sampled at).
+pub const MAX_SAMPLER_KEYS: usize = MAX_KEYS * 8;
 /// The most whole keys one animation is sampled at.
 pub const MAX_KEYS: usize = 20_000;
 /// The most vertices of one mesh of a game file (indices are 16 bit).
@@ -73,6 +80,14 @@ pub struct ImportOptions {
     pub reduce: bool,
     /// Use the file's own key times (each a multiple of 1/30 s) and its linear values; no resampling.
     pub keys_exact: bool,
+    /// Checked once per bone and once per 1024 vertices: when set, the import stops with a refusal that says "cancelled" and nothing is made.
+    pub cancel: Option<shaiya_core::job::Cancel>,
+}
+
+impl ImportOptions {
+    fn stopped(&self) -> bool {
+        self.cancel.as_ref().is_some_and(shaiya_core::job::Cancel::is_cancelled)
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -141,6 +156,8 @@ impl std::error::Error for ImportError {}
 struct Col {
     list: Vec<Refusal>,
     more: usize,
+    /// Accessor values decoded so far (against [`MAX_IMPORT_VALUES`]).
+    decoded: usize,
 }
 
 impl Col {
@@ -337,10 +354,22 @@ const FLOAT: u32 = 5126;
 
 /// Reads the accessor `idx` as `what` wants it: the component types and the number of components, else a refusal that says why.
 fn get_acc(g: &Gltf, idx: &Value, what: &str, types: &[u32], width: usize, col: &mut Col) -> Option<Accessor> {
+    let a = decode_acc(g, idx, what, col)?;
+    fits(&a, idx.as_u64().unwrap_or(0), what, types, width, col).then_some(a)
+}
+
+/// Decodes the accessor `idx` names, counting its values against the import's budget before anything is allocated.
+fn decode_acc(g: &Gltf, idx: &Value, what: &str, col: &mut Col) -> Option<Accessor> {
     let Some(i) = idx.as_u64() else {
         col.add(RefusalKind::Format, what, "names an accessor that is not an index");
         return None;
     };
+    if let Some(n) = g.accessor_values(i as usize) {
+        if col.decoded.saturating_add(n) > MAX_IMPORT_VALUES {
+            col.add(RefusalKind::Limit, what, format!("the accessors read so far and accessor {i} hold more than {MAX_IMPORT_VALUES} values together"));
+            return None;
+        }
+    }
     match g.accessor(i as usize) {
         Err(m) => {
             let kind = if m.contains("sparse") || m.contains("normalized") { RefusalKind::Unsupported } else if m.contains("more than") { RefusalKind::Limit } else { RefusalKind::Format };
@@ -348,14 +377,36 @@ fn get_acc(g: &Gltf, idx: &Value, what: &str, types: &[u32], width: usize, col: 
             None
         }
         Ok(a) => {
-            if !types.contains(&a.component_type) || a.width != width {
-                let want = if types == [FLOAT] { "32-bit floats".to_string() } else { "unsigned integers".to_string() };
-                col.add(RefusalKind::Unsupported, what, format!("accessor {i} does not hold {width} {want} per element (component type {}, {} per element): quantized data is not read", a.component_type, a.width));
-                return None;
-            }
+            col.decoded = col.decoded.saturating_add(a.data.len());
             Some(a)
         }
     }
+}
+
+/// True when `a` holds `width` numbers of one of `types` per element; else a refusal that says why.
+fn fits(a: &Accessor, i: u64, what: &str, types: &[u32], width: usize, col: &mut Col) -> bool {
+    if !types.contains(&a.component_type) || a.width != width {
+        let want = if types == [FLOAT] { "32-bit floats".to_string() } else { "unsigned integers".to_string() };
+        col.add(RefusalKind::Unsupported, what, format!("accessor {i} does not hold {width} {want} per element (component type {}, {} per element): quantized data is not read", a.component_type, a.width));
+        return false;
+    }
+    true
+}
+
+/// The animation accessors already decoded, by index: many samplers may name one accessor and it is decoded once.
+type AccCache = HashMap<usize, Rc<Accessor>>;
+
+fn get_acc_shared(g: &Gltf, cache: &mut AccCache, idx: &Value, what: &str, width: usize, col: &mut Col) -> Option<Rc<Accessor>> {
+    let i = idx.as_u64().unwrap_or(0);
+    let a = match idx.as_u64().and_then(|i| cache.get(&(i as usize))) {
+        Some(a) => Rc::clone(a),
+        None => {
+            let a = Rc::new(decode_acc(g, idx, what, col)?);
+            cache.insert(i as usize, Rc::clone(&a));
+            a
+        }
+    };
+    fits(&a, i, what, &[FLOAT], width, col).then_some(a)
 }
 
 // ---- textures -----------------------------------------------------------------------------------------------------------------------
@@ -613,6 +664,31 @@ fn match_bones(nodes: &[Node], bones: usize, map: &[(String, usize)], all: bool,
         let shown: Vec<&str> = extra.iter().take(10).map(String::as_str).collect();
         col.add(RefusalKind::Names, "joints", format!("{} nodes name bones the like file does not have ({} bones): {}{}", extra.len(), bones, shown.join(", "), if extra.len() > 10 { ", ..." } else { "" }));
     }
+    // a node above the skeleton that is no bone moves every bone below it; the game file has no place for that placement, so it must be
+    // the identity (apply it in the program that made the file)
+    let mut flagged: Vec<usize> = Vec::new();
+    for (i, nb) in node_bone.iter().enumerate() {
+        if nb.is_none() {
+            continue;
+        }
+        let mut at = nodes[i].parent;
+        let mut steps = 0;
+        while let Some(p) = at {
+            steps += 1;
+            if steps > nodes.len() {
+                break;
+            }
+            if node_bone[p].is_none() && !is_identity(&nodes[p].trs) && !flagged.contains(&p) {
+                flagged.push(p);
+                col.add(
+                    RefusalKind::Transform,
+                    label(p, &nodes[p].name),
+                    "is above the skeleton and has a transform (a rotation, scale or move) that the game file cannot hold: apply it in the program that made the file",
+                );
+            }
+            at = nodes[p].parent;
+        }
+    }
     if all {
         let missing: Vec<usize> = (0..bones).filter(|b| bone_node[*b].is_none()).collect();
         if !missing.is_empty() {
@@ -632,9 +708,21 @@ enum Interp {
     Cubic,
 }
 
+/// The numbers of a decoded accessor, shared by every channel that reads them.
+#[derive(Clone)]
+struct Data(Rc<Accessor>);
+
+impl Deref for Data {
+    type Target = [f64];
+    fn deref(&self) -> &[f64] {
+        &self.0.data
+    }
+}
+
+#[derive(Clone)]
 struct Chan {
-    times: Vec<f64>,
-    vals: Vec<f64>,
+    times: Data,
+    vals: Data,
     width: usize,
     interp: Interp,
 }
@@ -757,6 +845,7 @@ fn read_animation(g: &Gltf, nodes: &[Node], node_bone: &[Option<usize>], bones: 
     let mut chans: Vec<BoneChans> = (0..bones).map(|_| BoneChans::default()).collect();
     let (mut tmin, mut tmax) = (f64::INFINITY, f64::NEG_INFINITY);
     let mut cache: HashMap<usize, Option<Chan>> = HashMap::new();
+    let mut accs: AccCache = HashMap::new();
     for (ci, c) in channels.iter().enumerate() {
         let what = format!("{name}, channel {ci}");
         let target = c.get("target");
@@ -793,10 +882,10 @@ fn read_animation(g: &Gltf, nodes: &[Node], node_bone: &[Option<usize>], bones: 
         let key = si * 8 + width;
         let ch = match cache.entry(key) {
             std::collections::hash_map::Entry::Occupied(e) => e.into_mut(),
-            std::collections::hash_map::Entry::Vacant(v) => v.insert(read_sampler(g, &samplers[si], width, &format!("{name}, sampler {si}"), col)),
+            std::collections::hash_map::Entry::Vacant(v) => v.insert(read_sampler(g, &mut accs, &samplers[si], width, &format!("{name}, sampler {si}"), col)),
         };
         let Some(ch) = ch.as_ref() else { continue };
-        let copy = Chan { times: ch.times.clone(), vals: ch.vals.clone(), width: ch.width, interp: ch.interp };
+        let copy = ch.clone();
         tmin = tmin.min(copy.times[0]);
         tmax = tmax.max(copy.times[copy.times.len() - 1]);
         let slot = match path {
@@ -818,7 +907,7 @@ fn read_animation(g: &Gltf, nodes: &[Node], node_bone: &[Option<usize>], bones: 
     Some(AnimData { name, chans, start_key, end_key, tmin, tmax })
 }
 
-fn read_sampler(g: &Gltf, s: &Value, width: usize, what: &str, col: &mut Col) -> Option<Chan> {
+fn read_sampler(g: &Gltf, accs: &mut AccCache, s: &Value, width: usize, what: &str, col: &mut Col) -> Option<Chan> {
     let interp = match s.get("interpolation").and_then(Value::as_str).unwrap_or("LINEAR") {
         "LINEAR" => Interp::Linear,
         "STEP" => Interp::Step,
@@ -832,8 +921,13 @@ fn read_sampler(g: &Gltf, s: &Value, width: usize, what: &str, col: &mut Col) ->
         col.add(RefusalKind::Format, what, "the sampler has no input or output");
         return None;
     };
-    let input = get_acc(g, input, &format!("{what}, input"), &[FLOAT], 1, col)?;
-    let output = get_acc(g, output, &format!("{what}, output"), &[FLOAT], width, col)?;
+    // the key times are looked at before the output is decoded: a sampler of more keys than an animation can use is refused cheaply
+    if input.as_u64().and_then(|i| g.accessor_values(i as usize)).is_some_and(|n| n > MAX_SAMPLER_KEYS) {
+        col.add(RefusalKind::Limit, what, format!("the sampler has more than {MAX_SAMPLER_KEYS} key times (a game animation is sampled at most {MAX_KEYS} keys long)"));
+        return None;
+    }
+    let input = get_acc_shared(g, accs, input, &format!("{what}, input"), 1, col)?;
+    let output = get_acc_shared(g, accs, output, &format!("{what}, output"), width, col)?;
     let n = input.count;
     let want = if interp == Interp::Cubic { 3 * n } else { n };
     if output.count != want || (interp == Interp::Cubic && n < 2) {
@@ -861,7 +955,7 @@ fn read_sampler(g: &Gltf, s: &Value, width: usize, what: &str, col: &mut Col) ->
             }
         }
     }
-    Some(Chan { times: input.data, vals: output.data, width, interp })
+    Some(Chan { times: Data(input), vals: Data(output), width, interp })
 }
 
 /// Half a key of tolerance in whole keys for a time of `x` keys: 1e-6 seconds plus the precision of a 32-bit time.
@@ -963,8 +1057,9 @@ fn import_ani(g: &Gltf, nodes: &[Node], like: &Ani, opts: &ImportOptions, col: &
         col.add(RefusalKind::Animation, &anim.name, "the animation is shorter than one whole key (1/30 s)");
         return None;
     }
-    if !opts.keys_exact && (kmax - kmin) as usize + 1 > MAX_KEYS {
-        col.add(RefusalKind::Limit, &anim.name, format!("the animation spans {} keys; at most {MAX_KEYS} are sampled", (kmax - kmin) as usize + 1));
+    // the span is checked as a float: a huge time must not wrap or saturate before the check
+    if !opts.keys_exact && kmax - kmin + 1.0 > MAX_KEYS as f64 {
+        col.add(RefusalKind::Limit, &anim.name, format!("the animation spans {:.0} keys; at most {MAX_KEYS} are sampled", kmax - kmin + 1.0));
         return None;
     }
     if !opts.keys_exact && (kmin.abs() > f64::from(i32::MAX / 2) || kmax.abs() > f64::from(i32::MAX / 2)) {
@@ -982,7 +1077,7 @@ fn import_ani(g: &Gltf, nodes: &[Node], like: &Ani, opts: &ImportOptions, col: &
             return None;
         }
         let mut keys: Vec<i32> = Vec::with_capacity(c.times.len());
-        for t in &c.times {
+        for t in c.times.iter() {
             let x = start + t * 30.0;
             let r = x.round();
             if (x - r).abs() > key_tol(x) || r.abs() > f64::from(i32::MAX / 2) {
@@ -998,6 +1093,10 @@ fn import_ani(g: &Gltf, nodes: &[Node], like: &Ani, opts: &ImportOptions, col: &
         Some(keys)
     };
     for b in 0..bones {
+        if opts.stopped() {
+            col.add(RefusalKind::Limit, "import", "cancelled");
+            return None;
+        }
         let n = bone_node[b].unwrap_or(0);
         let what = format!("bone {b} ({:?})", nodes[n].name);
         let rest = nodes[n].trs;
@@ -1247,6 +1346,10 @@ fn import_c3dc(g: &Gltf, nodes: &[Node], like: &Like, opts: &ImportOptions, col:
         let (mut over, mut first_over) = (0usize, 0usize);
         let mut bad = 0usize;
         for v in 0..prim.positions.len() {
+            if v % 1024 == 0 && opts.stopped() {
+                col.add(RefusalKind::Limit, "import", "cancelled");
+                return None;
+            }
             let mut inf: Vec<(usize, f32)> = Vec::with_capacity(4);
             let mut vbad = false;
             for (js, ws) in prim.joints.iter().zip(&prim.weights) {
@@ -1312,10 +1415,14 @@ fn import_c3dc(g: &Gltf, nodes: &[Node], like: &Like, opts: &ImportOptions, col:
             let (b1, b2, weight) = if inf.len() == 2 {
                 (inf[0].0 as u8, inf[1].0 as u8, if (sum2 - 1.0).abs() <= 1e-6 { inf[0].1 } else { inf[0].1 / sum2 })
             } else {
-                // one bone: the pose does not depend on the second bone or the weight; the like file's own values are kept where they pose the same
+                // one bone: the pose does not depend on the second bone or the weight; the like file's own values are kept where they pose the same,
+                // and only for the like vertex that is this vertex (the same position and texture coordinate to the bit): an edited file whose
+                // vertex order changed gets (b, b, 1) and never borrows a partner bone of another vertex
                 let b = inf[0].0 as u8;
                 let mut r = (b, b, 1.0f32);
-                if let Some(lv) = like_m.and_then(|m| m.vertices.get(v)) {
+                let (pos, uv) = (s_point(prim.positions[v]), prim.uvs[v]);
+                let same_vertex = |lv: &C3dcVertex| lv.pos.iter().zip(&pos).all(|(x, y)| x.to_bits() == y.to_bits()) && lv.uv.iter().zip(&uv).all(|(x, y)| x.to_bits() == y.to_bits());
+                if let Some(lv) = like_m.and_then(|m| m.vertices.get(v)).filter(|lv| same_vertex(lv)) {
                     if lv.weight.is_finite() {
                         if lv.bone1 == b && lv.bone2 == b {
                             r.2 = lv.weight;

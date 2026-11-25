@@ -14,6 +14,7 @@ fn every_us_client_ani_and_3dc_exports_or_is_refused_by_kind() {
     let Some(dir) = env_client() else { return };
     let a = Archive::open(&dir).unwrap();
     let (mut ani_files, mut mesh_files, mut exported, mut refused) = (0usize, 0usize, 0usize, 0usize);
+    let (mut vertex_refusals, mut matrix_refusals) = (0usize, 0usize);
     let mut by_kind: BTreeMap<String, usize> = BTreeMap::new();
     let mut first_by_kind: BTreeMap<String, String> = BTreeMap::new();
     for file in a.index().visible() {
@@ -37,6 +38,15 @@ fn every_us_client_ani_and_3dc_exports_or_is_refused_by_kind() {
             Err(InterchangeError::SelfCheck(m)) => panic!("{}: the self-check failed (a bug): {m}", file.path),
             Err(e @ InterchangeError::Refused { .. }) => {
                 refused += 1;
+                if let (false, InterchangeError::Refused { list, .. }) = (is_ani, &e) {
+                    // the split of the not-finite refusals of .3DC files: a vertex (position, normal or texture coordinate) or a bone matrix
+                    if list.iter().any(|r| r.what.contains("bone matrix")) {
+                        matrix_refusals += 1;
+                    }
+                    if list.iter().any(|r| r.kind == shaiya_clientdata::interchange::RefusalKind::NotFinite && r.what.contains("vertex")) {
+                        vertex_refusals += 1;
+                    }
+                }
                 let kinds = e.kinds();
                 assert!(!kinds.is_empty(), "{}: a refusal without a kind", file.path);
                 for k in kinds {
@@ -48,6 +58,7 @@ fn every_us_client_ani_and_3dc_exports_or_is_refused_by_kind() {
         }
     }
     println!("GLTF: {ani_files} .ANI and {mesh_files} .3DC: {exported} exported, {refused} refused");
+    println!("GLTF .3DC refusals: {vertex_refusals} files with a not-finite vertex, {matrix_refusals} files with a not-finite bone matrix (a file can be both)");
     for (k, n) in &by_kind {
         println!("GLTF refused by kind {k}: {n} (first: {})", first_by_kind[k]);
     }
@@ -84,6 +95,7 @@ fn the_character_rigs_export_their_default_parts_with_the_first_animation() {
     for r in &refused {
         println!("GLTF rig refusal: {r}");
     }
+    assert!(refused.is_empty(), "the rigs' default parts are all written: {refused:?}");
 }
 
 /// The W12 exports of every character rig's first animation and default parts, read back with the import and `--like` the source file:
@@ -157,7 +169,9 @@ fn us_client_gltf_round_trips() {
         }
     }
     println!("GLTF import: {anis} animations ({ani_refused} refused by the export, {passed} passed with keys exact and every whole key, worst pose difference {worst:e}); {meshes} default parts ({mesh_refused} refused by the export, {identical} byte for byte)");
-    assert!(passed + ani_refused == anis && identical + mesh_refused == meshes);
+    // measured on US EP4.5: every rig's first animation and every default part is written and comes back (the docs say so)
+    assert!(ani_refused == 0 && mesh_refused == 0, "{ani_refused} animations and {mesh_refused} parts were refused by the export");
+    assert!(passed == anis && identical == meshes);
 }
 
 /// Every `.ANI` of the client that the export writes, imported back with `keys_exact` and `--like` itself: it must pass and pose like the
