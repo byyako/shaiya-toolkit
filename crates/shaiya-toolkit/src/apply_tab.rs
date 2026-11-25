@@ -10,6 +10,8 @@ use crate::ToolkitSettings;
 use egui::RichText;
 use shaiya_archive::client::{self, ClientFiles};
 use shaiya_archive::journal::{self, Journal, JournalMode, Rollback, State};
+use shaiya_archive::loose::LooseLayout;
+use shaiya_archive::loose_edit::{self, Busy, LooseJournal, LooseOptions};
 use shaiya_archive::Archive;
 use shaiya_core::time::human_size;
 use shaiya_core::Error;
@@ -71,6 +73,25 @@ pub(crate) fn apply_patches_to(patches: &[PathBuf], dir: &std::path::Path, key: 
     Applied { reports, error }
 }
 
+/// Applies `patches` to a loose folder, one `apply_loose` call each, in order, stopping at the first error; each patch has its own journal. The
+/// reports are shaped like the archive ones so the flow that follows is the same.
+pub(crate) fn apply_patches_loose(patches: &[PathBuf], layout: &LooseLayout, unknown_busy_confirmed: bool, job: &shaiya_core::Job<'_>) -> Applied {
+    let mut reports = Vec::new();
+    let mut error = None;
+    for p in patches {
+        job.stage(&format!("applying {}", p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()));
+        let opts = LooseOptions { label: String::new(), patch: true, confirmed_unknown_busy: unknown_busy_confirmed, crash_after_puts: None };
+        match patch::loose::apply_loose(p, layout, &opts, &shaiya_inspect::loose::format_check, job) {
+            Ok(r) => reports.push(Report { added: r.added, replaced: r.replaced, removed: r.removed, missing: Vec::new(), loose: Vec::new(), bytes: 0, journal: Some(r.journal) }),
+            Err(e) => {
+                error = Some(e);
+                break;
+            }
+        }
+    }
+    Applied { reports, error }
+}
+
 struct ApplyReq {
     patches: Vec<PathBuf>,
     dir: PathBuf,
@@ -80,6 +101,10 @@ struct ApplyReq {
     key_set: bool,
     /// Patches applied by earlier attempts of the same request (a Retry continues after them).
     done: Vec<Report>,
+    /// A loose client: its layout with the confirmed backup folder (the patches go through the loose journal).
+    loose: Option<Box<LooseLayout>>,
+    /// The person confirms that the game is stopped because this system cannot tell.
+    unknown_busy: bool,
 }
 
 enum Flow {
@@ -92,6 +117,24 @@ enum Flow {
     RollClosing(String, PathBuf, String, Option<Arc<Archive>>),
     RollRunning(PathBuf, TaskHandle<journal::RollbackReport>),
     PruneConfirm(PathBuf, usize),
+    LooseRollConfirm(String, PathBuf, Box<LooseLayout>, bool),
+    LooseRollRunning(PathBuf, TaskHandle<loose_edit::RollbackReport>),
+    LoosePruneConfirm(Box<LooseLayout>, usize),
+}
+
+/// What one patch would do to a loose folder (planned against the folder as it is now).
+#[derive(Clone, Debug)]
+pub struct LoosePatchPlan {
+    pub name: String,
+    pub summary: explain::LoosePatchSummary,
+    pub error: Option<String>,
+}
+
+enum LoosePlanState {
+    None,
+    Running(String, TaskHandle<Vec<LoosePatchPlan>>),
+    Done(String, Vec<LoosePatchPlan>),
+    Failed(String, String),
 }
 
 pub struct ApplyTab {
@@ -113,6 +156,12 @@ pub struct ApplyTab {
     pub changed_counter: u64,
     /// The Changes / Writes / Undo / Game rows of the open confirmation, made once when it was asked for, from the dry-run plan the Apply tab shows (the write itself, `apply_with`, plans again when it runs).
     confirm_rows: Rows,
+    /// The confirmed backup folder of the open loose client (set by the app every frame).
+    loose_backups: Option<PathBuf>,
+    /// The open client as a loose folder, with its backup folder (set by `tick`); `None` for an archive client.
+    loose: Option<LooseLayout>,
+    loose_plan: LoosePlanState,
+    loose_history: Vec<(LooseJournal, Rollback)>,
 }
 
 impl Default for ApplyTab {
@@ -143,6 +192,10 @@ impl ApplyTab {
             multi_running: false,
             changed_counter: 0,
             confirm_rows: Vec::new(),
+            loose_backups: None,
+            loose: None,
+            loose_plan: LoosePlanState::None,
+            loose_history: Vec::new(),
         }
     }
 
@@ -185,6 +238,20 @@ impl ApplyTab {
     /// The app tells the tab every frame whether "Apply to several test clients" runs.
     pub fn set_multi_running(&mut self, on: bool) {
         self.multi_running = on;
+    }
+
+    /// The app tells the tab every frame the confirmed backup folder of the open client (`None` when it is not a loose client or has none).
+    pub fn set_loose_backups(&mut self, backups: Option<PathBuf>) {
+        self.loose_backups = backups;
+    }
+
+    /// The open client as a loose folder whose backup folder the rules accept; `Err(reason)` when it is loose and read only.
+    pub fn loose_write(&self) -> Option<Result<LooseLayout, &'static str>> {
+        let l = self.loose.as_ref()?;
+        Some(match &l.backups {
+            Some(b) if shaiya_archive::loose::backup_folder_problem(l, b).is_none() => Ok(l.clone()),
+            _ => Err(crate::archive_view::LOOSE_NEEDS_BACKUPS),
+        })
     }
 
     /// False while a multi-client apply runs: Apply, Roll back (also Undo last change) and Prune are off then.
@@ -248,7 +315,60 @@ impl ApplyTab {
         self.plan = PlanState::Running(stamp, h);
     }
 
+    /// The plan of the listed patches against the open loose folder (each patch as the folder is now; nothing is written).
+    fn start_loose_plan(&mut self, archive_stamp: u64, cx: &mut ToolkitCx<'_>) {
+        let Some(layout) = self.loose.clone() else { return };
+        if self.patches.is_empty() {
+            self.loose_plan = LoosePlanState::None;
+            return;
+        }
+        let stamp = format!("{}|{}|{}|{}", self.patches.iter().map(|r| r.path.display().to_string()).collect::<Vec<_>>().join(";"), layout.data.display(), archive_stamp, self.changed_counter);
+        let current = match &self.loose_plan {
+            LoosePlanState::Running(s, _) | LoosePlanState::Done(s, _) | LoosePlanState::Failed(s, _) => Some(s.clone()),
+            LoosePlanState::None => None,
+        };
+        if current.as_deref() == Some(stamp.as_str()) {
+            return;
+        }
+        let paths: Vec<PathBuf> = self.patches.iter().map(|r| r.path.clone()).collect();
+        let h = cx.shell.tasks().spawn(TaskSpec { title: "Planning the patches".into(), cancellable: true, exclusive: None }, move |job| {
+            let mut out = Vec::new();
+            for p in &paths {
+                job.check()?;
+                let name = p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+                match patch::loose::plan_loose(p, &layout, &shaiya_inspect::loose::format_check, job) {
+                    Ok((plan, missing)) => {
+                        let (added, replaced, removed) = plan.counts();
+                        let names = plan.puts.iter().map(|x| x.rel.clone()).chain(plan.removes.iter().map(|x| x.rel.clone())).collect();
+                        out.push(LoosePatchPlan { name, summary: explain::LoosePatchSummary { added, replaced, removed, missing: missing.len(), bytes: plan.bytes_written(), names }, error: None });
+                    }
+                    Err(Error::Cancelled) => return Err(Error::Cancelled),
+                    Err(e) => out.push(LoosePatchPlan { name, summary: explain::LoosePatchSummary::default(), error: Some(e.to_string()) }),
+                }
+            }
+            Ok(out)
+        });
+        self.loose_plan = LoosePlanState::Running(stamp, h);
+    }
+
+    fn loose_plans(&self) -> Option<&Vec<LoosePatchPlan>> {
+        match &self.loose_plan {
+            LoosePlanState::Done(_, p) => Some(p),
+            _ => None,
+        }
+    }
+
     fn poll(&mut self, client: Option<&ClientInfo>, archive: &mut ArchiveView, cx: &mut ToolkitCx<'_>) {
+        if let LoosePlanState::Running(stamp, h) = &mut self.loose_plan {
+            let stamp = stamp.clone();
+            match h.poll() {
+                None => {}
+                Some(TaskOutcome::Done(p)) => self.loose_plan = LoosePlanState::Done(stamp, p),
+                Some(TaskOutcome::Failed(e)) => self.loose_plan = LoosePlanState::Failed(stamp, e.to_string()),
+                Some(TaskOutcome::Cancelled) => self.loose_plan = LoosePlanState::Failed(stamp, "cancelled".into()),
+                Some(TaskOutcome::Panicked(m)) => self.loose_plan = LoosePlanState::Failed(stamp, format!("internal error (a bug): {m}")),
+            }
+        }
         for r in &mut self.patches {
             if let Verify::Running(h) = &mut r.verify {
                 match h.poll() {
@@ -271,7 +391,30 @@ impl ApplyTab {
             }
         }
         // history
-        if let Some(c) = client {
+        if let (Some(c), Some(layout)) = (client, self.loose.clone()) {
+            let stamp = format!("{}|{}|{}|{:?}", c.dir.display(), archive.changed_counter, self.changed_counter, layout.backups);
+            if stamp != self.history_stamp && !self.is_busy() {
+                self.history_stamp = stamp;
+                self.history.clear();
+                match (&layout.backups, self.loose_write()) {
+                    (Some(_), Some(Ok(_))) => match loose_edit::list(&layout) {
+                        Ok(l) => {
+                            self.loose_history = l;
+                            self.history_error = None;
+                        }
+                        Err(e) => {
+                            self.loose_history.clear();
+                            self.history_error = Some(e.to_string());
+                        }
+                    },
+                    _ => {
+                        self.loose_history.clear();
+                        self.history_error = None;
+                    }
+                }
+            }
+        } else if let Some(c) = client {
+            self.loose_history.clear();
             let stamp = format!("{}|{}|{}", c.dir.display(), archive.changed_counter, self.changed_counter);
             if stamp != self.history_stamp && !self.is_busy() {
                 self.history_stamp = stamp;
@@ -337,6 +480,16 @@ impl ApplyTab {
                 Verify::Running(_) => {}
             }
         }
+        if let Some(w) = self.loose_write() {
+            if let Err(why) = w {
+                return Some(why.to_string());
+            }
+            return match &self.loose_plan {
+                LoosePlanState::Done(_, plans) => plans.iter().find_map(|p| p.error.as_ref().map(|e| format!("{}: {e}", p.name))),
+                LoosePlanState::Failed(_, e) => Some(format!("The plan failed: {e}")),
+                _ => Some("The plan is being made".into()),
+            };
+        }
         match &self.plan {
             PlanState::Done(..) => None,
             PlanState::Failed(_, e) => Some(format!("The plan failed: {e}")),
@@ -363,11 +516,20 @@ impl ApplyTab {
         if self.apply_blocked(client).is_some() {
             return;
         }
-        self.confirm_rows = match (ClientFiles::locate(&c.dir), self.plans()) {
-            (Ok(files), Some(plans)) => explain::patch_rows(plans, &files),
-            _ => Vec::new(),
-        };
-        let req = ApplyReq { patches: self.patches.iter().map(|r| r.path.clone()).collect(), dir: c.dir.clone(), name: c.name.clone(), key: if self.require { keys.verify_key() } else { None }, key_set: keys.verify_key().is_some(), done: Vec::new() };
+        let (mut loose, mut unknown_busy) = (None, false);
+        if let Some(Ok(layout)) = self.loose_write() {
+            let busy = loose_edit::busy_state(&layout);
+            unknown_busy = busy == Busy::Unknown;
+            let summaries: Vec<explain::LoosePatchSummary> = self.loose_plans().map(|v| v.iter().map(|p| p.summary.clone()).collect()).unwrap_or_default();
+            self.confirm_rows = explain::loose_patch_rows(&summaries, &layout, &busy);
+            loose = Some(Box::new(layout));
+        } else {
+            self.confirm_rows = match (ClientFiles::locate(&c.dir), self.plans()) {
+                (Ok(files), Some(plans)) => explain::patch_rows(plans, &files),
+                _ => Vec::new(),
+            };
+        }
+        let req = ApplyReq { patches: self.patches.iter().map(|r| r.path.clone()).collect(), dir: c.dir.clone(), name: c.name.clone(), key: if self.require { keys.verify_key() } else { None }, key_set: keys.verify_key().is_some(), done: Vec::new(), loose, unknown_busy };
         self.flow = Flow::Confirm(req);
     }
 
@@ -375,6 +537,12 @@ impl ApplyTab {
         let remaining: Vec<PathBuf> = req.patches[req.done.len()..].to_vec();
         let (dir, key) = (req.dir.clone(), req.key.clone());
         let n = remaining.len();
+        if let Some(layout) = req.loose.clone() {
+            let unknown = req.unknown_busy;
+            let handle = cx.shell.tasks().spawn(TaskSpec { title: format!("Applying {n} patch{}", if n == 1 { "" } else { "es" }), cancellable: true, exclusive: Some(req.dir.display().to_string()) }, move |job| Ok(apply_patches_loose(&remaining, &layout, unknown, job)));
+            self.flow = Flow::Running(req, handle);
+            return;
+        }
         let handle = cx.shell.tasks().spawn(TaskSpec { title: format!("Applying {n} patch{}", if n == 1 { "" } else { "es" }), cancellable: true, exclusive: Some(req.dir.display().to_string()) }, move |job| {
             Ok(apply_patches_to(&remaining, &dir, key.clone(), job))
         });
@@ -400,6 +568,59 @@ impl ApplyTab {
         }
     }
 
+    /// Like [`undo_target`](Self::undo_target) for either kind of client: the label of the change that would be rolled back, or why not.
+    pub fn undo_label(&self, client_open: bool) -> Result<String, String> {
+        if self.loose.is_none() {
+            return self.undo_target(client_open).map(|j| j.label.clone());
+        }
+        if !client_open {
+            return Err("Open a client folder first.".to_string());
+        }
+        if self.is_busy() {
+            return Err("Wait for the running task to finish.".to_string());
+        }
+        if !self.write_actions_enabled() {
+            return Err(MULTI_RUNNING_HOVER.to_string());
+        }
+        if let Some(Err(why)) = self.loose_write() {
+            return Err(why.to_string());
+        }
+        match self.loose_history.iter().rev().find(|(j, _)| j.state == State::Applied) {
+            None => Err("No change made by the toolkit to this client can be undone yet.".to_string()),
+            Some((j, Rollback::Possible)) => Ok(j.label.clone()),
+            Some((j, Rollback::Blocked(why))) => Err(format!("The newest change ({}) cannot be rolled back: {why}", j.label)),
+        }
+    }
+
+    /// The rows of the open confirmation (Changes, Writes, Undo, Game), for tests.
+    pub fn confirm_rows(&self) -> &[(String, String)] {
+        &self.confirm_rows
+    }
+
+    fn has_history(&self) -> bool {
+        !self.history.is_empty() || !self.loose_history.is_empty()
+    }
+
+    fn can_roll_back(&self) -> bool {
+        if self.loose.is_some() {
+            self.loose_history.iter().any(|(j, r)| j.state == State::Applied && matches!(r, Rollback::Possible))
+        } else {
+            self.newest_rollback().is_some()
+        }
+    }
+
+    /// The rows of the history table, newest first: (created, label, kind, state, rollback).
+    fn history_rows(&self) -> Vec<(String, String, String, State, Rollback)> {
+        let archive = self.history.iter().rev().map(|(j, r)| (j.created_utc.clone(), j.label.clone(), j.kind.clone(), j.state.clone(), r.clone()));
+        let loose = self.loose_history.iter().rev().map(|(j, r)| (j.created_utc.clone(), j.label.clone(), j.kind.clone(), j.state.clone(), r.clone()));
+        archive.chain(loose).collect()
+    }
+
+    /// The loose history, oldest first (empty for an archive client).
+    pub fn loose_history(&self) -> &[(LooseJournal, Rollback)] {
+        &self.loose_history
+    }
+
     /// The newest journal that can be rolled back now.
     pub fn newest_rollback(&self) -> Option<&Journal> {
         self.history.iter().rev().find(|(j, r)| j.state == State::Applied && matches!(r, Rollback::Possible)).map(|(j, _)| j)
@@ -419,6 +640,17 @@ impl ApplyTab {
         if self.is_busy() {
             return;
         }
+        if self.loose.is_some() {
+            if self.undo_label(true).is_err() {
+                return;
+            }
+            let (Some(Ok(layout)), Some((j, _))) = (self.loose_write(), self.loose_history.iter().rev().find(|(j, r)| j.state == State::Applied && matches!(r, Rollback::Possible))) else { return };
+            let busy = loose_edit::busy_state(&layout);
+            self.confirm_rows = explain::loose_rollback_rows(j, &busy);
+            let text = format!("Roll back {} (applied {})?", j.label, local_time(&j.created_utc));
+            self.flow = Flow::LooseRollConfirm(text, j.dir.clone(), Box::new(layout), busy == Busy::Unknown);
+            return;
+        }
         let Ok(j) = self.undo_target(true) else { return };
         let dir = j.dir.clone();
         let text = format!("Roll back {} (applied {})?", j.label, local_time(&j.created_utc));
@@ -432,6 +664,18 @@ impl ApplyTab {
     pub fn request_prune(&mut self, client: Option<&ClientInfo>) {
         if let Some(c) = client {
             if !self.is_busy() && self.write_actions_enabled() {
+                if let Some(Ok(layout)) = self.loose_write() {
+                    let finished: Vec<String> = self.loose_history.iter().filter(|(j, _)| j.state != State::Pending).map(|(j, _)| j.id.clone()).collect();
+                    let gone: Vec<String> = finished.iter().take(finished.len().saturating_sub(self.keep)).cloned().collect();
+                    self.confirm_rows = vec![
+                        (explain::CHANGES.to_string(), format!("{} deleted, the newest {} kept", shaiya_inspect::counted(gone.len() as u64, "journal", "journals"), self.keep)),
+                        (explain::WRITES.to_string(), if gone.is_empty() { "nothing in the backup folder".to_string() } else { format!("the backup folder loses {}", gone.join(", ")) }),
+                        (explain::UNDO.to_string(), "no undo: the deleted journals cannot be brought back, so those changes can no longer be rolled back".to_string()),
+                        (explain::GAME.to_string(), "not involved: only backup folders are deleted, no game file is touched".to_string()),
+                    ];
+                    self.flow = Flow::LoosePruneConfirm(Box::new(layout), self.keep);
+                    return;
+                }
                 let all: Vec<Journal> = self.history.iter().map(|(j, _)| j.clone()).collect();
                 self.confirm_rows = explain::prune_rows(&all, self.keep);
                 self.flow = Flow::PruneConfirm(c.dir.clone(), self.keep);
@@ -444,7 +688,12 @@ impl ApplyTab {
             Flow::Idle => {}
             Flow::Confirm(req) => {
                 let n = req.patches.len();
-                let c = Confirm { title: "Apply patches".into(), text: self.confirm_text(&req), buttons: vec![format!("Apply {n} patch{}", if n == 1 { "" } else { "es" }), "Cancel".into()], danger: Some(0), details: self.confirm_rows.clone() };
+                let (text, button) = if req.loose.is_some() && req.unknown_busy {
+                    (format!("{} {}.", self.confirm_text(&req), loose_edit::UNKNOWN_BUSY_TEXT), "The game is stopped: apply".to_string())
+                } else {
+                    (self.confirm_text(&req), format!("Apply {n} patch{}", if n == 1 { "" } else { "es" }))
+                };
+                let c = Confirm { title: "Apply patches".into(), text, buttons: vec![button, "Cancel".into()], danger: Some(0), details: self.confirm_rows.clone() };
                 match cx.shell.confirm("toolkit-apply-patches", &c) {
                     None => self.flow = Flow::Confirm(req),
                     Some(0) => {
@@ -505,9 +754,14 @@ impl ApplyTab {
                 }
             },
             Flow::InUse(req) => {
+                let loose = req.loose.is_some();
                 let c = Confirm {
-                    title: "The archive is in use".into(),
-                    text: format!("{}'s data.saf is open in another program (is the game running?). Close it and press Retry.", req.name),
+                    title: if loose { "The game is running".into() } else { "The archive is in use".into() },
+                    text: if loose {
+                        format!("The game of {} is running, or one of its files is open in another program. Close it and press Retry.", req.name)
+                    } else {
+                        format!("{}'s data.saf is open in another program (is the game running?). Close it and press Retry.", req.name)
+                    },
                     buttons: vec!["Retry".into(), "Cancel".into()],
                     danger: None,
                     ..Default::default()
@@ -560,6 +814,51 @@ impl ApplyTab {
                 }
                 Some(_) => archive.reopen(cx),
             },
+            Flow::LooseRollConfirm(text, jdir, layout, unknown) => {
+                let button = if unknown { "The game is stopped: roll back" } else { "Roll back" };
+                let text2 = if unknown { format!("{text} {}.", loose_edit::UNKNOWN_BUSY_TEXT) } else { text.clone() };
+                let c = Confirm { title: "Roll back".into(), text: text2, buttons: vec![button.into(), "Cancel".into()], danger: Some(0), details: self.confirm_rows.clone() };
+                match cx.shell.confirm("toolkit-rollback", &c) {
+                    None => self.flow = Flow::LooseRollConfirm(text, jdir, layout, unknown),
+                    Some(0) => {
+                        let (l2, j2) = ((*layout).clone(), jdir.clone());
+                        let h = cx.shell.tasks().spawn(TaskSpec { title: "Rolling back".into(), cancellable: false, exclusive: Some(layout.root.display().to_string()) }, move |job| {
+                            loose_edit::rollback(&l2, &j2, false, &LooseOptions { confirmed_unknown_busy: unknown, ..LooseOptions::default() }, job)
+                        });
+                        self.flow = Flow::LooseRollRunning(jdir, h);
+                    }
+                    Some(_) => {}
+                }
+            }
+            Flow::LooseRollRunning(jdir, mut h) => match h.poll() {
+                None => self.flow = Flow::LooseRollRunning(jdir, h),
+                Some(TaskOutcome::Done(r)) => {
+                    cx.shell.status(format!("Rolled back: {} restored, {} deleted", r.restored.len(), r.deleted.len()));
+                    self.result = vec![format!("Rolled back: {} restored, {} deleted", shaiya_inspect::counted(r.restored.len() as u64, "file", "files"), r.deleted.len())];
+                    self.changed_counter += 1;
+                    archive.changed_counter += 1;
+                    archive.reopen(cx);
+                }
+                Some(TaskOutcome::Failed(e)) => {
+                    cx.shell.error("The rollback was not made", &e);
+                    archive.reopen(cx);
+                }
+                Some(_) => archive.reopen(cx),
+            },
+            Flow::LoosePruneConfirm(layout, keep) => {
+                let c = Confirm { title: "Prune history".into(), text: format!("Delete the backups of all but the newest {}? Those changes can then no longer be rolled back.", shaiya_inspect::counted((keep) as u64, "change", "changes")), buttons: vec!["Prune".into(), "Cancel".into()], danger: Some(0), details: self.confirm_rows.clone() };
+                match cx.shell.confirm("toolkit-prune", &c) {
+                    None => self.flow = Flow::LoosePruneConfirm(layout, keep),
+                    Some(0) => {
+                        match loose_edit::prune(&layout, keep) {
+                            Ok(gone) => cx.shell.status(format!("Pruned {}", shaiya_inspect::counted(gone.len() as u64, "entry", "entries"))),
+                            Err(e) => cx.shell.error("Cannot prune the history", &e),
+                        }
+                        self.changed_counter += 1;
+                    }
+                    Some(_) => {}
+                }
+            }
             Flow::PruneConfirm(dir, keep) => {
                 let c = Confirm { title: "Prune history".into(), text: format!("Delete the backups of all but the newest {}? Those changes can then no longer be rolled back.", shaiya_inspect::counted((keep) as u64, "change", "changes")), buttons: vec!["Prune".into(), "Cancel".into()], danger: Some(0), details: self.confirm_rows.clone() };
                 match cx.shell.confirm("toolkit-prune", &c) {
@@ -604,6 +903,12 @@ impl ApplyTab {
         self.plans().map(|v| v.iter().map(|p| (p.added.len(), p.replaced.len(), p.removed.len(), p.loose.len())).collect())
     }
 
+    /// The plan of the listed patches against an open loose folder, once it is ready: (added, replaced, removed) per patch; a patch the
+    /// rules refuse is `None` (its reason is in the plan list and blocks Apply).
+    pub fn loose_plan_summary(&self) -> Option<Vec<Option<(usize, usize, usize)>>> {
+        self.loose_plans().map(|v| v.iter().map(|p| p.error.is_none().then_some((p.summary.added, p.summary.replaced, p.summary.removed))).collect())
+    }
+
     /// Per patch: the structure problems and the signature status as text ("valid", "missing", "invalid", "not checked"); `None`
     /// while a check runs.
     pub fn verify_summary(&self) -> Vec<Option<(usize, String)>> {
@@ -632,7 +937,13 @@ impl ApplyTab {
         keys.load(client, cx.settings);
         self.sync_require(client, keys);
         self.start_verifies(keys, cx);
-        self.start_plan(client, archive.changed_counter, cx);
+        self.loose = archive.loose_layout(self.loose_backups.clone());
+        if self.loose.is_some() {
+            self.start_loose_plan(archive.changed_counter, cx);
+        } else {
+            self.loose_plan = LoosePlanState::None;
+            self.start_plan(client, archive.changed_counter, cx);
+        }
         self.poll(client, archive, cx);
     }
 
@@ -738,6 +1049,37 @@ impl ApplyTab {
             }
             ui.add_space(6.0);
             ui.heading("Plan");
+            if self.loose.is_some() {
+                match (self.loose_write(), &self.loose_plan) {
+                    (Some(Err(why)), _) => {
+                        ui.label(RichText::new(format!("This loose folder is read only: {why}")).color(pal.warning));
+                    }
+                    (_, LoosePlanState::None) => {
+                        ui.label(RichText::new(if client.is_none() { "Choose a client folder to see what the patches would change." } else { "Add patches to see the plan." }).color(pal.weak));
+                    }
+                    (_, LoosePlanState::Running(..)) => {
+                        ui.label("Planning...");
+                    }
+                    (_, LoosePlanState::Failed(_, e)) => {
+                        ui.label(RichText::new(e).color(pal.error));
+                    }
+                    (_, LoosePlanState::Done(_, plans)) => {
+                        for p in plans {
+                            match &p.error {
+                                Some(e) => {
+                                    ui.label(RichText::new(format!("{}: refused, nothing would be written: {e}", p.name)).color(pal.error));
+                                }
+                                None => {
+                                    let s = &p.summary;
+                                    ui.label(RichText::new(format!("{}: add {}, replace {}, remove {} ({} not present); writes {}", p.name, s.added, s.replaced, s.removed, s.missing, human_size(s.bytes))).strong());
+                                }
+                            }
+                        }
+                        ui.label(RichText::new("Each patch is planned against the folder as it is now and checked again when it is applied.").color(pal.weak));
+                    }
+                }
+            }
+            if self.loose.is_none() {
             match &self.plan {
                 PlanState::None => {
                     ui.label(RichText::new(if client.is_none() { "Choose a client folder to see what the patches would change." } else { "Add patches to see the plan." }).color(pal.weak));
@@ -781,6 +1123,7 @@ impl ApplyTab {
                     }
                 }
             }
+            }
             ui.add_space(6.0);
             let blocked = self.apply_blocked(client);
             ui.horizontal(|ui| {
@@ -805,37 +1148,39 @@ impl ApplyTab {
             ui.horizontal(|ui| {
                 ui.heading("History");
                 let locked = !self.write_actions_enabled();
-                if lock_hover(ui.add_enabled(client.is_some() && self.newest_rollback().is_some() && !self.is_busy() && !locked, egui::Button::new("Roll back...")).on_hover_text("Undo the newest change the toolkit made"), locked).clicked() {
+                if lock_hover(ui.add_enabled(client.is_some() && self.can_roll_back() && !self.is_busy() && !locked, egui::Button::new("Roll back...")).on_hover_text("Undo the newest change the toolkit made"), locked).clicked() {
                     rollback = true;
                 }
                 ui.add(egui::DragValue::new(&mut self.keep).range(0..=1000).prefix("keep "));
-                if lock_hover(ui.add_enabled(client.is_some() && !self.history.is_empty() && !self.is_busy() && !locked, egui::Button::new("Prune...")), locked).clicked() {
+                if lock_hover(ui.add_enabled(client.is_some() && self.has_history() && !self.is_busy() && !locked, egui::Button::new("Prune...")), locked).clicked() {
                     prune = true;
                 }
             });
             if let Some(e) = &self.history_error {
                 ui.label(RichText::new(e).color(pal.error));
             }
-            if self.history.is_empty() && self.history_error.is_none() {
+            if let Some(Err(why)) = self.loose_write() {
+                ui.label(RichText::new(format!("No history: {why}")).color(pal.weak));
+            } else if !self.has_history() && self.history_error.is_none() {
                 ui.label(RichText::new("No changes made by the toolkit to this client yet.").color(pal.weak));
             }
             egui::Grid::new("toolkit-history").striped(true).show(ui, |ui| {
-                if !self.history.is_empty() {
+                if self.has_history() {
                     for h in ["Time", "Label", "Kind", "State", "Rollback"] {
                         ui.label(RichText::new(h).strong());
                     }
                     ui.end_row();
                 }
-                for (j, rb) in self.history.iter().rev() {
-                    ui.label(local_time(&j.created_utc));
-                    ui.label(&j.label);
-                    ui.label(&j.kind);
-                    ui.label(match &j.state {
+                for (created, label, kind, state, rb) in self.history_rows() {
+                    ui.label(local_time(&created));
+                    ui.label(&label);
+                    ui.label(&kind);
+                    ui.label(match &state {
                         State::Pending => "pending".to_string(),
                         State::Applied => "applied".to_string(),
                         State::RolledBack { at_utc } => format!("rolled back {}", local_time(at_utc)),
                     });
-                    match rb {
+                    match &rb {
                         Rollback::Possible => {
                             ui.label(RichText::new("possible").color(pal.ok));
                         }

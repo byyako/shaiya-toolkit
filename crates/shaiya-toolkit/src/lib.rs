@@ -16,6 +16,7 @@ pub mod import_gltf;
 pub mod health;
 pub mod inspect;
 pub mod keys;
+pub mod loose_health;
 pub mod multi_apply;
 pub mod multi_lock;
 pub mod patch_builder;
@@ -213,6 +214,7 @@ pub struct ToolkitApp {
     pub keys: KeyForm,
     pub clients: ClientsUi,
     pub health: health::HealthView,
+    pub loose_health: loose_health::LooseHealthView,
     /// The saved client (or opened folder) the tabs work on.
     pub current: Option<ClientInfo>,
     /// The queued changes of the clients that are not the active one, by client folder (memory only; the active client's queue is `archive.pending`).
@@ -262,6 +264,13 @@ impl ToolkitApp {
         }
         self.open_client_dir(&c.name, dir, cx);
         cx.settings.last_client = Some(c.name);
+    }
+
+    /// The confirmed backup folder of the open client when it is a saved loose client that has one.
+    fn current_loose_backups(&self, cx: &ToolkitCx<'_>) -> Option<PathBuf> {
+        let name = &self.current.as_ref()?.name;
+        let c = cx.shell.shared().clients.iter().find(|c| c.name.eq_ignore_ascii_case(name))?;
+        (c.kind == shaiya_core::config::ClientKind::Loose).then(|| c.backups.as_ref().map(PathBuf::from)).flatten()
     }
 
     /// Keeps the active client's queue aside, under its folder, before another source is opened.
@@ -425,8 +434,12 @@ impl ToolkitApp {
             None => self.current.as_ref().map(|c| c.name.clone()),
         };
         if let Some(n) = loose_name {
-            if cx.shell.shared().clients.iter().any(|c| c.name.eq_ignore_ascii_case(&n) && c.kind == shaiya_core::config::ClientKind::Loose) {
-                cx.shell.status(format!("Health of {n}: {}", archive_view::LOOSE_HAS_NO_ARCHIVE));
+            let loose = cx.shell.shared().clients.iter().find(|c| c.name.eq_ignore_ascii_case(&n) && c.kind == shaiya_core::config::ClientKind::Loose).cloned();
+            if let Some(c) = loose {
+                match clients::layout_of(&c) {
+                    Some(layout) => self.loose_health.open_for(&c.name, layout, cx),
+                    None => cx.shell.status(format!("Health of {n}: the folder cannot be read")),
+                }
                 return;
             }
         }
@@ -662,7 +675,7 @@ impl ToolkitApp {
         if self.archive.is_applying() {
             return Err("Wait for the change in the Archive tab to finish.".to_string());
         }
-        self.apply.undo_target(self.current.is_some()).map(|j| j.label.clone())
+        self.apply.undo_label(self.current.is_some())
     }
 
     /// Edit > Undo last applied change, the toolbar button and the palette command: the Roll back confirmation of the newest change.
@@ -718,6 +731,7 @@ impl ToolApp for ToolkitApp {
             keys: KeyForm::default(),
             clients: ClientsUi::default(),
             health: health::HealthView::default(),
+            loose_health: loose_health::LooseHealthView::default(),
             current: None,
             queues: BTreeMap::new(),
             multi: MultiApply::default(),
@@ -752,8 +766,12 @@ impl ToolApp for ToolkitApp {
         // while "Apply to several test clients" runs, the other write actions are off (see `multi_lock`)
         let multi = self.multi.is_running();
         self.archive.set_multi_running(multi);
+        let loose_backups = self.current_loose_backups(cx);
+        self.archive.set_loose_backups(loose_backups.clone());
+        self.apply.set_loose_backups(loose_backups);
         self.apply.set_multi_running(multi);
         self.health.set_multi_running(multi);
+        self.loose_health.set_multi_running(multi);
         self.clients.multi_running = multi;
         self.toolbar(ui, cx);
         ui.separator();
@@ -804,6 +822,15 @@ impl ToolApp for ToolkitApp {
             self.multi.open_dialog(self.apply.patch_paths(), cx);
         }
         self.multi.ui(&ctx, cx, &mut self.archive, self.apply.is_busy());
+        for a in self.loose_health.ui(&ctx, cx) {
+            match a {
+                loose_health::LooseHealthAction::Reload(dir) => {
+                    if self.archive.client_dir() == Some(dir.as_path()) || self.archive.source_dir_is(&dir) {
+                        self.archive.reopen(cx);
+                    }
+                }
+            }
+        }
         for a in self.health.ui(&ctx, cx, &mut self.archive) {
             match a {
                 HealthAction::Reload(dir) => {

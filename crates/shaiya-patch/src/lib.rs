@@ -4,6 +4,7 @@
 //! Compaction is in `shaiya_archive::compact`. Also here: streaming reproducible builds, a dry-run [`plan`], [`apply_with`] over `shaiya_archive::edit::apply_in_place` (journal, rollback,
 //! in-use check), [`verify`] and signature file helpers ([`sign`]).
 
+pub mod loose;
 pub mod publish;
 pub mod sign;
 

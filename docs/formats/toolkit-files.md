@@ -48,6 +48,23 @@ A journal is what a rollback reads: it restores the index copy, cuts `data.saf` 
 
 Patches and edits cannot target a path inside the backup folder: such a name is refused.
 
+## Loose journals and the loose marker (`format=2`)
+
+A loose data folder ([loose-client.md](loose-client.md)) keeps its journals in the backup folder you confirmed for it, never in the data folder. Each change is a folder `<UTC stamp>-<NNNN>-<label>/` with `journal.txt`, the copies `files/<path>` of every file the change replaced or removed, and, after a forced rollback or a recovery, `saved/<path>`. `journal.txt` is the same kind of `key=value` text as the archive journal above, with these keys (the archive rollback refuses a journal of this kind, test `archive_rollback_refuses_a_loose_journal`; unknown keys are ignored and a damaged file is an error, test `a_damaged_journal_or_copy_is_an_error_not_a_panic_and_blocks_the_rollback`):
+
+| Key | Meaning |
+|---|---|
+| `format` | `2` |
+| `id`, `label`, `created_utc`, `tool` | as in the archive journal |
+| `kind` | `loose-edit` (an add, replace, remove or Apply) or `loose-patch` (a patch) |
+| `data` | the absolute path of the data folder the change was made in |
+| `state` | `pending` (written first), `applied` or `rolled-back` |
+| `rolled_back_utc` | when it was rolled back or recovered, else empty |
+| `dir` (repeated) | a folder the change made, relative to the data folder, shallowest first (the rollback removes it when empty) |
+| `loose` (repeated) | tab separated: `1` if the file existed before or `0`; the SHA-256 of the copy in `files/` or `-`; the SHA-256 the change wrote or `-` for a removed file; the copy's path inside the journal or `-`; the path below the data folder |
+
+`loose.toolkit-pending` in the backup folder is the marker of a loose change or rollback in progress: `format=2`, `op` (`apply` or `rollback`), `label`, `journal` (the absolute path of the journal folder) and `data`. It is created only when there is none, so two changes cannot run at once, and recovery ([undo and recovery](../guides/undo-and-recovery.md#loose-data-folders)) removes it. Tests: `an_interrupted_change_is_recovered_on_the_next_open`, `an_interrupted_rollback_is_finished`.
+
 ## The pending marker: `data.toolkit-pending`
 
 The marker exists only while a change or a rollback is running, or was interrupted. It is written before the first byte is appended to `data.saf` and removed when the change ends. It holds:

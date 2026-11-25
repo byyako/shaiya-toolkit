@@ -673,13 +673,13 @@ impl ClientsUi {
                             if ui.add_enabled(st.found, egui::Button::new("Open")).clicked() {
                                 open_client = Some(c.name.clone());
                             }
-                            if st.loose.is_some() && ui.button("Choose backup folder...").on_hover_text("A folder outside the data folder; writes to loose folders come later").clicked() {
+                            if st.loose.is_some() && ui.button("Choose backup folder...").on_hover_text("A folder outside the data folder; the journal of every change to this loose folder goes there").clicked() {
                                 backups_for = Some(c.name.clone());
                             }
                             if st.redetect.is_some() && ui.button("Detect as loose folder").on_hover_text("Saves this entry as a loose client; no backup folder is chosen yet").clicked() {
                                 redetect_for = Some(c.name.clone());
                             }
-                            if ui.add_enabled(st.found && st.loose.is_none(), egui::Button::new("Health...")).on_hover_text(if st.loose.is_some() { "not yet for loose folders" } else { "Look at leftovers, dead space and unfinished changes; nothing is changed until you confirm a clean-up" }).clicked() {
+                            if ui.add_enabled(st.found, egui::Button::new("Health...")).on_hover_text(if st.loose.is_some() { "Look at unreadable files, files that fail their reader, model textures found nowhere and an unfinished change; nothing is changed unless you confirm a recovery" } else { "Look at leftovers, dead space and unfinished changes; nothing is changed until you confirm a clean-up" }).clicked() {
                                 health_for = Some(c.name.clone());
                             }
                             if ui.button("Rename...").clicked() {

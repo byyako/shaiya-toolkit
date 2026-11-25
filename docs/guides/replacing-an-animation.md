@@ -76,6 +76,14 @@ shaiya archive replace "@mymod" my.ANI --as "Character/Human/ANI/huwm_117_x.ANI"
 
 The same checks run, print a warning for each finding and never change the exit code. `--in-place` writes a journal; without it you must name `-o` for a new pair of files. See [mod files](mod-files.md).
 
+**A loose data folder** (a client without `data.sah`, such as the `data` folder of a Shaiya-GX install; [the folder rules](../formats/loose-client.md)): in Shaiya Toolkit the same right-click works once the client has a confirmed backup folder, and **Apply to client...** writes the file into the folder through the loose journal. On the command line:
+
+```
+shaiya loose replace "@gxmod" my.ANI --as "Character/Human/ANI/huwm_117_x.ANI"
+```
+
+The file is checked first (it must read to its last byte as an `.ANI`, and nothing is written when it does not), the original goes to the journal in the backup folder, and `shaiya loose rollback "@gxmod"` puts it back. The skeleton comparison with the file it replaces runs when you queue the file in Shaiya Toolkit, as for an archive client (test `a_replacement_with_another_skeleton_asks_before_it_is_queued_on_a_loose_client`). Restart the game to see the change. Not tried in a game; see [Changing a loose folder](../formats/loose-client.md#changing-a-loose-folder).
+
 A patch build (`shaiya patch build`, the Patch builder) has no copy of the client to compare with, so it checks that the file reads and has no validation error, but cannot run the skeleton check. Run `anim compare` yourself before building.
 
 ## 7. Look at it
@@ -92,7 +100,7 @@ Every change you apply is journaled, except with `--no-journal` or Compact, whic
 shaiya patch rollback "@mymod"
 ```
 
-puts `data.sah` and `data.saf` back byte for byte. See [undo and recovery](undo-and-recovery.md) for what can block a rollback.
+puts `data.sah` and `data.saf` back byte for byte. See [undo and recovery](undo-and-recovery.md) for what can block a rollback. For a loose data folder the command is `shaiya loose rollback "@name"`, and it puts the replaced file back from the journal.
 
 ## 9. Share it
 

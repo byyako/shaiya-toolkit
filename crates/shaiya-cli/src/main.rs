@@ -111,6 +111,13 @@ struct ClientsGroup {
 
 #[derive(clap::Args)]
 #[command(arg_required_else_help = true, subcommand_required = true)]
+struct LooseGroup {
+    #[command(subcommand)]
+    cmd: cmd::loose::Cmd,
+}
+
+#[derive(clap::Args)]
+#[command(arg_required_else_help = true, subcommand_required = true)]
 struct SvmapGroup {
     #[command(subcommand)]
     cmd: cmd::svmap::Cmd,
@@ -131,6 +138,8 @@ enum Command {
     /// The saved "my client folders" list (use them as @name)
     Clients(ClientsGroup),
     /// Server map files (.svmap): check, dump, build, round trip, compare; check a client's .wld files; spawn report; bulk-edit dry run
+    /// Loose data folders (a client with no data.sah, such as a Shaiya-GX data folder): list, add, replace, remove, apply a patch, undo, health
+    Loose(LooseGroup),
     Svmap(SvmapGroup),
     /// Print the version, git revision and target
     Version,
@@ -197,6 +206,7 @@ fn run() -> u8 {
                 Command::Sdata(g) => cmd::sdata::run(&ctx, &g.cmd, &job),
                 Command::Anim(g) => cmd::anim::run(&ctx, &g.cmd, &job),
                 Command::Clients(g) => cmd::clients::run(&ctx, &g.cmd),
+                Command::Loose(g) => cmd::loose::run(&ctx, &g.cmd, &job),
                 Command::Svmap(g) => cmd::svmap::run(&ctx, &g.cmd, &job),
                 Command::Version => unreachable!("handled above"),
             };

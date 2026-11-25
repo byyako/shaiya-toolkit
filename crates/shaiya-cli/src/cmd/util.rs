@@ -269,8 +269,13 @@ pub fn loose_layout(path: &Path) -> Result<Option<shaiya_archive::loose::LooseLa
 
 /// The refusal an archive command gives for a loose client (`arg` as the person typed it): exit 2.
 pub fn loose_refusal(arg: &str) -> Error {
+    usage_refusal(format!("{arg} is a loose folder, not an archive: the archive commands do not work on it; use shaiya loose (list, add, replace, remove, apply, history, rollback, health), and shaiya anim and shaiya info read its files"))
+}
+
+/// A refusal that is a wrong use of a command (exit 2), not a safety stop (exit 4).
+pub fn usage_refusal(text: String) -> Error {
     LOOSE_REFUSED.store(true, std::sync::atomic::Ordering::SeqCst);
-    Error::Refused(format!("{arg} is a loose folder, not an archive: the archive commands do not work on it (shaiya anim and shaiya info read its files)"))
+    Error::Refused(text)
 }
 
 /// Refuses `arg` (already resolved to `path`) when it is a loose client.

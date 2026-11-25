@@ -459,3 +459,75 @@ mod tests {
         assert!(text(&r, "Undo").contains("no journal"));
     }
 }
+
+// ------------------------------------------------------------------------------------------------ loose data folders
+
+/// The Game row of a loose folder: what the busy probe says now. `Unknown` carries the sentence the person confirms by pressing the
+/// confirmation's button.
+pub fn loose_game_text(busy: &shaiya_archive::loose_edit::Busy) -> String {
+    use shaiya_archive::loose_edit::{Busy, UNKNOWN_BUSY_TEXT};
+    match busy {
+        Busy::Free => "not running (checked); restart the game to see the change".to_string(),
+        Busy::Busy(why) => format!("{why}; close it first"),
+        Busy::Unknown => format!("{UNKNOWN_BUSY_TEXT}; the button below says that it is stopped. Restart the game to see the change"),
+    }
+}
+
+/// "Apply" on a loose folder: `plan` is the checked plan (names, links, converted media) that the write will make again from the files.
+pub fn loose_apply_rows(plan: &shaiya_archive::loose_edit::LoosePlan, layout: &shaiya_archive::loose::LooseLayout, busy: &shaiya_archive::loose_edit::Busy, bytes: u64) -> Rows {
+    let (added, replaced, removed) = plan.counts();
+    let mut changes = format!("added {added}, replaced {replaced}, removed {removed}");
+    if !plan.new_dirs.is_empty() {
+        changes.push_str(&format!("; {} made", counted(plan.new_dirs.len() as u64, "folder", "folders")));
+    }
+    let names: Vec<String> = plan.puts.iter().map(|p| p.rel.clone()).chain(plan.removes.iter().map(|r| r.rel.clone())).collect();
+    let backups = layout.backups.as_ref().map(|b| b.display().to_string()).unwrap_or_default();
+    let writes = format!("{} written in the data folder ({}); the originals of replaced and removed files and the journal go to {backups}; nothing else is written: {}", human_size(bytes), layout.data.display(), listed(&names));
+    let undo = "Apply & history > Roll back (the journal is made when you apply); it works while the files are as this change leaves them".to_string();
+    rows(changes, writes, undo, loose_game_text(busy))
+}
+
+/// "Roll back" on a loose folder.
+pub fn loose_rollback_rows(j: &shaiya_archive::loose_edit::LooseJournal, busy: &shaiya_archive::loose_edit::Busy) -> Rows {
+    let restored = j.records.iter().filter(|r| r.existed).count();
+    let deleted = j.records.iter().filter(|r| !r.existed).count();
+    let changes = format!("{}: {} put back and {} created file{} deleted", j.label, counted(restored as u64, "file", "files"), deleted, if deleted == 1 { "" } else { "s" });
+    let names: Vec<String> = j.records.iter().map(|r| r.rel.clone()).collect();
+    let writes = format!("the data folder: {}", listed(&names));
+    let undo = format!("no undo of its own: journal {} stays in the backup folder marked as rolled back", j.id);
+    rows(changes, writes, undo, loose_game_text(busy))
+}
+
+/// What one patch does to a loose folder, for the plan list and the confirmation.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct LoosePatchSummary {
+    pub added: usize,
+    pub replaced: usize,
+    pub removed: usize,
+    /// Paths of `remove.txt` that are not in the folder (left out).
+    pub missing: usize,
+    pub bytes: u64,
+    pub names: Vec<String>,
+}
+
+/// "Apply patches" on a loose folder (Apply & history tab): the plans of the listed patches summed.
+pub fn loose_patch_rows(plans: &[LoosePatchSummary], layout: &shaiya_archive::loose::LooseLayout, busy: &shaiya_archive::loose_edit::Busy) -> Rows {
+    let (mut a, mut r, mut d, mut bytes, mut skipped) = (0, 0, 0, 0u64, 0);
+    let mut names: Vec<String> = Vec::new();
+    for p in plans {
+        a += p.added;
+        r += p.replaced;
+        d += p.removed;
+        bytes += p.bytes;
+        skipped += p.missing;
+        names.extend(p.names.iter().cloned());
+    }
+    let mut changes = format!("added {a}, replaced {r}, removed {d}");
+    if skipped > 0 {
+        changes.push_str(&format!("; {skipped} not in the folder, skipped"));
+    }
+    let backups = layout.backups.as_ref().map(|b| b.display().to_string()).unwrap_or_default();
+    let writes = format!("{} written in the data folder ({}); one journal per patch with the originals goes to {backups}: {}", human_size(bytes), layout.data.display(), listed(&names));
+    let undo = "Apply & history > Roll back, newest first (each patch has its own journal)".to_string();
+    rows(changes, writes, undo, loose_game_text(busy))
+}

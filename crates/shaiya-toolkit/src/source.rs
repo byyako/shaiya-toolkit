@@ -24,6 +24,11 @@ pub trait FileSource: Send + Sync {
     /// about. `None` when there is no such file. For an archive this is the data offset and the length.
     fn stamp(&self, path: &str) -> Option<(u64, u64)>;
 
+    /// What holds the files, for the sentences that say a file is not there: "archive" or "folder".
+    fn holder(&self) -> &'static str {
+        "archive"
+    }
+
     /// Whether there is such a file.
     fn has(&self, path: &str) -> bool {
         self.len(path).is_some()
@@ -76,6 +81,10 @@ impl FileSource for Archive {
 }
 
 impl FileSource for LooseTree {
+    fn holder(&self) -> &'static str {
+        "folder"
+    }
+
     fn paths(&self) -> Vec<String> {
         LooseTree::paths(self)
     }

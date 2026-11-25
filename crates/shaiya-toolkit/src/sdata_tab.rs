@@ -4,11 +4,11 @@
 use crate::archive_view::ArchiveView;
 use crate::ToolkitSettings;
 use egui::RichText;
-use shaiya_archive::{Archive, ArchiveSource};
+use crate::source::FileSource;
 use shaiya_core::fs::Existing;
 use shaiya_core::glob::{Filter, Pattern};
 use shaiya_core::source::{ByteSource, FolderSource};
-use shaiya_core::{Error, Result};
+use shaiya_core::{Error, Job, Result};
 use shaiya_seed::batch::{run, BatchOptions, ItemResult, Op, Output, Status};
 use shaiya_ui::{Confirm, Cx, TaskHandle, TaskOutcome, TaskSpec};
 use std::path::{Path, PathBuf};
@@ -41,7 +41,31 @@ pub struct Row {
 struct Inputs {
     files: Vec<PathBuf>,
     dirs: Vec<PathBuf>,
-    archive: Option<Arc<Archive>>,
+    /// The open client's files, an archive or a loose folder: the tab reads through `FileSource` for both.
+    archive: Option<Arc<dyn FileSource>>,
+}
+
+/// The `*.SData` files of a client's `FileSource` as a `ByteSource`.
+struct ClientBytes<'a> {
+    src: &'a dyn FileSource,
+    filter: Filter,
+}
+
+impl ByteSource for ClientBytes<'_> {
+    fn label(&self) -> String {
+        "client".to_string()
+    }
+    fn names(&self) -> Vec<String> {
+        let mut v: Vec<String> = self.src.paths().into_iter().filter(|p| self.filter.matches(p, self.src.len(p).unwrap_or(0))).collect();
+        v.sort();
+        v
+    }
+    fn size(&self, name: &str) -> Option<u64> {
+        self.src.len(name)
+    }
+    fn read(&self, name: &str) -> Result<Vec<u8>> {
+        self.src.read(name, u64::MAX, &Job::silent())
+    }
 }
 
 fn sdata_filter() -> Filter {
@@ -55,7 +79,7 @@ fn run_all(inputs: &Inputs, action: Action, out: Option<&Path>, existing: Existi
         _ => None,
     };
     let like_client = match (like, &inputs.archive) {
-        (Like::Client, Some(a)) => Some(ArchiveSource { archive: a, filter: sdata_filter(), include_shadowed: false }),
+        (Like::Client, Some(a)) => Some(ClientBytes { src: a.as_ref(), filter: sdata_filter() }),
         _ => None,
     };
     let like_ref: Option<&dyn ByteSource> = match like {
@@ -87,7 +111,7 @@ fn run_all(inputs: &Inputs, action: Action, out: Option<&Path>, existing: Existi
         go("folder".into(), &FolderSource::new(&inputs.dirs, &sdata_filter())?)?;
     }
     if let Some(a) = &inputs.archive {
-        go("client".into(), &ArchiveSource { archive: a, filter: sdata_filter(), include_shadowed: false })?;
+        go("client".into(), &ClientBytes { src: a.as_ref(), filter: sdata_filter() })?;
     }
     Ok(rows)
 }
@@ -98,8 +122,8 @@ fn read_row(inputs: &Inputs, source: &str, name: &str) -> Result<Vec<u8>> {
         "file" => FolderSource::new(&inputs.files, &Filter::default())?.read(name),
         "folder" => FolderSource::new(&inputs.dirs, &sdata_filter())?.read(name),
         _ => {
-            let a = inputs.archive.as_ref().ok_or_else(|| Error::Refused("Open a client with a data.saf first".to_string()))?;
-            ArchiveSource { archive: a, filter: sdata_filter(), include_shadowed: false }.read(name)
+            let a = inputs.archive.as_ref().ok_or_else(|| Error::Refused("Open a client with a data.saf or a loose data folder first".to_string()))?;
+            ClientBytes { src: a.as_ref(), filter: sdata_filter() }.read(name)
         }
     }
 }
@@ -186,7 +210,7 @@ impl SDataTab {
     }
 
     fn inputs(&self, archive: &ArchiveView) -> Inputs {
-        Inputs { files: self.files.clone(), dirs: self.dirs.clone(), archive: if self.from_client { archive.archive_handle() } else { None } }
+        Inputs { files: self.files.clone(), dirs: self.dirs.clone(), archive: if self.from_client { archive.source_handle() } else { None } }
     }
 
     fn like(&self) -> Like {
@@ -237,13 +261,13 @@ impl SDataTab {
 
     pub fn tick(&mut self, archive: &ArchiveView, cx: &mut ToolkitCx<'_>) {
         // the listing
-        let stamp = format!("{:?}|{:?}|{}|{}|{}", self.files, self.dirs, self.from_client, archive.changed_counter, archive.archive_handle().map(|a| a.sah_path().display().to_string()).unwrap_or_default());
+        let stamp = format!("{:?}|{:?}|{}|{}|{}", self.files, self.dirs, self.from_client, archive.changed_counter, archive.source_key());
         if stamp != self.list_stamp && self.list.is_none() && (!self.files.is_empty() || !self.dirs.is_empty() || self.from_client) {
             self.list_stamp = stamp.clone();
             let inputs = self.inputs(archive);
             if self.from_client && inputs.archive.is_none() {
                 self.rows.retain(|r| r.source != "client");
-                self.listing_error = Some("Open a client with a data.saf first".into());
+                self.listing_error = Some("Open a client with a data.saf or a loose data folder first".into());
             } else {
                 self.listing_error = None;
                 let h = cx.shell.tasks().spawn(TaskSpec { title: "Reading SData files".into(), cancellable: true, exclusive: None }, move |job| run_all(&inputs, Action::Check, None, Existing::Refuse, &Like::No, job));
@@ -316,7 +340,7 @@ impl SDataTab {
     pub fn ui(&mut self, ui: &mut egui::Ui, cx: &mut ToolkitCx<'_>, archive: &ArchiveView) {
         self.tick(archive, cx);
         let pal = cx.shell.pal();
-        let has_client = archive.archive_handle().is_some();
+        let has_client = archive.source_handle().is_some();
         let mut add_files = false;
         let mut add_folder = false;
         let mut client = false;

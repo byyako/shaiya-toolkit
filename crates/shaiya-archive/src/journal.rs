@@ -173,6 +173,9 @@ impl Journal {
             let Some((k, v)) = line.split_once('=') else { continue };
             match k {
                 "id" if !v.is_empty() => j.id = v.to_string(),
+                "kind" if v.starts_with("loose-") => {
+                    return Err(Error::Refused(format!("{file} is a journal of a loose data folder ({v}); the archive rollback only undoes patch and archive-edit changes (use shaiya loose rollback)")));
+                }
                 "kind" => j.kind = v.to_string(),
                 "label" => j.label = v.to_string(),
                 "created_utc" => j.created_utc = v.to_string(),

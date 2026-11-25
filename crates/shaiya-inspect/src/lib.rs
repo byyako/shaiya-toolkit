@@ -2,6 +2,7 @@
 //! program. Detection is by content first, name second; the three model lists are the exception: a file named `.mlt`, `.mon` or `.itm` is read as that list (a valid list under another name is Unknown). Malformed input gives a `problems` entry, not a failure, unless the file cannot
 //! be read at all.
 
+pub mod loose;
 pub mod validate;
 
 use serde::Serialize;

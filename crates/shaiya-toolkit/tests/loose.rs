@@ -135,8 +135,9 @@ fn archive_only_actions_are_off_for_a_loose_client_with_the_reason() {
     for action in ["compact", "save-new", "check", "swap", "archive-health"] {
         assert_eq!(a.loose_off_reason(action), Some("a loose folder has no archive"), "{action}");
     }
+    // the queue actions are off until a backup folder outside the data folder is confirmed (W17: with one they are on, see loose_write.rs)
     for action in ["add", "replace", "remove", "apply"] {
-        assert_eq!(a.loose_off_reason(action), Some("not yet for loose folders"), "{action}");
+        assert_eq!(a.loose_off_reason(action), Some("choose a backup folder outside the data folder"), "{action}");
     }
     assert_eq!(a.loose_off_reason("extract"), None);
     let on = |id: &str| a.commands().into_iter().find(|c| c.id == id).unwrap_or_else(|| panic!("{id} is listed")).enabled;
@@ -150,10 +151,10 @@ fn archive_only_actions_are_off_for_a_loose_client_with_the_reason() {
     w.h.app.app.archive.begin_add(vec![extra.path().join("x.txt")]);
     w.h.app.app.archive.queue_removes(vec!["Item/3DO/a.txt".into()]);
     assert!(w.h.app.app.archive.pending.is_empty());
-    // the Health window is not opened for it (the reason is the status line)
+    // the archive Health window is not opened for it: the loose folder's own window is (W17)
     with_cx(&mut w.h, |app, cx| app.open_health(Some("Loose test"), cx));
     w.h.frames(2);
-    assert!(w.h.text().contains("a loose folder has no archive"), "{}", w.h.text());
+    assert!(w.h.app.app.loose_health.open && !w.h.app.app.health.open, "the loose health window opens, not the archive one");
 }
 
 #[test]

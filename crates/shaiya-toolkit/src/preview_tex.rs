@@ -72,7 +72,12 @@ pub const TEXTURES_OFF: &str = "textures are turned off; drawn grey";
 pub const NOT_LISTED_FOR_PART: &str = "no list file names a texture for {}; drawn grey";
 
 pub fn not_in_archive(name: &str) -> String {
-    format!("texture {name} is not in the archive; drawn grey")
+    not_found("archive", name)
+}
+
+/// The same for any holder of files (`FileSource::holder`): "archive" for a data.saf, "folder" for a loose data folder.
+pub fn not_found(holder: &str, name: &str) -> String {
+    format!("texture {name} is not in the {holder}; drawn grey")
 }
 
 pub fn unreadable(name: &str) -> String {

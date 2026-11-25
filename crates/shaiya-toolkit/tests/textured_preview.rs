@@ -436,3 +436,71 @@ fn a_3do_no_list_names_uses_the_name_it_holds_from_item_dds() {
     assert!(fr.iter().all(|f| coloured(f) > 0), "{notes:?}");
     assert_eq!(notes, ["texture box.dds (the name the model file holds; no list file names one); alpha: cut out"]);
 }
+
+// ------------------------------------------------------------------------------------------------ a loose folder (W17)
+
+/// The files of `character` as a loose data folder (`data/` below `d`, with an `Item` folder so that the detection accepts it) and its tree.
+fn loose_character(d: &TempDir, flag: i32, texture: Option<Vec<u8>>) -> shaiya_clientdata::LooseTree {
+    let mlt = mlt_bytes(&["huwm_torso001.3DC", "huwm_lower001.3DC"], &["skin.dds"], &[(0, 0, flag), (1, 0, flag)]);
+    let mut files: Vec<(&str, Vec<u8>)> = vec![(ANI, arm_ani(60)), (TORSO, arm_mesh_3dc()), (LOWER, arm_mesh_3dc()), (MLT, mlt), ("Item/readme.txt", b"x".to_vec())];
+    if let Some(t) = texture {
+        files.push(("Character/Human/DDS/skin.dds", t));
+    }
+    for (p, b) in &files {
+        let at = d.path().join("data").join(p);
+        std::fs::create_dir_all(at.parent().unwrap()).unwrap();
+        std::fs::write(at, b).unwrap();
+    }
+    let layout = shaiya_archive::loose::detect(d.path()).unwrap().expect("a loose layout");
+    shaiya_clientdata::LooseTree::open(&layout, &Job::silent()).unwrap()
+}
+
+#[test]
+fn a_textured_preview_resolves_its_texture_on_a_loose_folder_as_in_an_archive() {
+    let (da, dl) = (TempDir::new("w17-tex-archive"), TempDir::new("w17-tex-loose"));
+    let a = character(&da, 0, skin());
+    let t = loose_character(&dl, 0, Some(skin()));
+    // a 3DC: the same texture line and the same pixels, and the texture's colours are in the picture
+    for part in [TORSO, LOWER] {
+        let (ma, ml) = (model(preview(&a, part, &Look::default())), model(preview(&t, part, &Look::default())));
+        assert!(coloured(&ml.rgba) > 0, "{part}: the loose folder's texture is drawn");
+        assert!(ml.line.as_deref().is_some_and(|l| l.starts_with("texture skin.dds from Character/Human/huwm.MLT (record ")), "{part}: {:?}", ml.line);
+        assert_eq!(ml.line, ma.line, "{part}: the same line as the archive form");
+        assert_eq!(ml.rgba, ma.rgba, "{part}: the same picture as the archive form");
+    }
+    // an animation on the default parts: every frame textured, and the frames equal the archive's
+    let (fa, _, _) = frames(preview(&a, ANI, &Look::default()));
+    let (fl, _, _) = frames(preview(&t, ANI, &Look::default()));
+    assert!(fl.iter().any(|f| coloured(f) > 0), "the loose folder's animation frames carry the texture");
+    assert_eq!(fl, fa);
+}
+
+#[test]
+fn a_loose_folder_without_the_texture_file_draws_grey_and_says_so() {
+    // the test that can fail: the same folder with the DDS left out must not look textured
+    let (dg, db) = (TempDir::new("w17-tex-good"), TempDir::new("w17-tex-bad"));
+    let good = model(preview(&loose_character(&dg, 0, Some(skin())), TORSO, &Look::default()));
+    let tree = loose_character(&db, 0, None);
+    let bad = model(preview(&tree, TORSO, &Look::default()));
+    assert!(coloured(&good.rgba) > 0);
+    assert_eq!(coloured(&bad.rgba), 0, "no texture file: nothing of the texture is drawn");
+    assert_ne!(good.rgba, bad.rgba);
+    assert!(bad.notes.iter().any(|n| n == "texture skin.dds is not in the folder; drawn grey"), "{:?}", bad.notes);
+    assert!(bad.notes.iter().all(|n| !n.contains("archive")), "a loose folder is not called an archive: {:?}", bad.notes);
+    let da2 = TempDir::new("w17-tex-archive-missing");
+    let gone = open(&da2, &[(TORSO, arm_mesh_3dc()), (MLT, mlt_bytes(&["huwm_torso001.3DC"], &["skin.dds"], &[(0, 0, 0)]))]);
+    assert!(model(preview(&gone, TORSO, &Look::default())).notes.iter().any(|n| n == "texture skin.dds is not in the archive; drawn grey"));
+    // letter case of the folder and file names on disk does not matter
+    let dc = TempDir::new("w17-tex-case");
+    let at = dc.path().join("data/CHARACTER/HUMAN/dds/SKIN.DDS");
+    std::fs::create_dir_all(at.parent().unwrap()).unwrap();
+    std::fs::write(at, skin()).unwrap();
+    for (p, b) in [(TORSO, arm_mesh_3dc()), (MLT, mlt_bytes(&["huwm_torso001.3DC"], &["skin.dds"], &[(0, 0, 0)])), ("item/readme.txt", b"x".to_vec())] {
+        let f = dc.path().join("data").join(p);
+        std::fs::create_dir_all(f.parent().unwrap()).unwrap();
+        std::fs::write(f, b).unwrap();
+    }
+    let layout = shaiya_archive::loose::detect(dc.path()).unwrap().unwrap();
+    let t = shaiya_clientdata::LooseTree::open(&layout, &Job::silent()).unwrap();
+    assert!(coloured(&model(preview(&t, TORSO, &Look::default())).rgba) > 0);
+}

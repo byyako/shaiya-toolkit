@@ -4,6 +4,7 @@ pub mod anim;
 pub mod archive;
 pub mod clients;
 pub mod info;
+pub mod loose;
 pub mod patch;
 pub mod sdata;
 pub mod svmap;

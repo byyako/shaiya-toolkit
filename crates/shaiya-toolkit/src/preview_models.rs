@@ -112,7 +112,7 @@ fn pick_3do(src: &dyn FileSource, path: &str, name: &str, textures: &TextureInde
     if let Some(r) = built.0.for_mesh(path).first() {
         let alpha = preview_tex::alpha_mode(r.alpha);
         let line = preview_tex::line_of(r);
-        return Ok(if r.found { Picked { path: Some(r.texture.clone()), alpha, notes: vec![line] } } else { Picked { path: None, alpha, notes: vec![preview_tex::not_in_archive(&r.texture)] } });
+        return Ok(if r.found { Picked { path: Some(r.texture.clone()), alpha, notes: vec![line] } } else { Picked { path: None, alpha, notes: vec![preview_tex::not_found(src.holder(), &r.texture)] } });
     }
     let name = name.trim();
     if name.is_empty() {
@@ -120,7 +120,7 @@ fn pick_3do(src: &dyn FileSource, path: &str, name: &str, textures: &TextureInde
     }
     Ok(match shaiya_clientdata::texture_candidates("Item/DDS", name).into_iter().find(|c| src.has(c)) {
         Some(c) => Picked { notes: vec![format!("texture {} (the name the model file holds; no list file names one); alpha: cut out", file_name(&c))], path: Some(c), alpha: AlphaMode::Cutout },
-        None => grey(preview_tex::not_in_archive(name)),
+        None => grey(preview_tex::not_found(src.holder(), name)),
     })
 }
 
@@ -202,7 +202,7 @@ pub fn m3de_preview(src: &dyn FileSource, data: &[u8], path: &str, textures: &Te
         let built = textures.get_or_build(src, job).ok_or_else(cancelled)?;
         match built.0.for_effect_mesh(path, &name) {
             Some(p) => Picked { notes: Vec::new(), path: Some(p), alpha: AlphaMode::Cutout },
-            None => grey(preview_tex::not_in_archive(name.trim())),
+            None => grey(preview_tex::not_found(src.holder(), name.trim())),
         }
     };
     let mut notes = Vec::new();

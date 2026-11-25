@@ -534,7 +534,7 @@ pub fn c3dc_preview(src: &dyn FileSource, data: &[u8], path: &str, textures: &Te
             let r = &refs[chosen];
             texture = Some(preview_tex::info_of(refs, chosen));
             if !r.found {
-                notes.push(preview_tex::not_in_archive(&r.texture));
+                notes.push(preview_tex::not_found(src.holder(), &r.texture));
             } else {
                 match preview_tex::decode_mip(src, &r.texture, job) {
                     Some(m) => mip = Some((m, preview_tex::alpha_mode(r.alpha))),

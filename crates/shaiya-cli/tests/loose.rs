@@ -85,7 +85,7 @@ fn archive_commands_refuse_a_loose_client_exit_2() {
     ] {
         let o = sh(&w.data, &args);
         assert_eq!(code(&o), 2, "{args:?}: {}", err(&o));
-        assert!(err(&o).contains("is a loose folder") , "{args:?}: {}", err(&o));
+        assert!(err(&o).contains("is a loose folder") && err(&o).contains("use shaiya loose"), "{args:?}: {}", err(&o));
     }
     // the same for the folder itself
     let o = sh(&w.data, &["archive", "list", p(&root)]);
@@ -108,4 +108,94 @@ fn a_backup_folder_inside_data_is_refused_when_adding() {
     // --backups on an archive folder is refused
     let o = sh(&w.data, &["clients", "add", "us", p(&w.client), "--backups", p(&w.tmp.path().join("b2"))]);
     assert_eq!(code(&o), 4, "{}", err(&o));
+}
+
+#[test]
+fn loose_replace_then_rollback_restores_the_bytes() {
+    let (w, root) = loose_world();
+    let data = root.join("data");
+    let before = snapshot(&data);
+    // a loose client with no backup folder is read-only: refused, nothing written anywhere
+    assert_eq!(code(&sh(&w.data, &["clients", "add", "nob", p(&root)])), 0);
+    let src = w.tmp.path().join("new.txt");
+    write(&src, b"replaced");
+    let o = sh(&w.data, &["loose", "replace", "@nob", p(&src), "--as", "Item/3DO/a.txt", "--yes-game-stopped"]);
+    assert_eq!(code(&o), 4, "{}", err(&o));
+    assert!(err(&o).contains("choose a backup folder outside the data folder"), "{}", err(&o));
+    assert_eq!(snapshot(&data), before);
+    // with a confirmed backup folder
+    let backups = w.tmp.path().join("my-backups");
+    assert_eq!(code(&sh(&w.data, &["clients", "add", "gx", p(&root), "--backups", p(&backups)])), 0);
+    // a dry run shows the change and writes nothing, not even the backup folder
+    let o = sh(&w.data, &["loose", "replace", "@gx", p(&src), "--as", "item/3do/A.TXT", "--dry-run"]);
+    assert_eq!(code(&o), 0, "{}", err(&o));
+    assert!(err(&o).contains("Changes: 0 added, 1 replaced, 0 removed") && err(&o).contains("Undo:") && err(&o).contains("Game:    restart the game"), "{}", err(&o));
+    assert!(!backups.exists() && snapshot(&data) == before);
+    // this system cannot tell whether the game runs (no terminal in the test): refused without the confirmation
+    let o = sh(&w.data, &["loose", "replace", "@gx", p(&src), "--as", "Item/3DO/a.txt"]);
+    assert_eq!(code(&o), 4, "{}", err(&o));
+    assert!(err(&o).contains("cannot tell whether the game is running: stop it first"), "{}", err(&o));
+    assert_eq!(snapshot(&data), before);
+    // add refuses a file that is there, replace refuses one that is not
+    let o = sh(&w.data, &["loose", "add", "@gx", p(&src), "--as", "Item/3DO/a.txt", "--yes-game-stopped"]);
+    assert_eq!(code(&o), 4, "{}", err(&o));
+    assert!(err(&o).contains("use shaiya loose replace"), "{}", err(&o));
+    let o = sh(&w.data, &["loose", "replace", "@gx", p(&src), "--as", "Item/3DO/none.txt", "--yes-game-stopped"]);
+    assert_eq!(code(&o), 4, "{}", err(&o));
+    // the replace itself
+    let o = sh(&w.data, &["loose", "replace", "@gx", p(&src), "--as", "item/3do/A.TXT", "--yes-game-stopped"]);
+    assert_eq!(code(&o), 0, "{}", err(&o));
+    assert_eq!(std::fs::read(data.join("Item/3DO/a.txt")).unwrap(), b"replaced", "the file kept its own spelling");
+    // an add of a new file under --at, then the history
+    let o = sh(&w.data, &["loose", "add", "@gx", p(&src), "--at", "Item/3DO/new", "--yes-game-stopped"]);
+    assert_eq!(code(&o), 0, "{}", err(&o));
+    assert_eq!(std::fs::read(data.join("Item/3DO/new/new.txt")).unwrap(), b"replaced");
+    let h = out(&sh(&w.data, &["loose", "history", "@gx"]));
+    assert!(h.contains("loose replace") && h.contains("loose add") && h.contains("rollback possible"), "{h}");
+    // undo, newest first: the add, then the replace, and the folder is as it was
+    assert_eq!(code(&sh(&w.data, &["loose", "rollback", "@gx", "--yes-game-stopped"])), 0);
+    assert!(!data.join("Item/3DO/new").exists());
+    let o = sh(&w.data, &["loose", "undo", "@gx", "--yes-game-stopped"]);
+    assert_eq!(code(&o), 0, "{}", err(&o));
+    assert_eq!(snapshot(&data), before);
+    // nothing is left to undo
+    let o = sh(&w.data, &["loose", "rollback", "@gx", "--yes-game-stopped"]);
+    assert_eq!(code(&o), 4, "{}", err(&o));
+    // the folder is clean, and so is its health
+    let o = sh(&w.data, &["loose", "health", "@gx"]);
+    assert_eq!(code(&o), 0, "{}{}", out(&o), err(&o));
+    assert!(out(&o).contains("4 files listed") && out(&o).contains("nothing needs attention"), "{}", out(&o));
+    // a file that fails its reader is refused before anything is written
+    let bad = w.tmp.path().join("bad.ANI");
+    write(&bad, b"not an animation");
+    let o = sh(&w.data, &["loose", "add", "@gx", p(&bad), "--at", "Character/Human/ANI", "--yes-game-stopped"]);
+    assert_eq!(code(&o), 4, "{}", err(&o));
+    assert!(err(&o).contains("bad.ANI"), "{}", err(&o));
+    assert_eq!(snapshot(&data), before);
+    // a patch applies through the same journal
+    let files = w.tmp.path().join("pf");
+    write(&files.join("Item/3DO/patched.txt"), b"from a patch");
+    let patch = w.tmp.path().join("ps0001.patch");
+    let o = sh(&w.data, &["patch", "build", "-o", p(&patch), "--files", p(&files)]);
+    assert_eq!(code(&o), 0, "{}", err(&o));
+    let o = sh(&w.data, &["loose", "apply", "@gx", p(&patch), "--yes-game-stopped"]);
+    assert_eq!(code(&o), 0, "{}", err(&o));
+    assert_eq!(std::fs::read(data.join("Item/3DO/patched.txt")).unwrap(), b"from a patch");
+    assert_eq!(code(&sh(&w.data, &["loose", "rollback", "@gx", "--yes-game-stopped"])), 0);
+    assert_eq!(snapshot(&data), before);
+}
+
+#[test]
+fn loose_commands_refuse_an_archive_client() {
+    let w = world();
+    save_client(&w, "us");
+    let before = snapshot(&w.client);
+    for args in [vec!["loose", "list", "@us"], vec!["loose", "history", "@us"], vec!["loose", "health", "@us"], vec!["loose", "remove", "@us", "a.txt"]] {
+        let o = sh(&w.data, &args);
+        assert_eq!(code(&o), 2, "{args:?}: {}", err(&o));
+        assert!(err(&o).contains("is not a loose data folder"), "{args:?}: {}", err(&o));
+    }
+    let o = sh(&w.data, &["loose", "list", p(&w.client)]);
+    assert_eq!(code(&o), 2, "{}", err(&o));
+    assert_eq!(snapshot(&w.client), before, "nothing was written");
 }

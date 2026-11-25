@@ -141,8 +141,8 @@ pub struct Loaded {
 
 /// What every action that is not available on a loose folder says (the hover text of the greyed-out buttons).
 pub const LOOSE_HAS_NO_ARCHIVE: &str = "a loose folder has no archive";
-/// What the queue actions say on a loose folder until W17 (the queue is applied by the loose journal, which comes later).
-pub const LOOSE_NOT_YET: &str = "not yet for loose folders";
+/// What the queue actions say on a loose folder that has no confirmed backup folder: it is read only until one is chosen.
+pub const LOOSE_NEEDS_BACKUPS: &str = "choose a backup folder outside the data folder";
 
 impl Loaded {
     /// The files previews, extraction and exports read from: the archive, or a loose folder's tree.
@@ -383,10 +383,10 @@ type QueuedPut = (String, PathBuf, i32);
 type CheckItem = (String, PathBuf, Option<Entry>);
 
 /// The file checks for files about to be queued; an SData or `.ani` file is compared with the archive's copy of the same path.
-fn check_items(items: &[CheckItem], archive: Option<&Archive>) -> Vec<Finding> {
+fn check_items(items: &[CheckItem], archive: Option<&dyn FileSource>) -> Vec<Finding> {
     let mut out = Vec::new();
     for (path, source, entry) in items {
-        let copy = if validate::is_sdata_name(path) || validate::is_anim_name(path) { archive.zip(entry.as_ref()).and_then(|(a, e)| a.read_entry(e).ok()) } else { None };
+        let copy = if validate::is_sdata_name(path) || validate::is_anim_name(path) { archive.zip(entry.as_ref()).and_then(|(a, _)| a.read(path, u64::MAX, &shaiya_core::Job::silent()).ok()) } else { None };
         out.extend(validate::check_path(path, source, copy.as_deref()));
     }
     out
@@ -417,10 +417,38 @@ pub(crate) fn findings_question(findings: &[Finding], verb: &str) -> String {
     s
 }
 
+/// The change a queue makes to a loose folder. With `bytes` each put's file is read (its size is checked first); without, the puts hold
+/// no bytes, which is enough for the checks of names, links and converted media (the confirmation uses that).
+fn loose_change_of(pending: &[Pending], bytes: bool) -> Result<shaiya_archive::loose_edit::LooseChange> {
+    use shaiya_archive::loose_edit::{read_capped, LooseChange, LoosePut, MAX_PUT_BYTES};
+    let mut change = LooseChange::default();
+    for p in pending {
+        match &p.kind {
+            PendingKind::Put { source, .. } => change.puts.push(LoosePut { rel: p.path.clone(), bytes: if bytes { read_capped(source, MAX_PUT_BYTES)? } else { Vec::new() } }),
+            PendingKind::Remove => change.removes.push(p.path.clone()),
+        }
+    }
+    Ok(change)
+}
+
+/// Applies a queue to a loose folder on a worker: reads the files, checks everything (`loose_edit::plan` with the readers' format check),
+/// then writes through the loose journal.
+fn apply_loose_queue(layout: &shaiya_archive::loose::LooseLayout, pending: &[Pending], unknown_busy_confirmed: bool, job: &shaiya_core::Job) -> Result<shaiya_archive::loose_edit::LooseReport> {
+    use shaiya_archive::loose_edit::{self, LooseOptions};
+    job.stage("checking the files");
+    let plan = loose_edit::plan(layout, loose_change_of(pending, true)?, &shaiya_inspect::loose::format_check)?;
+    let opts = LooseOptions { label: "loose edit".to_string(), patch: false, confirmed_unknown_busy: unknown_busy_confirmed, crash_after_puts: None };
+    loose_edit::apply(layout, plan, &opts, &shaiya_inspect::loose::format_check, job)
+}
+
 // ------------------------------------------------------------------------------------------------ flows
 
+#[derive(Clone)]
 enum Excl {
     Apply(EditPlan, usize),
+    /// The queue of a loose client: the checked layout (with its confirmed backup folder), the queued changes, and whether the person
+    /// is confirming that the game is stopped because this system cannot tell.
+    ApplyLoose(Box<shaiya_archive::loose::LooseLayout>, Vec<Pending>, bool),
     Compact,
 }
 
@@ -437,6 +465,7 @@ enum ApplyFlow {
 
 enum Done {
     Edit(EditReport),
+    Loose(shaiya_archive::loose_edit::LooseReport),
     Compacted(compact::Compacted),
 }
 
@@ -669,6 +698,8 @@ pub struct ArchiveView {
     discard_asked: bool,
     /// True while "Apply to several test clients" runs (set by the app every frame): the other write actions are off.
     multi_running: bool,
+    /// The confirmed backup folder of the open loose client (set by the app every frame).
+    loose_backups: Option<PathBuf>,
     reload_asked: bool,
     saved_new: Option<TaskHandle<EditReport>>,
     want_search_focus: bool,
@@ -877,6 +908,7 @@ impl ArchiveView {
             confirm_rows: Vec::new(),
             discard_asked: false,
             multi_running: false,
+            loose_backups: None,
             reload_asked: false,
             saved_new: None,
             want_search_focus: false,
@@ -1119,22 +1151,54 @@ impl ArchiveView {
     }
 
     /// Why an action is off for the open source, when it is a loose folder: `"compact"`, `"save-new"`, `"check"`, `"swap"` and the archive-only
-    /// health rules say "a loose folder has no archive"; `"add"`, `"replace"`, `"remove"`, `"apply"` say "not yet for loose folders" (the queue
-    /// is applied by the loose journal, which comes later). `None` for any other action or source.
+    /// health rules say "a loose folder has no archive"; `"add"`, `"replace"`, `"remove"`, `"apply"` are on (the queue is applied by the loose
+    /// journal) once the client has a confirmed backup folder outside its data folder, and say "choose a backup folder outside the data folder"
+    /// until then. `None` for any other action or source.
     pub fn loose_off_reason(&self, action: &str) -> Option<&'static str> {
         if !self.is_loose() {
             return None;
         }
         match action {
             "compact" | "save-new" | "check" | "swap" | "archive-health" => Some(LOOSE_HAS_NO_ARCHIVE),
-            "add" | "replace" | "remove" | "apply" => Some(LOOSE_NOT_YET),
+            "add" | "replace" | "remove" | "apply" if !self.loose_write_ok() => Some(LOOSE_NEEDS_BACKUPS),
             _ => None,
         }
+    }
+
+    /// Whether the open loose folder has a confirmed backup folder that the rules accept (outside its data folder).
+    pub fn loose_write_ok(&self) -> bool {
+        self.loose_backups.as_ref().is_some_and(|b| self.loose_layout(None).is_some_and(|l| shaiya_archive::loose::backup_folder_problem(&l, b).is_none()))
+    }
+
+    /// Whether files can be queued for the open client: an archive client with its `data.saf`, or a loose folder with a backup folder.
+    fn can_queue(&self) -> bool {
+        self.client_dir().is_some() && (self.loaded.as_ref().is_some_and(|l| l.archive.is_some()) || (self.is_loose() && self.loose_write_ok()))
+    }
+
+    /// The app tells the tab the confirmed backup folder of the open client every frame (`None` for an archive client or when none is set).
+    pub fn set_loose_backups(&mut self, backups: Option<PathBuf>) {
+        self.loose_backups = backups;
     }
 
     /// The app's handle on `data.saf` (for tasks that read it; they must not outlive a write).
     pub fn archive_handle(&self) -> Option<Arc<Archive>> {
         self.loaded.as_ref().and_then(|l| l.archive.clone())
+    }
+
+    /// The open client's files as a `FileSource`: its archive, or a loose folder's tree (the SData tab reads through this).
+    pub fn source_handle(&self) -> Option<Arc<dyn FileSource>> {
+        self.loaded.as_ref().and_then(|l| l.source())
+    }
+
+    /// Which files `source_handle` gives, as text: the archive index file or the loose data folder (empty when nothing is open).
+    pub fn source_key(&self) -> String {
+        self.loaded.as_ref().filter(|l| l.has_files()).map(|l| l.sah.display().to_string()).unwrap_or_default()
+    }
+
+    /// The loose layout of the open client (`None` for an archive), with the backup folder given.
+    pub fn loose_layout(&self, backups: Option<PathBuf>) -> Option<shaiya_archive::loose::LooseLayout> {
+        let t = self.loaded.as_ref()?.loose.as_ref()?;
+        Some(shaiya_archive::loose::LooseLayout { backups, ..t.layout().clone() })
     }
 
     pub fn sah_path(&self) -> Option<&Path> {
@@ -1318,6 +1382,13 @@ impl ArchiveView {
                             self.pending.clear();
                             self.history = History::new(500);
                         }
+                        Done::Loose(r) => {
+                            let n = r.added.len() + r.replaced.len() + r.removed.len();
+                            self.status_line = format!("Applied {} (undo in Apply & history)", shaiya_inspect::counted((n) as u64, "change", "changes"));
+                            cx.shell.status(self.status_line.clone());
+                            self.pending.clear();
+                            self.history = History::new(500);
+                        }
                         Done::Compacted(c) => {
                             self.status_line = format!("Compacted: {} -> {}", human_size(c.before), human_size(c.after));
                             cx.shell.status(self.status_line.clone());
@@ -1346,9 +1417,14 @@ impl ArchiveView {
             },
             ApplyFlow::InUse(ex) => {
                 let name = self.loaded.as_ref().map(|l| l.label.clone()).or_else(|| self.source_label()).unwrap_or_default();
+                let loose = matches!(ex, Excl::ApplyLoose(..));
                 let c = Confirm {
-                    title: "The archive is in use".into(),
-                    text: format!("{name}'s data.saf is open in another program (is the game running?). Close it and press Retry."),
+                    title: if loose { "The game is running".into() } else { "The archive is in use".into() },
+                    text: if loose {
+                        format!("The game of {name} is running, or one of its files is open in another program. Close it and press Retry.")
+                    } else {
+                        format!("{name}'s data.saf is open in another program (is the game running?). Close it and press Retry.")
+                    },
                     buttons: vec!["Retry".into(), "Cancel".into()],
                     danger: None,
                     ..Default::default()
@@ -1379,6 +1455,16 @@ impl ArchiveView {
                 "Apply changes".into(),
                 format!("Apply {} to {name} ({dir})?", shaiya_inspect::counted(*n as u64, "change", "changes")),
                 format!("Apply {}", shaiya_inspect::counted(*n as u64, "change", "changes")),
+            ),
+            Excl::ApplyLoose(_, pending, _) if matches!(ex, Excl::ApplyLoose(_, _, true)) => (
+                "Apply changes".into(),
+                format!("Apply {} to the loose folder {name} ({dir})? {}.", shaiya_inspect::counted(pending.len() as u64, "change", "changes"), shaiya_archive::loose_edit::UNKNOWN_BUSY_TEXT),
+                "The game is stopped: apply".into(),
+            ),
+            Excl::ApplyLoose(_, pending, _) => (
+                "Apply changes".into(),
+                format!("Apply {} to the loose folder {name} ({dir})?", shaiya_inspect::counted(pending.len() as u64, "change", "changes")),
+                format!("Apply {}", shaiya_inspect::counted(pending.len() as u64, "change", "changes")),
             ),
             Excl::Compact => ("Compact".into(), format!("Compact data.saf of {name}?"), "Compact".into()),
         }
@@ -1443,11 +1529,14 @@ impl ArchiveView {
     fn start_exclusive(&mut self, ex: Excl, cx: &mut ToolkitCx<'_>) {
         let Some(dir) = self.client_dir().map(Path::to_path_buf) else { return };
         let key = dir.display().to_string();
-        let ex2 = match &ex {
-            Excl::Apply(p, n) => Excl::Apply(p.clone(), *n),
-            Excl::Compact => Excl::Compact,
-        };
+        let ex2 = ex.clone();
         let handle = match ex {
+            Excl::ApplyLoose(layout, pending, unknown) => {
+                let n = pending.len();
+                cx.shell.tasks().spawn(TaskSpec { title: format!("Applying {}", shaiya_inspect::counted(n as u64, "change", "changes")), cancellable: true, exclusive: Some(key) }, move |job| {
+                    apply_loose_queue(&layout, &pending, unknown, job).map(Done::Loose)
+                })
+            }
             Excl::Apply(plan, _) => {
                 let root = dir.join(journal::DEFAULT_DIR);
                 cx.shell.tasks().spawn(TaskSpec { title: format!("Applying {}", shaiya_inspect::counted((plan.puts.len() + plan.removes.len()) as u64, "change", "changes")), cancellable: true, exclusive: Some(key) }, move |job| {
@@ -1533,7 +1622,7 @@ impl ArchiveView {
     }
 
     pub fn queue_removes(&mut self, paths: Vec<String>) {
-        if self.is_loose() {
+        if self.is_loose() && !self.loose_write_ok() {
             return;
         }
         let mut edits = Vec::new();
@@ -1596,11 +1685,46 @@ impl ArchiveView {
             cx.shell.status("These queued changes were built on another client; they are not applied here");
             return;
         }
+        if self.is_loose() {
+            self.request_apply_loose(cx);
+            return;
+        }
         let plan = self.pending_plan("archive edit");
         let n = self.pending.len();
         let _ = cx;
         self.confirm_rows = self.apply_rows_for(&plan);
         self.apply = ApplyFlow::Confirm(Excl::Apply(plan, n));
+    }
+
+    /// "Apply to client..." on a loose folder: the checks that need no file content run now (names, links, converted media, files changed
+    /// since they were queued); a refusal is shown and nothing is asked. Else the confirmation, then the exclusive apply.
+    fn request_apply_loose(&mut self, cx: &mut ToolkitCx<'_>) {
+        use shaiya_archive::loose_edit::{self, Busy};
+        if !self.loose_write_ok() {
+            cx.shell.status(format!("Apply: {LOOSE_NEEDS_BACKUPS}"));
+            return;
+        }
+        let Some(layout) = self.loose_layout(self.loose_backups.clone()) else { return };
+        let change = match loose_change_of(&self.pending, false) {
+            Ok(c) => c,
+            Err(e) => {
+                cx.shell.error("The change cannot be made", &e);
+                return;
+            }
+        };
+        let plan = match loose_edit::plan(&layout, change, &|_: &str, _: &[u8]| Ok(())) {
+            Ok(p) => p,
+            Err(e) => {
+                cx.shell.error("The change cannot be made", &e);
+                return;
+            }
+        };
+        let busy = loose_edit::busy_state(&layout);
+        let bytes: u64 = self.pending.iter().map(|p| if let PendingKind::Put { size, .. } = &p.kind { *size } else { 0 }).sum();
+        self.confirm_rows = explain::loose_apply_rows(&plan, &layout, &busy, bytes);
+        let n = self.pending.len();
+        self.apply = ApplyFlow::Confirm(Excl::ApplyLoose(Box::new(layout), self.pending.clone(), busy == Busy::Unknown));
+        let _ = n;
     }
 
     pub fn request_compact(&mut self) {
@@ -1609,6 +1733,11 @@ impl ArchiveView {
         }
         self.confirm_rows = self.compact_rows_for();
         self.apply = ApplyFlow::Confirm(Excl::Compact);
+    }
+
+    /// The rows of the open confirmation (Changes, Writes, Undo, Game), for tests and the status line.
+    pub fn confirm_rows(&self) -> &[(String, String)] {
+        &self.confirm_rows
     }
 
     pub fn is_applying(&self) -> bool {
@@ -2429,7 +2558,7 @@ impl ArchiveView {
 
     /// Opens the "Add to archive" dialog for dropped or chosen files and folders.
     pub fn begin_add(&mut self, paths: Vec<PathBuf>) {
-        if self.is_loose() {
+        if self.is_loose() && !self.loose_write_ok() {
             return;
         }
         let target = self.folder.clone();
@@ -2487,15 +2616,15 @@ impl ArchiveView {
     /// decrypted), then queues it. A file the checks ask about waits for "Add anyway" (see `replace_ask`); other findings are shown in
     /// the status bar and the file is queued. A check that did not finish asks too.
     pub fn replace_with_file(&mut self, row: usize, file: PathBuf, cx: &mut ToolkitCx<'_>) {
-        if self.is_loose() {
-            cx.shell.status(format!("Replace: {LOOSE_NOT_YET}"));
+        if self.is_loose() && !self.loose_write_ok() {
+            cx.shell.status(format!("Replace: {LOOSE_NEEDS_BACKUPS}"));
             return;
         }
         let Some(l) = &self.loaded else { return };
         let path = l.rows[row].path.clone();
         let version = mtime(&file);
         let items = vec![(path.clone(), file.clone(), Some(l.rows[row].entry.clone()))];
-        let archive = l.archive.clone();
+        let archive = l.source();
         let h = cx.shell.tasks().spawn(TaskSpec { title: "Checking the files".to_string(), cancellable: false, exclusive: None }, move |_job| Ok(check_items(&items, archive.as_deref())));
         self.replace_checks.push((vec![(path, file, version)], h));
     }
@@ -2635,7 +2764,8 @@ impl ArchiveView {
         use egui::{Key, KeyboardShortcut as K, Modifiers as M};
         let open = self.loaded.as_ref().is_some_and(|l| l.archive.is_some());
         let files = self.loaded.as_ref().is_some_and(|l| l.has_files());
-        let edit = open && self.client_dir().is_some();
+        let edit = self.can_queue();
+        let edit_archive = open && self.client_dir().is_some();
         let busy = self.is_applying();
         let writes = self.write_actions_enabled();
         let c = |id: &'static str, label: &str, shortcut: Option<K>, enabled: bool| Command { id, label: label.to_string(), shortcut, enabled };
@@ -2656,7 +2786,7 @@ impl ArchiveView {
             c("archive-discard", "Discard pending changes", None, writes && !self.pending.is_empty()),
             c("archive-check", "Check the archive", None, open),
             c("archive-compare", "Compare two clients or archives...", None, true),
-            c("archive-compact", "Compact data.saf...", None, edit && !busy && writes),
+            c("archive-compact", "Compact data.saf...", None, edit_archive && !busy && writes),
             c("archive-reload", "Reload the archive", Some(K::new(M::NONE, Key::F5)), self.source.is_some()),
             c("archive-copy-paths", "Copy selected paths", Some(K::new(M::COMMAND, Key::C)), !self.selected.is_empty()),
             c("archive-up", "Parent folder", Some(K::new(M::NONE, Key::Backspace)), self.is_open()),
@@ -2727,7 +2857,8 @@ impl ArchiveView {
         let mut acts: Vec<Act> = Vec::new();
         let has_saf = self.loaded.as_ref().is_some_and(|l| l.archive.is_some());
         let has_files = self.loaded.as_ref().is_some_and(|l| l.has_files());
-        let can_edit = self.client_dir().is_some() && has_saf;
+        let can_edit = has_saf && self.client_dir().is_some();
+        let can_queue = self.can_queue();
         // header
         {
             let l = self.loaded.as_ref().expect("checked");
@@ -2800,7 +2931,7 @@ impl ArchiveView {
             ui.checkbox(&mut self.show_shadowed, "shadowed");
             cx.settings.show_shadowed = self.show_shadowed;
             ui.label(RichText::new(if self.search.is_empty() { format!("/{}", self.folder) } else { "search".to_string() }).color(pal.weak));
-            if ui.add_enabled(can_edit, egui::Button::new("Add...")).on_hover_text("Insert").on_disabled_hover_text(if self.loaded.as_ref().is_some_and(|l| l.is_loose()) { LOOSE_NOT_YET } else { "Needs a client folder with its data.saf" }).clicked() {
+            if ui.add_enabled(can_queue, egui::Button::new("Add...")).on_hover_text("Insert").on_disabled_hover_text(self.loose_off_reason("add").unwrap_or("Needs a client folder with its data.saf")).clicked() {
                 acts.push(Act::AddFiles);
             }
             let any = !self.selected.is_empty() || self.selected_folder.is_some();
@@ -2831,7 +2962,7 @@ impl ArchiveView {
                 ui.horizontal(|ui| {
                     let busy = self.is_applying();
                     let writes = self.write_actions_enabled();
-                    if lock_hover(ui.add_enabled(can_edit && !busy && writes, egui::Button::new("Apply to client...")), !writes).clicked() {
+                    if lock_hover(ui.add_enabled(can_queue && !busy && writes, egui::Button::new("Apply to client...")), !writes).clicked() {
                         acts.push(Act::ApplyPending);
                     }
                     if lock_hover(ui.add_enabled(has_saf && writes, egui::Button::new("Save as new archive...")), !writes).clicked() {
@@ -3029,7 +3160,7 @@ impl ArchiveView {
                                 if matches!(choice, MenuChoice::CompareWith) && !matches!(v, ViewRow::File(i) if l.archive.is_some() && is_ani_path(&l.rows[i].path)) {
                                     continue;
                                 }
-                                let off = if l.is_loose() && matches!(choice, MenuChoice::Replace | MenuChoice::Remove) { Some(LOOSE_NOT_YET) } else { None };
+                                let off = if matches!(choice, MenuChoice::Replace | MenuChoice::Remove) { self.loose_off_reason("replace") } else { None };
                                 let mut b = ui.add_enabled(off.is_none(), egui::Button::new(label));
                                 if let Some(t) = off {
                                     b = b.on_disabled_hover_text(t);
@@ -3417,7 +3548,7 @@ impl ArchiveView {
                 d.checked = true;
             } else if !d.checked && d.checking.is_none() {
                 let items = self.add_check_items(&d);
-                let archive = self.loaded.as_ref().and_then(|l| l.archive.clone());
+                let archive = self.loaded.as_ref().and_then(|l| l.source());
                 let h = cx.shell.tasks().spawn(TaskSpec { title: "Checking the files".to_string(), cancellable: false, exclusive: None }, move |_job| Ok(check_items(&items, archive.as_deref())));
                 d.checking = Some((d.check_gen, h));
             }
