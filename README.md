@@ -38,7 +38,7 @@ Platform notes:
 
 ## Getting started
 
-[Getting started in five minutes](docs/getting-started.md) takes you from inspecting a file to building and applying a patch on a copy and undoing it. Guides: [modding files](docs/guides/mod-files.md), [making patches](docs/guides/make-a-patch.md), [SData files](docs/guides/sdata-files.md), [replacing an animation](docs/guides/replacing-an-animation.md), [undo and recovery](docs/guides/undo-and-recovery.md); the [FAQ](docs/faq.md) covers the common errors.
+[Getting started in five minutes](docs/getting-started.md) takes you from inspecting a file to building and applying a patch on a copy and undoing it. Guides: [modding files](docs/guides/mod-files.md), [making patches](docs/guides/make-a-patch.md), [SData files](docs/guides/sdata-files.md), [replacing an animation](docs/guides/replacing-an-animation.md), [undo and recovery](docs/guides/undo-and-recovery.md), [Works with Shaiya-GX](docs/guides/shaiya-gx.md); the [FAQ](docs/faq.md) covers the common errors.
 
 ## Which clients work
 

@@ -65,9 +65,9 @@ pub enum TargetArg {
 
 #[derive(clap::Args)]
 pub struct CheckArgs {
-    /// A .svmap file or a folder of them
-    #[arg(value_name = "FILE|FOLDER")]
-    pub target: PathBuf,
+    /// A .svmap file or a folder of them (not with --maps)
+    #[arg(value_name = "FILE|FOLDER", required_unless_present = "maps")]
+    pub target: Option<PathBuf>,
     /// A client folder, its data.sah or @name: adds the rules against the client's data
     #[arg(long, value_name = "CLIENT")]
     pub client: Option<String>,
@@ -77,6 +77,10 @@ pub struct CheckArgs {
     /// Afterglow's monster definitions (needs --server-data)
     #[arg(long, value_name = "PATH", requires = "server_data")]
     pub afterglow_defs: Option<PathBuf>,
+    /// The folder of maps when it is not given as the target and not `<server data>/Map` (a split server tree keeps the INIs and
+    /// the maps in two folders; needs --server-data). `MapWar.ini` missing is then an info note
+    #[arg(long, value_name = "MAPS", requires = "server_data", conflicts_with = "target")]
+    pub maps: Option<PathBuf>,
     /// Which server the cross-file rules judge for
     #[arg(long = "target", value_enum, default_value = "original")]
     pub target_server: TargetArg,
@@ -225,7 +229,10 @@ fn client_arg(ctx: &Ctx, arg: &Option<String>) -> Result<Option<PathBuf>> {
 // ------------------------------------------------------------------------------------------------------------------ check
 
 fn check(ctx: &Ctx, a: &CheckArgs, job: &Job) -> Res {
-    if a.server_data.is_some() && a.target.is_file() {
+    let Some(target) = a.target.as_ref().or(a.maps.as_ref()) else {
+        return Err(Failure::Usage("give the maps to check: a file or folder, or --maps".into()));
+    };
+    if a.server_data.is_some() && target.is_file() {
         return Err(Failure::Usage("--server-data needs a folder of maps, not a single file".into()));
     }
     let client = client_arg(ctx, &a.client)?;
@@ -233,12 +240,13 @@ fn check(ctx: &Ctx, a: &CheckArgs, job: &Job) -> Res {
         client,
         server_data: a.server_data.clone(),
         afterglow_defs: a.afterglow_defs.clone(),
+        war_optional: a.maps.is_some(),
         target: match a.target_server {
             TargetArg::Afterglow => TargetServer::Afterglow,
             TargetArg::Original => TargetServer::Original,
         },
     };
-    let r = batch::check(&a.target, &opts, job)?;
+    let r = batch::check(target, &opts, job)?;
     notes(ctx, &r.notes);
     emit(ctx, &r);
     Ok(r.exit_code())

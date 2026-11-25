@@ -23,7 +23,7 @@ US, RU, FR, CN, Phoenix, KR episode 8 and Fawkes v68. What works on which client
 
 - [getting-started.md](getting-started.md): five minutes from inspecting a file to building a patch on a copy and undoing it.
 - Formats: [overview of every format page](formats/README.md).
-- Guides: [modding files](guides/mod-files.md), [making patches](guides/make-a-patch.md), [SData files](guides/sdata-files.md), [replacing an animation](guides/replacing-an-animation.md), [undo and recovery](guides/undo-and-recovery.md), [client health and clean-up](guides/client-health.md).
+- Guides: [modding files](guides/mod-files.md), [making patches](guides/make-a-patch.md), [SData files](guides/sdata-files.md), [replacing an animation](guides/replacing-an-animation.md), [undo and recovery](guides/undo-and-recovery.md), [client health and clean-up](guides/client-health.md), [Works with Shaiya-GX](guides/shaiya-gx.md).
 - [faq.md](faq.md): the common errors.
 
 ## All pages
@@ -39,6 +39,7 @@ US, RU, FR, CN, Phoenix, KR episode 8 and Fawkes v68. What works on which client
 | [guides/replacing-an-animation.md](guides/replacing-an-animation.md) | Put your own `.ANI` in place of an existing one: find the target, the skeleton rule, edit keys as JSON, `anim compare`, put it in, look at it, undo |
 | [guides/undo-and-recovery.md](guides/undo-and-recovery.md) | Journals, rollback, what blocks it, the pending marker, swap back |
 | [guides/client-health.md](guides/client-health.md) | What Health reports about a client folder, the leftovers, moving them aside and putting them back |
+| [guides/shaiya-gx.md](guides/shaiya-gx.md) | What works on a Shaiya-GX-shaped client and server folder, what was tested on what, what is not supported |
 | [version-matrix.md](version-matrix.md) | What parses on which client |
 | [formats/README.md](formats/README.md) | Overview of every format page: what reads and writes it, where it was verified, and the extensions nobody has documented yet |
 | [formats/archive.md](formats/archive.md) | `data.sah` / `data.saf`: layout, names, hashing, shadowing, free list, versions 0 and 1, offsets past 4 GiB, compaction |

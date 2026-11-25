@@ -3620,3 +3620,82 @@ fn no_data_folder_shows_the_status_bar_warning() {
     h.frames(3);
     assert!(!h.text.contains("No data folder"), "{}", h.text);
 }
+
+/// Every file under `root` with its bytes, keyed by the path under `root` (forward slashes).
+fn tree_bytes(root: &Path) -> std::collections::BTreeMap<String, Vec<u8>> {
+    fn walk(base: &Path, dir: &Path, out: &mut std::collections::BTreeMap<String, Vec<u8>>) {
+        for e in std::fs::read_dir(dir).unwrap().flatten() {
+            let p = e.path();
+            if p.is_dir() {
+                walk(base, &p, out);
+            } else {
+                let rel = p.strip_prefix(base).unwrap().to_string_lossy().replace('\\', "/");
+                out.insert(rel, std::fs::read(&p).unwrap());
+            }
+        }
+    }
+    let mut out = std::collections::BTreeMap::new();
+    walk(root, root, &mut out);
+    out
+}
+
+/// A synthetic server tree laid out the way Shaiya-GX documents it (`data/game` for the INIs, `data/maps` for the maps, no `Map`
+/// child): with the server data folder set on its own, the Map.ini editor opens and saves `data/game/Map.ini`, and a map of
+/// `data/maps` saves as ever; each file gets its `.bak` once and a copy in the data folder, and nothing else in the tree changes.
+#[test]
+fn map_ini_edit_and_svmap_save_work_on_a_split_gx_tree() {
+    let root = TempDir::new("w18-gx-tree");
+    let server = root.join("server");
+    let game = server.join("data").join("game");
+    let maps = server.join("data").join("maps");
+    std::fs::create_dir_all(&game).unwrap();
+    std::fs::create_dir_all(&maps).unwrap();
+    std::fs::write(game.join("Map.ini"), C5_MAP_INI).unwrap();
+    std::fs::write(game.join("Obelisk.ini"), b"// none\r\n").unwrap();
+    svmap_file(&maps, 9, 64);
+    svmap_file(&maps, 10, 64);
+    let data = root.join("data-dir");
+    std::fs::create_dir_all(&data).unwrap();
+    let mut h = Harness::new(Some(&data), StartOptions { folder: Some(maps.clone()), maps: vec![9], ..Default::default() });
+    wait_for_folder(&mut h);
+    h.frames(2);
+    // no setting and no Map.ini beside the map folder: the editor says what to set
+    assert!(h.app.can_run(Cmd::MapIniEditor).is_err(), "the parent of data/maps holds no Map.ini");
+    h.app.settings.server_data = Some(game.display().to_string());
+    assert!(h.app.can_run(Cmd::MapIniEditor).is_ok());
+    assert_eq!(h.app.ini_dir().as_deref(), Some(game.as_path()), "the explicit folder is used");
+    let before = tree_bytes(&server);
+
+    // the Map.ini of data/game: one value, saved
+    h.app.open_ini_editor();
+    let mut w = h.app.c5.ini.take().unwrap();
+    assert_eq!(w.docs.len(), 1, "no MapWar.ini in the folder: only Map.ini is edited");
+    h.app.ini_act(&mut w, IniAct::Set(9, "WeatherState".to_string(), "2".to_string()));
+    h.app.ini_act(&mut w, IniAct::Save);
+    assert!(matches!(&w.msg, Some((false, m)) if m.contains("saved and verified")), "{:?}", w.msg);
+    h.app.c5.ini = Some(w);
+    let mid = tree_bytes(&server);
+    assert_ne!(mid["data/game/Map.ini"], before["data/game/Map.ini"]);
+    assert!(String::from_utf8_lossy(&mid["data/game/Map.ini"]).contains("WeatherState\t = 2"), "{}", String::from_utf8_lossy(&mid["data/game/Map.ini"]));
+    assert_eq!(mid["data/game/Map.ini.bak"], before["data/game/Map.ini"], "the .bak is the file as it was");
+    let keys: Vec<&String> = mid.keys().filter(|k| !before.contains_key(*k)).collect();
+    assert_eq!(keys, vec!["data/game/Map.ini.bak"], "nothing new in the tree but the .bak");
+    let server_backups = data.join("backups").join("server");
+    assert!(std::fs::read_dir(&server_backups).unwrap().flatten().any(|d| std::fs::read_dir(d.path()).unwrap().count() == 1), "a copy in the data folder");
+
+    // a map of data/maps: an edit, saved
+    h.app.c5.ini = None;
+    let uid = h.app.docs[0].uid;
+    add_area(&mut h.app.docs[0], 20.0);
+    h.app.begin_save(uid, None, true);
+    assert!(h.app.toast.as_ref().is_some_and(|(t, _)| t.starts_with("saved and verified")), "{:?}", h.app.toast);
+    let end = tree_bytes(&server);
+    assert_ne!(end["data/maps/9.svmap"], mid["data/maps/9.svmap"]);
+    assert_eq!(end["data/maps/9.svmap.bak"], mid["data/maps/9.svmap"], "the first save keeps the .bak");
+    assert_eq!(end["data/maps/10.svmap"], mid["data/maps/10.svmap"], "the other map is untouched");
+    assert_eq!(end["data/game/Map.ini"], mid["data/game/Map.ini"]);
+    assert_eq!(end["data/game/Obelisk.ini"], before["data/game/Obelisk.ini"]);
+    let changed: Vec<&String> = end.keys().filter(|k| before.get(*k) != end.get(*k)).collect();
+    assert_eq!(changed, vec!["data/game/Map.ini", "data/game/Map.ini.bak", "data/maps/9.svmap", "data/maps/9.svmap.bak"], "no other file, no .tmp");
+    assert_eq!(crate::backups::list(&crate::backups::folder_dir(&data, &maps), 9).len(), 1, "a timestamped copy of the map in the data folder");
+}

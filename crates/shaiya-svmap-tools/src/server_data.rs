@@ -254,4 +254,28 @@ mod tests {
         assert_eq!(o[0], ObeliskPos { zone: 0, index: 1, pos: [155.10, 39.43, 190.38] });
         assert!(d.notes.is_empty(), "{:?}", d.notes);
     }
+
+    /// A split server tree (`data/game` for the INIs, `data/maps` for the maps): an explicit server data folder wins over the
+    /// parent of the map folder, also when that parent holds a `Map.ini`; with no setting the old fallback is unchanged, and it
+    /// finds nothing here because `data/` holds no `Map.ini`.
+    #[test]
+    fn the_server_data_folder_wins_over_the_svmap_parent() {
+        let root = crate::testutil::TempDir::new("w18-resolve");
+        let game = root.join("server").join("data").join("game");
+        let maps = root.join("server").join("data").join("maps");
+        std::fs::create_dir_all(&game).unwrap();
+        std::fs::create_dir_all(&maps).unwrap();
+        std::fs::write(game.join("Map.ini"), b"[BASE]\r\nMapCount = 2\r\n").unwrap();
+        let game_text = game.display().to_string();
+        assert_eq!(resolve_dir(Some(&game_text), Some(&maps)), Some(game.clone()));
+        assert_eq!(resolve_dir(None, Some(&maps)), None, "no setting: the parent of the map folder has no Map.ini");
+        // a Map.ini in the parent of the map folder does not beat the setting
+        let parent = maps.parent().unwrap().to_path_buf();
+        std::fs::write(parent.join("Map.ini"), b"[BASE]\r\nMapCount = 9\r\n").unwrap();
+        assert_eq!(resolve_dir(Some(&game_text), Some(&maps)), Some(game.clone()));
+        assert_eq!(resolve_dir(None, Some(&maps)), Some(parent), "no setting: the fallback is as before");
+        assert_eq!(resolve_dir(Some("  "), Some(&maps)).as_deref(), maps.parent(), "a blank setting counts as none");
+        let d = ServerData::load(&game, None);
+        assert_eq!(d.loaded_ids().unwrap().into_iter().collect::<Vec<_>>(), vec![0, 1], "the file read is the one of the setting");
+    }
 }

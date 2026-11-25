@@ -480,4 +480,45 @@ mod tests {
         assert_eq!(m.ini.needed_map_count(false), 68);
         assert_eq!(m.ini.map_count(), Some(68));
     }
+
+    /// What our parser does with a `Map.ini` that holds keys and sections we do not know (invented names; the page says this):
+    /// they are read as ordinary keys and sections, kept byte for byte by every edit, never an error; only a file without
+    /// `[BASE] MapCount` is refused by the editor; and a key we would write must be letters, digits and `_`.
+    #[test]
+    fn map_ini_with_extra_keys_is_read_or_refused_as_documented() {
+        let raw: &[u8] = b"[BASE]\r\nMapCount = 3\r\nExtraBaseFlag = 1\r\n\r\n[DEFAULT_SET_ZONE]\r\nMapType = F\r\n\r\n[SET_ZONE_1]\r\nMapType = F\r\nExtraZoneKey = 5, 6 // note\r\nOdd-Key = x\r\n\r\n[EXTRA_SECTION_A]\r\nWhatever = 1\r\n";
+        let ini = MapIni::parse(raw);
+        assert_eq!(ini.map_count(), Some(3));
+        assert_eq!(ini.zone_ids(), vec![1]);
+        let z = ini.zone(1).unwrap();
+        assert_eq!(ini.value(z, "ExtraZoneKey").as_deref(), Some("5, 6"), "an unknown key is an ordinary key; the comment is not its value");
+        assert_eq!(ini.value(z, "Odd-Key").as_deref(), Some("x"), "any name before the = is read as a key");
+        assert_eq!(ini.value(ini.section("BASE").unwrap(), "ExtraBaseFlag").as_deref(), Some("1"));
+        assert!(ini.section("EXTRA_SECTION_A").is_some());
+        assert_eq!(ini.to_bytes(), raw, "reading and writing back without an edit gives the same bytes");
+        // the editor opens it, an edit of a known key leaves every unknown line as it was, and so does undo
+        let mut d = IniDoc::from_bytes(IniKind::Map, Path::new("Map.ini"), raw.to_vec()).unwrap();
+        d.set_key(1, "MapType", "D").unwrap();
+        let after = d.ini.to_bytes();
+        let want = String::from_utf8(raw.to_vec()).unwrap().replacen("MapType = F\r\nExtraZoneKey", "MapType = D\r\nExtraZoneKey", 1).into_bytes();
+        assert_eq!(after, want, "only the value of the edited key changed");
+        d.set_key(1, "ExtraZoneKey", "7").unwrap();
+        assert_eq!(d.own_value(1, "ExtraZoneKey").as_deref(), Some("7"));
+        assert!(String::from_utf8_lossy(&d.ini.to_bytes()).contains("ExtraZoneKey = 7 // note"), "the value changed and the comment stayed");
+        assert!(String::from_utf8_lossy(&d.ini.to_bytes()).contains("ExtraZoneKey = 7 // note"), "the value changed and the comment stayed");
+        d.undo();
+        d.undo();
+        assert_eq!(d.ini.to_bytes(), raw);
+        // a key we would write must be plain: the odd key is read but cannot be set
+        assert!(d.set_key(1, "Odd-Key", "y").is_err());
+        // the server data check reads the same file
+        let dir = crate::testutil::TempDir::new("w18-extra");
+        std::fs::write(dir.join("Map.ini"), raw).unwrap();
+        let s = crate::server_data::ServerData::load(dir.path(), None);
+        assert_eq!(s.loaded_ids().unwrap().into_iter().collect::<Vec<_>>(), vec![0, 1, 2]);
+        assert!(!s.notes.iter().any(|n| n.starts_with("Map.ini")), "{:?}", s.notes);
+        // a file without [BASE] MapCount is refused, with the reason
+        let e = IniDoc::from_bytes(IniKind::Map, Path::new("Map.ini"), b"[EXTRA]\r\nMapCount = 3\r\n[SET_ZONE_1]\r\nMapType = F\r\n".to_vec()).err().unwrap();
+        assert!(e.contains("MapCount"), "{e}");
+    }
 }

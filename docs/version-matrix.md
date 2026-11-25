@@ -123,3 +123,19 @@ Shaiya SVMap Editor and `shaiya svmap` were written for and verified on the US E
 When a client opens, the editor (on the client chip) and `shaiya svmap check`, `spawns` and `bulk` (as `note:` lines and in the JSON `notes`) say when `Monster.SData` or `NpcQuest.SData` is missing or did not read with the EP4.5 layout, and how many ids of the map-name table the client's `sysmsg-uni.txt` lacks. What was checked in the game and what was not is in [the editor guide](tools/svmap-editor.md#what-was-checked-in-the-game).
 
 Run it on your own copies: [dev/testing.md](dev/testing.md#the-version-matrix).
+
+## Shaiya-GX
+
+Shaiya-GX (EP5.4) is not a column of the table above: no Shaiya-GX file contents were opened, so no count is asserted. The row and the table below say what is known and from where; the page [Works with Shaiya-GX](guides/shaiya-gx.md) has the same labels in full.
+
+| Capability | Shaiya-GX (EP5.4): layout reference, no file contents |
+|---|---|
+| index entries, `Index::parse`, `to_bytes` | n/a (no `data.sah`; the client data is a loose folder, read from Shaiya-GX docs/data-formats.md lines 3-16) |
+| file formats of models, animations, world, effects, SData | original binary formats, read from Shaiya-GX docs/data-formats.md lines 30-33; not checked by us on a Shaiya-GX file |
+| images, icons, audio | PNG and Ogg Vorbis, read from Shaiya-GX docs/data-formats.md lines 22-36 and 79-89; the toolkit writes neither |
+| `Character/Skill.SData` | EP5, nine slots, read from Shaiya-GX docs/data-formats.md lines 34 and 98; our `skill-9` layout reads one EP5.4 client's table (the `fr-ep54` column), not a Shaiya-GX table |
+
+| Install profile | What the tests used | Tests |
+|---|---|---|
+| Client: loose data folder (`Client/data`) | a synthetic folder; US EP4.5 files copied into a Shaiya-GX-shaped folder (opt-in) | `a_loose_client_browses_and_previews_like_an_archive`, `loose_replace_then_rollback_restores_the_bytes`, `converted_media_is_refused_on_a_gx_layout_and_allowed_on_a_plain_one`; opt-in `an_extracted_copy_of_us_client_files_reads_as_a_loose_client` |
+| Server: split folders (`data/game` for the INIs and `NpcQuest.SData`, `data/maps` for the maps) | a synthetic tree | `check_with_split_server_folders`, `sdata_in_place_on_a_gx_server_tree_keeps_a_bak`, `map_ini_edit_and_svmap_save_work_on_a_split_gx_tree` |

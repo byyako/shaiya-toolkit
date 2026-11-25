@@ -317,7 +317,7 @@ Server map files (`<id>.svmap`; the format is in [formats/svmap.md](../formats/s
 
 | Command | Arguments and flags | Exit |
 |---|---|---|
-| `check` | `FILE\|FOLDER` `--client CLIENT` `--server-data DIR` `--afterglow-defs PATH` (needs `--server-data`) `--target original\|afterglow` | 0 no error finding; 1 an error finding; 2 usage; 3 a map unreadable, no `.svmap`, client cannot be opened (a `--client` folder with no `data.sah` and no extracted client files counts), `--server-data` folder missing; 4 `CLIENT` is a file other than `data.sah` |
+| `check` | `FILE\|FOLDER` (or `--maps MAPS` instead) `--client CLIENT` `--server-data DIR` `--maps MAPS` (needs `--server-data`, not with `FILE\|FOLDER`) `--afterglow-defs PATH` (needs `--server-data`) `--target original\|afterglow` | 0 no error finding; 1 an error finding; 2 usage; 3 a map unreadable, no `.svmap`, client cannot be opened (a `--client` folder with no `data.sah` and no extracted client files counts), `--server-data` folder missing; 4 `CLIENT` is a file other than `data.sah` |
 | `dump` | `FILE` | 0; 3 unreadable, not a map, a NaN or infinity with `--json` |
 | `build` | `JSON -o OUT.svmap` `--force` | 0 written; 3 JSON unreadable or invalid; 4 `OUT` exists without `--force`, or `OUT` is the input; 5 the output did not read back to the same map (nothing is written) |
 | `roundtrip` | `FOLDER` | 0 every file identical (binary and through JSON); 1 a difference; 3 an unreadable file, no `.svmap` |
@@ -333,6 +333,7 @@ Server map files (`<id>.svmap`; the format is in [formats/svmap.md](../formats/s
 - `diff` of two folders compares the maps by id. Text rows show the counts of records only in A, only in B and changed per section.
 - `wld-check` reads every `world/*.wld` with the lossless model, writes it back in memory and says for each file whether the bytes come back identical. That is all it checks.
 - `bulk` is a dry run: it reports what the rule would do to the monster areas of every map. It never writes.
+- `check --server-data GAME --maps MAPS` is for a server whose INIs and maps sit in two folders (Shaiya-GX documents `data/game` and `data/maps`; [Works with Shaiya-GX](../guides/shaiya-gx.md)): `MAPS` is the folder of maps, `GAME` the folder of the INIs and `NpcQuest.SData`, and nothing is looked for in a `Map` child. Give the maps either as the first argument or with `--maps`, not both (exit 2), and `--maps` needs `--server-data` (exit 2). With `--maps` a missing `MapWar.ini` is said as `note: info: MapWar.ini not found ...` instead of the plain note; the exit code stays by the findings. Tests: `check_with_split_server_folders`, `the_maps_option_needs_server_data_and_excludes_the_target`.
 - `check --server-data DIR` still exits by the findings alone when `Map.ini`, `MapWar.ini`, `NpcQuest.SData` or `Obelisk.ini` is missing from DIR, but says so: one `note:` line (and `notes` entry) per file whose rules are skipped.
 - Notes (a client file that was skipped, a missing server data file, a `.svmap` left out of `spawns`, `bulk` or a folder `diff` because its file name is not a map id, an episode note such as `Monster.SData did not read with the EP4.5 layout: ...`) go to stderr as `note:` lines (silenced by `-q`) and into the `notes` array of the JSON.
 

@@ -222,6 +222,9 @@ pub struct CheckOptions {
     pub client: Option<PathBuf>,
     pub server_data: Option<PathBuf>,
     pub afterglow_defs: Option<PathBuf>,
+    /// The maps and the server's INIs sit in separate folders (a split server tree): a missing `MapWar.ini` is said as an info
+    /// line, since such a server may have no war server file.
+    pub war_optional: bool,
     pub target: TargetServer,
 }
 
@@ -355,7 +358,10 @@ pub fn check(target: &Path, opts: &CheckOptions, job: &Job) -> Result<CheckRepor
             job.stage("Reading the server data");
             let arcs: BTreeMap<u32, Arc<Svmap>> = maps.iter().map(|(k, v)| (*k, Arc::new(v.clone()))).collect();
             let data = crate::server_data::ServerData::load(dir, opts.afterglow_defs.as_deref());
-            notes.extend(data.notes.iter().cloned());
+            notes.extend(data.notes.iter().map(|n| match n.strip_prefix("MapWar.ini: not found") {
+                Some(rest) if opts.war_optional => format!("info: MapWar.ini not found (optional with separate map and server folders){rest}"),
+                _ => n.clone(),
+            }));
             let found = crate::cross_rules::check(&crate::cross_rules::Inputs { maps: &arcs, client: rules.as_ref(), server: Some(&data), target: opts.target });
             cross = Some(found.into_iter().map(|c| CrossRow { map: c.map, finding: c.finding }).collect());
         }

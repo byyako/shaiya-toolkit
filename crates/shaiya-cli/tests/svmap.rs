@@ -723,3 +723,73 @@ fn an_empty_server_data_folder_is_said_in_notes_without_changing_the_exit_code()
     let notes: Vec<&str> = v["notes"].as_array().unwrap().iter().filter_map(Value::as_str).collect();
     assert!(notes.iter().any(|n| n.starts_with("Map.ini: not found")) && notes.iter().any(|n| n.starts_with("Obelisk.ini")), "{notes:?}");
 }
+
+// ------------------------------------------------------------------------------------------------------------------ split server folders
+
+/// A synthetic server tree shaped the way Shaiya-GX documents its server data: the INIs and the server NPC table in `data/game`,
+/// the maps in `data/maps`, nothing in a `Map` child. Maps 0..2 (MapCount 3), `Obelisk.ini` without zones and an empty
+/// SEED-wrapped `NpcQuest.SData`. Returns (game, maps).
+fn gx_server_tree(root: &Path) -> (PathBuf, PathBuf) {
+    let game = root.join("server").join("data").join("game");
+    let maps = root.join("server").join("data").join("maps");
+    std::fs::create_dir_all(&game).unwrap();
+    std::fs::create_dir_all(&maps).unwrap();
+    write(&game.join("Map.ini"), b"[BASE]\r\nMapCount = 3\r\n\r\n[DEFAULT_SET_ZONE]\r\nMapType = F\r\n\r\n[SET_ZONE_0]\r\nMapType = F\r\n\r\n[SET_ZONE_1]\r\nMapType = F\r\n\r\n[SET_ZONE_2]\r\nMapType = D\r\n");
+    write(&game.join("Obelisk.ini"), b"// no zones\r\n");
+    write(&game.join("NpcQuest.SData"), &shaiya_seed::encrypt(&vec![0u8; 13 * 4 + 65_536 * 8]));
+    for id in 0..3 {
+        put(&maps, id, &Svmap::new(16));
+    }
+    (game, maps)
+}
+
+fn codes(v: &Value) -> Vec<String> {
+    v["server_and_client"].as_array().unwrap().iter().map(|c| c["finding"]["code"].as_str().unwrap().to_string()).collect()
+}
+
+#[test]
+fn check_with_split_server_folders() {
+    let w = world();
+    let (game, maps) = gx_server_tree(w.tmp.path());
+    // the maps as the target and the INIs in a second folder
+    let o = sh(&w.data, &["svmap", "check", p(&maps), "--server-data", p(&game), "--json"]);
+    assert_eq!(code(&o), 0, "{}", err(&o));
+    let v = json(&o);
+    assert_eq!(v["totals"]["files"], 3);
+    assert!(!codes(&v).iter().any(|c| c == "mapini-no-svmap"), "{:?}", codes(&v));
+    let notes: Vec<&str> = v["notes"].as_array().unwrap().iter().filter_map(Value::as_str).collect();
+    assert!(!notes.iter().any(|n| n.starts_with("Map.ini") || n.starts_with("NpcQuest") || n.starts_with("Obelisk")), "the three files were read: {notes:?}");
+    assert!(notes.iter().any(|n| n.starts_with("MapWar.ini: not found")), "without --maps the absent MapWar.ini is the plain note: {notes:?}");
+    // --maps names the folder instead of the target; MapWar.ini absent is an info line and not an error
+    let o = sh(&w.data, &["svmap", "check", "--server-data", p(&game), "--maps", p(&maps), "--json"]);
+    assert_eq!(code(&o), 0, "{}", err(&o));
+    let v = json(&o);
+    assert_eq!(v["totals"]["files"], 3);
+    let notes: Vec<&str> = v["notes"].as_array().unwrap().iter().filter_map(Value::as_str).collect();
+    assert!(notes.iter().any(|n| n.starts_with("info: MapWar.ini not found")) && !notes.iter().any(|n| n.starts_with("MapWar.ini")), "{notes:?}");
+    assert_eq!(v["totals"]["errors"], 0);
+    // the cross rules do run over the two folders: a map the Map.ini loads but the folder lacks is an error
+    std::fs::remove_file(maps.join("2.svmap")).unwrap();
+    let o = sh(&w.data, &["svmap", "check", "--server-data", p(&game), "--maps", p(&maps), "--json"]);
+    assert_eq!(code(&o), 1, "{}", err(&o));
+    assert!(codes(&json(&o)).iter().any(|c| c == "mapini-no-svmap"));
+    // nothing in the tree was written
+    assert!(!game.join("Map.ini.bak").exists() && !game.join("Map.ini.tmp").exists());
+}
+
+#[test]
+fn the_maps_option_needs_server_data_and_excludes_the_target() {
+    let w = world();
+    let (game, maps) = gx_server_tree(w.tmp.path());
+    for args in [
+        vec!["svmap", "check", "--maps", p(&maps)],
+        vec!["svmap", "check", p(&maps), "--server-data", p(&game), "--maps", p(&maps)],
+        vec!["svmap", "check", "--server-data", p(&game)],
+    ] {
+        let o = sh(&w.data, &args);
+        assert_eq!(code(&o), 2, "{args:?}: {}{}", out(&o), err(&o));
+    }
+    // a file given to --maps is refused like a file target
+    let o = sh(&w.data, &["svmap", "check", "--server-data", p(&game), "--maps", p(&maps.join("0.svmap"))]);
+    assert_eq!(code(&o), 2, "{}", err(&o));
+}

@@ -340,3 +340,27 @@ fn table_code_page() {
     assert_ne!(cp949["sheets"][0]["rows"][0][1], cp1252["sheets"][0]["rows"][0][1]);
     assert_eq!(cp1252["sheets"][0]["rows"][0][1], "\u{B0}\u{CB}");
 }
+
+/// A server `NpcQuest.SData` in a Shaiya-GX-shaped tree (`server/data/game`): `--in-place` writes the decrypted file, keeps the
+/// original as `NpcQuest.SData.bak` and touches nothing else of the tree; the next in-place run does not overwrite the `.bak`.
+#[test]
+fn sdata_in_place_on_a_gx_server_tree_keeps_a_bak() {
+    let w = world();
+    let game = w.tmp.path().join("server").join("data").join("game");
+    let original = shaiya_seed::encrypt(b"server npc table, synthetic");
+    write(&game.join("NpcQuest.SData"), &original);
+    write(&game.join("Map.ini"), b"[BASE]\r\nMapCount = 1\r\n");
+    let others = snapshot(&game).into_iter().filter(|(n, _)| !n.contains("NpcQuest")).collect::<Vec<_>>();
+    let file = game.join("NpcQuest.SData");
+    let o = sh(&w.data, &["sdata", "decrypt", p(&file), "--in-place"]);
+    assert_eq!(code(&o), 0, "{}", err(&o));
+    assert_eq!(std::fs::read(&file).unwrap(), b"server npc table, synthetic");
+    assert_eq!(std::fs::read(game.join("NpcQuest.SData.bak")).unwrap(), original, "the .bak is the file as it was");
+    let now = snapshot(&game).into_iter().filter(|(n, _)| !n.contains("NpcQuest")).collect::<Vec<_>>();
+    assert_eq!(now, others, "no other file of the tree changed");
+    // encrypting it back in place: the .bak of the first change is not overwritten
+    let o = sh(&w.data, &["sdata", "encrypt", p(&file), "--in-place", "--all-files"]);
+    assert_eq!(code(&o), 0, "{}{}", out(&o), err(&o));
+    assert!(is_encrypted(&std::fs::read(&file).unwrap()));
+    assert_eq!(std::fs::read(game.join("NpcQuest.SData.bak")).unwrap(), original, "the first .bak is never overwritten");
+}
