@@ -88,7 +88,7 @@ fn one(ctx: &Ctx, a: &ExportArgs, input: &str, out_file: &Path) -> Res {
     let bin_path = (!binary).then(|| out_file.with_extension("bin"));
     let bin_name = bin_path.as_ref().map(|p| file_name(p)).unwrap_or_default();
     let archive = match &a.from {
-        Some(arch) => Some(open_full(ctx, arch)?),
+        Some(arch) => Some(open_store(ctx, arch)?),
         None => None,
     };
     // the outputs are checked before anything is read: folder, not an input, not existing, not inside a client

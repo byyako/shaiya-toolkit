@@ -5,7 +5,7 @@ use super::util::*;
 use crate::output::print_json;
 use crate::Ctx;
 use serde_json::{json, Value};
-use shaiya_archive::Archive;
+
 use shaiya_clientdata::animedit::{self, Tracks};
 use shaiya_clientdata::anim::{passes, rig_check, rig_of, same_skeleton, validate, AniIssue, RigDiff, Severity};
 use shaiya_clientdata::mesh3dc::C3dcLayout;
@@ -433,16 +433,16 @@ fn read_capped(path: &Path, name: Option<&Path>, cap: u64) -> Result<Vec<u8>> {
 }
 
 /// Looks up one entry of an archive by its exact path (not in the archive: exit 3) and refuses it when it is over `cap`, from the entry's length.
-fn check_entry(archive: &Archive, path: &str, named: bool, cap: u64) -> Result<()> {
-    let entry = archive.index().get(path).ok_or_else(|| Error::io(path, std::io::Error::new(std::io::ErrorKind::NotFound, "not in the archive")))?;
-    if too_large(u64::from(entry.length), cap) {
+fn check_entry(archive: &Store, path: &str, named: bool, cap: u64) -> Result<()> {
+    let length = archive.len(path).ok_or_else(|| Error::io(path, std::io::Error::new(std::io::ErrorKind::NotFound, "not in the archive")))?;
+    if too_large(length, cap) {
         return Err(cap_error(named.then(|| Path::new(path)), cap));
     }
     Ok(())
 }
 
 /// Reads one entry of an archive by its exact path unless it is over `cap`.
-fn read_entry_capped(archive: &Archive, path: &str, named: bool, cap: u64) -> Result<Vec<u8>> {
+fn read_entry_capped(archive: &Store, path: &str, named: bool, cap: u64) -> Result<Vec<u8>> {
     check_entry(archive, path, named, cap)?;
     archive.read(path)
 }
@@ -464,7 +464,7 @@ struct Entry {
 
 struct Inputs {
     entries: Vec<Entry>,
-    archive: Option<Archive>,
+    archive: Option<Store>,
     /// Folders that could not be listed: (path, error). They are reported as FAILED; the other files are still described.
     failed: Vec<(String, String)>,
 }
@@ -524,12 +524,12 @@ fn collect(ctx: &Ctx, a: &InfoArgs, exts: &[&str]) -> Result<Inputs> {
     let mut failed = Vec::new();
     match &a.from {
         Some(arch) => {
-            let archive = open_full(ctx, arch)?;
+            let archive = open_store(ctx, arch)?;
             let patterns: Vec<String> = if a.inputs.is_empty() { exts.iter().map(|e| format!("*.{e}")).collect() } else { a.inputs.clone() };
             let filter = Filter::from_args(&patterns, &[], None, None)?;
-            for f in archive.index().visible() {
-                if filter.matches(&f.path, f.entry.length as u64) && has_ext(&f.path, exts) {
-                    entries.push(Entry { rel: f.path.replace('\\', "/"), name: f.path, origin: Origin::Archive });
+            for (fpath, flen) in archive.visible() {
+                if filter.matches(&fpath, flen) && has_ext(&fpath, exts) {
+                    entries.push(Entry { rel: fpath.replace('\\', "/"), name: fpath, origin: Origin::Archive });
                 }
             }
             Ok(Inputs { entries, archive: Some(archive), failed: Vec::new() })
@@ -971,7 +971,7 @@ fn compare(ctx: &Ctx, a: &CompareArgs) -> Result<i32> {
 fn read_target(ctx: &Ctx, target: &str, from: Option<&str>) -> Result<Vec<u8>> {
     match from {
         Some(arch) => {
-            let archive = open_full(ctx, arch)?;
+            let archive = open_store(ctx, arch)?;
             read_entry_capped(&archive, target, true, MAX_MODEL_BYTES)
         }
         None => {
@@ -1365,7 +1365,7 @@ fn export_one(ctx: &Ctx, a: &ExportArgs, input: &str, out_file: &Path) -> Res {
     // the size is checked before the file is read; the output is checked before anything is read or written
     let (bytes, source) = match from {
         Some(arch) => {
-            let archive = open_full(ctx, arch)?;
+            let archive = open_store(ctx, arch)?;
             check_entry(&archive, input, true, MAX_MODEL_BYTES)?;
             check_output(ctx, out_file, force, &[])?;
             (archive.read(input)?, input.to_string())

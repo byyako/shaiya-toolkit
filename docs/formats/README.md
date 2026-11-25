@@ -39,6 +39,7 @@ Every file format the toolkit reads or writes has a page here. A page says what 
 | `TacticsZone.zon` | [tacticszone-zon.md](tacticszone-zon.md) | `shaiya-clientdata`: the editor | not written | US EP4.5: 35 areas to the last byte |
 | Afterglow `mobs.psv` | [mobs-psv.md](mobs-psv.md) | the editor, `shaiya svmap check --afterglow-defs` | not written | an Afterglow export; only the id column |
 | Files Shaiya SVMap Editor defines | [svmap-editor-files.md](svmap-editor-files.md) | the editor (its install record only) | the editor | tests, and a copy of a US EP4.5 test client for the install record |
+| Loose data folders (a client without `data.sah`) | [loose-client.md](loose-client.md) | `shaiya-archive` (`loose`: the layout), `shaiya-clientdata` (`LooseTree`), the Archive tab, `shaiya info`, `shaiya anim --from` | not written | synthetic folders (symlink, junction, letter case, caps, cancel tests); one extracted US EP4.5 rig (opt-in) |
 | The toolkit's own files in a client folder | [toolkit-files.md](toolkit-files.md) | the toolkit's recovery, rollback and Put back | the toolkit's apply, compact, swap and clean-up | the toolkit's tests and code; the matrix rollback rows |
 
 ## Known, not yet documented

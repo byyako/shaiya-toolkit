@@ -31,6 +31,15 @@ pub struct Client {
     pub path: String,
     pub added_utc: String,
     pub note: String,
+    /// `ClientKind::Loose` for a folder of loose files (omitted when `Archive`, so an archive entry is written as before).
+    #[serde(skip_serializing_if = "shaiya_core::config::ClientKind::is_archive")]
+    pub kind: shaiya_core::config::ClientKind,
+    /// A loose client's `data` folder when it differs from `path`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub data: Option<String>,
+    /// A loose client's confirmed backup folder.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub backups: Option<String>,
 }
 
 /// `shared.json`: what every toolkit program shares.

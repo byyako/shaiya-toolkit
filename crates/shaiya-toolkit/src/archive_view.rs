@@ -14,6 +14,8 @@ use shaiya_archive::edit::{self, EditPlan, EditReport, InPlaceOptions, Put, PutM
 use shaiya_archive::extract::{self, ExtractOptions, ExtractReport};
 use shaiya_archive::journal::{self, JournalMode};
 use shaiya_archive::{compact, Archive, Entry, Index};
+use shaiya_clientdata::LooseTree;
+use crate::source::FileSource;
 use shaiya_inspect::validate::{self, Finding};
 use shaiya_core::fs::{portable_name, write_atomic_from_with, Existing, Sync};
 use shaiya_core::glob::{Filter, Pattern};
@@ -122,6 +124,8 @@ pub struct Loaded {
     /// The client folder this archive belongs to (`None`: an archive opened from a file; nothing can be changed in place).
     pub client_dir: Option<PathBuf>,
     pub archive: Option<Arc<Archive>>,
+    /// A loose client's files (`archive` is `None` then): a client folder with no `data.sah`.
+    pub loose: Option<Arc<LooseTree>>,
     /// What the `.ANI` previews learned about the `.3DC` candidates of this archive (new whenever an archive is loaded).
     pub mesh_cache: preview::MeshInfoCache,
     /// The texture index of the model list files, built by the first preview that needs it (new whenever an archive is loaded).
@@ -135,7 +139,30 @@ pub struct Loaded {
     pub dead: Option<u64>,
 }
 
+/// What every action that is not available on a loose folder says (the hover text of the greyed-out buttons).
+pub const LOOSE_HAS_NO_ARCHIVE: &str = "a loose folder has no archive";
+/// What the queue actions say on a loose folder until W17 (the queue is applied by the loose journal, which comes later).
+pub const LOOSE_NOT_YET: &str = "not yet for loose folders";
+
 impl Loaded {
+    /// The files previews, extraction and exports read from: the archive, or a loose folder's tree.
+    pub fn source(&self) -> Option<Arc<dyn FileSource>> {
+        match (&self.archive, &self.loose) {
+            (Some(a), _) => Some(a.clone() as Arc<dyn FileSource>),
+            (None, Some(t)) => Some(t.clone() as Arc<dyn FileSource>),
+            _ => None,
+        }
+    }
+
+    /// Whether files can be read (a `data.saf` is open, or this is a loose folder).
+    pub fn has_files(&self) -> bool {
+        self.archive.is_some() || self.loose.is_some()
+    }
+
+    pub fn is_loose(&self) -> bool {
+        self.loose.is_some()
+    }
+
     pub fn files_in(&self, folder: &str) -> &[usize] {
         self.by_folder.get(&folder.to_lowercase()).map(Vec::as_slice).unwrap_or(&[])
     }
@@ -146,7 +173,52 @@ struct Opened {
     notes: Vec<String>,
 }
 
+/// Opens a client folder that has no `data.sah` and passes `detect` as a loose client: its files are listed once and read in place.
+fn load_loose(layout: shaiya_archive::loose::LooseLayout, label: String, client_dir: Option<PathBuf>, job: &shaiya_core::Job) -> Result<Opened> {
+    let tree = LooseTree::open(&layout, job)?;
+    let mut notes = tree.notes();
+    if layout.gx {
+        notes.push("Shaiya-GX layout (converted media): PNG and OGG files are shown as they are, nothing is converted".to_string());
+    }
+    let rows: Vec<RowData> = tree
+        .files()
+        .iter()
+        .map(|f| {
+            let entry = Entry { name: f.rel.as_bytes().to_vec(), offset: 0, length: u32::try_from(f.len).unwrap_or(u32::MAX), version: i32::try_from(f.mtime / 1_000_000_000).unwrap_or(i32::MAX) };
+            RowData { lower: f.rel.to_lowercase(), path: f.rel.clone(), entry, shadowed: false }
+        })
+        .collect();
+    let visible = rows.len();
+    let tree_ui = Tree::build(&rows);
+    let mut by_folder: HashMap<String, Vec<usize>> = HashMap::new();
+    for (i, r) in rows.iter().enumerate() {
+        by_folder.entry(r.folder().to_lowercase()).or_default().push(i);
+    }
+    let loaded = Loaded {
+        label,
+        sah: layout.data.clone(),
+        client_dir,
+        archive: None,
+        loose: Some(Arc::new(tree)),
+        mesh_cache: preview::MeshInfoCache::default(),
+        texture_index: preview::TextureIndexCache::default(),
+        rows,
+        tree: tree_ui,
+        by_folder,
+        sah_version: 0,
+        visible,
+        saf_len: None,
+        dead: None,
+    };
+    Ok(Opened { loaded, notes })
+}
+
 fn load(path: &Path, label: String, client_dir: Option<PathBuf>, job: &shaiya_core::Job) -> Result<Opened> {
+    if client_dir.is_some() && !has_sah_file(path) {
+        if let Some(layout) = shaiya_archive::loose::detect(path)? {
+            return load_loose(layout, label, client_dir, job);
+        }
+    }
     let mut notes = Vec::new();
     if let Some(dir) = &client_dir {
         match client::recover(dir) {
@@ -174,7 +246,7 @@ fn load(path: &Path, label: String, client_dir: Option<PathBuf>, job: &shaiya_co
     for (i, r) in rows.iter().enumerate() {
         by_folder.entry(r.folder().to_lowercase()).or_default().push(i);
     }
-    Ok(Opened { loaded: Loaded { label, sah, client_dir, archive, mesh_cache: preview::MeshInfoCache::default(), texture_index: preview::TextureIndexCache::default(), rows, tree, by_folder, sah_version, visible, saf_len, dead }, notes })
+    Ok(Opened { loaded: Loaded { label, sah, client_dir, archive, loose: None, mesh_cache: preview::MeshInfoCache::default(), texture_index: preview::TextureIndexCache::default(), rows, tree, by_folder, sah_version, visible, saf_len, dead }, notes })
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -614,6 +686,103 @@ impl Default for ArchiveView {
     }
 }
 
+
+/// One file of a loose extraction: where it goes and what it is.
+struct LoosePlanned {
+    path: String,
+    len: u64,
+    mtime_secs: i64,
+    target: PathBuf,
+    escaped: bool,
+    exists: bool,
+}
+
+/// What an extraction of the files of `tree` that `filter` accepts would write under `out`: names Windows cannot hold are escaped as `%XX`
+/// (as for an archive), a flat extraction puts every file in `out` by its own name (a clash gets `~2`, `~3`, ...).
+fn plan_loose(tree: &LooseTree, filter: &Filter, out: &Path, flat: bool) -> Vec<LoosePlanned> {
+    let mut taken: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut v = Vec::new();
+    for f in tree.files() {
+        if !filter.matches(&f.rel, f.len) {
+            continue;
+        }
+        let mut escaped = false;
+        let mut segs: Vec<String> = f
+            .rel
+            .split('/')
+            .map(|s| match portable_name(s) {
+                Some(p) => {
+                    escaped = true;
+                    p
+                }
+                None => s.to_string(),
+            })
+            .collect();
+        if flat {
+            segs = vec![segs.pop().unwrap_or_default()];
+        }
+        let mut n = 1;
+        let base = segs.clone();
+        while !taken.insert(segs.join("/").to_lowercase()) {
+            n += 1;
+            escaped = true;
+            let last = base.last().cloned().unwrap_or_default();
+            let renamed = match last.rsplit_once('.') {
+                Some((s, e)) => format!("{s}~{n}.{e}"),
+                None => format!("{last}~{n}"),
+            };
+            segs = base.clone();
+            *segs.last_mut().expect("a name") = renamed;
+        }
+        let mut target = out.to_path_buf();
+        for s in &segs {
+            target.push(s);
+        }
+        let exists = target.exists();
+        v.push(LoosePlanned { path: f.rel.clone(), len: f.len, mtime_secs: i64::try_from(f.mtime / 1_000_000_000).unwrap_or(0), target, escaped, exists });
+    }
+    v
+}
+
+/// Copies the planned files out of a loose folder, each atomically; the original files are only read.
+fn extract_loose(tree: &LooseTree, plan: &[LoosePlanned], out: &Path, existing: Existing, keep_times: bool, job: &shaiya_core::Job) -> Result<ExtractReport> {
+    if existing == Existing::Refuse {
+        if let Some(p) = plan.iter().find(|p| p.exists) {
+            return Err(Error::Refused(format!("{} already exists", p.target.display())));
+        }
+    }
+    job.stage("extracting");
+    job.total(Some(plan.iter().filter(|p| !(p.exists && existing == Existing::Skip)).map(|p| p.len).sum()), Unit::Bytes);
+    let mut rep = ExtractReport::default();
+    let mut made: std::collections::HashSet<PathBuf> = std::collections::HashSet::new();
+    for p in plan {
+        job.check()?;
+        if p.exists && existing == Existing::Skip {
+            rep.skipped_existing.push(p.path.clone());
+            continue;
+        }
+        if let Some(dir) = p.target.parent() {
+            if made.insert(dir.to_path_buf()) {
+                std::fs::create_dir_all(dir).map_err(|e| Error::io(dir, e))?;
+            }
+        }
+        if p.target.is_dir() {
+            return Err(Error::Refused(format!("{} is a folder; cannot write the file {}", p.target.display(), p.path)));
+        }
+        let mut r = tree.open_reader(&p.path)?;
+        rep.bytes += write_atomic_from_with(&p.target, &mut r, Sync::No, job)?;
+        rep.written += 1;
+        if keep_times && p.mtime_secs > 0 {
+            if let Ok(f) = std::fs::OpenOptions::new().write(true).open(&p.target) {
+                let _ = f.set_modified(std::time::UNIX_EPOCH + std::time::Duration::from_secs(p.mtime_secs as u64));
+            }
+        }
+        if p.escaped {
+            rep.escaped.push((p.path.clone(), p.target.strip_prefix(out).unwrap_or(&p.target).to_string_lossy().replace('\\', "/")));
+        }
+    }
+    Ok(rep)
+}
 fn has_sah_file(dir: &Path) -> bool {
     dir.is_dir() && std::fs::read_dir(dir).map(|r| r.flatten().any(|e| e.file_name().to_string_lossy().eq_ignore_ascii_case("data.sah"))).unwrap_or(false)
 }
@@ -942,6 +1111,25 @@ impl ArchiveView {
     /// Whether the open source is this folder (a saved client or an opened client folder).
     pub fn source_dir_is(&self, dir: &Path) -> bool {
         matches!(&self.source, Some(OpenSource::Client { dir: d, .. }) if crate::clients::same_folder(d, dir))
+    }
+
+    /// Whether the open source is a loose folder (a client with no `data.sah`).
+    pub fn is_loose(&self) -> bool {
+        self.loaded.as_ref().is_some_and(|l| l.is_loose())
+    }
+
+    /// Why an action is off for the open source, when it is a loose folder: `"compact"`, `"save-new"`, `"check"`, `"swap"` and the archive-only
+    /// health rules say "a loose folder has no archive"; `"add"`, `"replace"`, `"remove"`, `"apply"` say "not yet for loose folders" (the queue
+    /// is applied by the loose journal, which comes later). `None` for any other action or source.
+    pub fn loose_off_reason(&self, action: &str) -> Option<&'static str> {
+        if !self.is_loose() {
+            return None;
+        }
+        match action {
+            "compact" | "save-new" | "check" | "swap" | "archive-health" => Some(LOOSE_HAS_NO_ARCHIVE),
+            "add" | "replace" | "remove" | "apply" => Some(LOOSE_NOT_YET),
+            _ => None,
+        }
     }
 
     /// The app's handle on `data.saf` (for tasks that read it; they must not outlive a write).
@@ -1345,6 +1533,9 @@ impl ArchiveView {
     }
 
     pub fn queue_removes(&mut self, paths: Vec<String>) {
+        if self.is_loose() {
+            return;
+        }
         let mut edits = Vec::new();
         let mut working = self.pending.clone();
         for path in paths {
@@ -1628,7 +1819,7 @@ impl ArchiveView {
         self.preview.decoded = None;
         self.preview.plain_view = false;
         let Some(l) = &self.loaded else { return };
-        let Some(a) = l.archive.clone() else { return };
+        let Some(a) = l.source() else { return };
         let cache = l.mesh_cache.clone();
         let textures = l.texture_index.clone();
         let r = &l.rows[row];
@@ -1802,7 +1993,11 @@ impl ArchiveView {
 
     /// Plans an extraction as a task, then asks about existing files, then extracts.
     pub fn begin_extract(&mut self, out: PathBuf, all_shown: bool, whole_archive: bool, flat: bool, cx: &mut ToolkitCx<'_>) {
-        let Some(a) = self.loaded.as_ref().and_then(|l| l.archive.clone()) else { return };
+        let loose = self.loaded.as_ref().and_then(|l| l.loose.clone());
+        let archive = self.loaded.as_ref().and_then(|l| l.archive.clone());
+        if loose.is_none() && archive.is_none() {
+            return;
+        }
         let filter = if whole_archive { Filter::default() } else { self.selection_filter(all_shown) };
         if !whole_archive && filter.include.is_empty() {
             cx.shell.status("Select something to extract first");
@@ -1811,6 +2006,11 @@ impl ArchiveView {
         let req = ExtractReq { out, filter, flat, keep_times: cx.settings.extract_keep_times };
         let r2 = req.clone();
         let h = cx.shell.tasks().spawn(TaskSpec { title: "Planning the extraction".into(), cancellable: true, exclusive: None }, move |_job| {
+            if let Some(t) = loose {
+                let plan = plan_loose(&t, &r2.filter, &r2.out, r2.flat);
+                return Ok(ExtractPlanned { count: plan.len(), exists: plan.iter().filter(|p| p.exists).count(), bytes: plan.iter().map(|p| p.len).sum() });
+            }
+            let a = archive.expect("checked");
             let opts = ExtractOptions { filter: r2.filter.clone(), include_shadowed: false, existing: Existing::Overwrite, keep_times: r2.keep_times };
             let plan = extract::plan(a.index(), &r2.out, &opts)?;
             Ok(ExtractPlanned { count: plan.len(), exists: plan.iter().filter(|p| p.exists).count(), bytes: plan.iter().map(|p| p.entry.length as u64).sum() })
@@ -1819,6 +2019,15 @@ impl ArchiveView {
     }
 
     fn start_extract(&mut self, req: ExtractReq, existing: Existing, cx: &mut ToolkitCx<'_>) {
+        if let Some(t) = self.loaded.as_ref().and_then(|l| l.loose.clone()) {
+            let title = format!("Extracting to {}", req.out.display());
+            let h = cx.shell.tasks().spawn(TaskSpec { title, cancellable: true, exclusive: None }, move |job| {
+                let plan = plan_loose(&t, &req.filter, &req.out, req.flat);
+                extract_loose(&t, &plan, &req.out, existing, req.keep_times, job)
+            });
+            self.extract = Some(ExtractFlow::Running(h));
+            return;
+        }
         let Some(a) = self.loaded.as_ref().and_then(|l| l.archive.clone()) else { return };
         let title = format!("Extracting to {}", req.out.display());
         let h = cx.shell.tasks().spawn(TaskSpec { title, cancellable: true, exclusive: None }, move |job| {
@@ -1861,7 +2070,7 @@ impl ArchiveView {
 
     /// The one selected file when it is one of the six model formats (what "Export as JSON..." works on).
     fn export_json_row(&self) -> Option<usize> {
-        let l = self.loaded.as_ref().filter(|l| l.archive.is_some())?;
+        let l = self.loaded.as_ref().filter(|l| l.has_files())?;
         let mut it = self.selected.iter();
         let (&i, None) = (it.next()?, it.next()) else { return None };
         (self.selected_folder.is_none() && l.rows.get(i).is_some_and(|r| crate::export_json::is_model_path(&r.path))).then_some(i)
@@ -1870,7 +2079,7 @@ impl ArchiveView {
     /// The one selected file when it is one `format` is written from (what "Export as glTF...", "Export as OBJ..." and "Export as BVH..." work
     /// on): `.ANI`, `.3DC`, `.3DO` or `.3DE` for glTF, `.3DO`, `.3DE` or `.3DC` for OBJ, `.ANI` for BVH.
     fn export_row(&self, format: crate::export_interchange::Interchange) -> Option<usize> {
-        let l = self.loaded.as_ref().filter(|l| l.archive.is_some())?;
+        let l = self.loaded.as_ref().filter(|l| l.has_files())?;
         let mut it = self.selected.iter();
         let (&i, None) = (it.next()?, it.next()) else { return None };
         (self.selected_folder.is_none() && l.rows.get(i).is_some_and(|r| format.takes(&r.path))).then_some(i)
@@ -1882,7 +2091,7 @@ impl ArchiveView {
 
     fn export_row_to(&mut self, format: crate::export_interchange::Interchange, row: usize, out: PathBuf, cx: &mut ToolkitCx<'_>) {
         let Some(l) = &self.loaded else { return };
-        let (Some(a), Some(r)) = (l.archive.clone(), l.rows.get(row)) else { return };
+        let (Some(a), Some(r)) = (l.source(), l.rows.get(row)) else { return };
         let (entry, path) = (r.entry.clone(), r.path.clone());
         let dir = l.client_dir.clone();
         // a glTF animation goes out on the one mesh the Mesh box shows, else alone (OBJ and BVH hold no skin)
@@ -1900,7 +2109,7 @@ impl ArchiveView {
     /// Whether the row menu of the file at `path` offers "Export as glTF..." (needs the data.saf and one of the four kinds).
     #[doc(hidden)]
     pub fn offers_export_gltf(&self, path: &str) -> bool {
-        self.loaded.as_ref().is_some_and(|l| l.archive.is_some()) && crate::export_interchange::is_gltf_path(path) && self.find_row(path).is_some()
+        self.loaded.as_ref().is_some_and(|l| l.has_files()) && crate::export_interchange::is_gltf_path(path) && self.find_row(path).is_some()
     }
 
     /// Test hook: "Export as glTF..." for the selected file, writing to `path` (`.gltf` or `.glb`) without the save dialog.
@@ -1914,13 +2123,13 @@ impl ArchiveView {
     /// Whether the row menu of the file at `path` offers "Export as OBJ..." (needs the data.saf and a `.3DO`, `.3DE` or `.3DC`).
     #[doc(hidden)]
     pub fn offers_export_obj(&self, path: &str) -> bool {
-        self.loaded.as_ref().is_some_and(|l| l.archive.is_some()) && crate::export_interchange::is_obj_path(path) && self.find_row(path).is_some()
+        self.loaded.as_ref().is_some_and(|l| l.has_files()) && crate::export_interchange::is_obj_path(path) && self.find_row(path).is_some()
     }
 
     /// Whether the row menu of the file at `path` offers "Export as BVH..." (needs the data.saf and an `.ANI`).
     #[doc(hidden)]
     pub fn offers_export_bvh(&self, path: &str) -> bool {
-        self.loaded.as_ref().is_some_and(|l| l.archive.is_some()) && crate::export_interchange::is_bvh_path(path) && self.find_row(path).is_some()
+        self.loaded.as_ref().is_some_and(|l| l.has_files()) && crate::export_interchange::is_bvh_path(path) && self.find_row(path).is_some()
     }
 
     /// Test hook: "Export as OBJ..." for the selected file, writing to `path` (`.obj`) without the save dialog.
@@ -1947,7 +2156,7 @@ impl ArchiveView {
 
     fn export_json_row_to(&mut self, row: usize, out: PathBuf, cx: &mut ToolkitCx<'_>) {
         let Some(l) = &self.loaded else { return };
-        let (Some(a), Some(r)) = (l.archive.clone(), l.rows.get(row)) else { return };
+        let (Some(a), Some(r)) = (l.source(), l.rows.get(row)) else { return };
         let (entry, path) = (r.entry.clone(), r.path.clone());
         let dir = l.client_dir.clone();
         self.json_exports.start(a, entry, path, out, dir.as_deref(), cx);
@@ -1957,7 +2166,7 @@ impl ArchiveView {
     #[doc(hidden)]
     pub fn offers_export_json(&self, path: &str) -> bool {
         let l = self.loaded.as_ref();
-        l.is_some_and(|l| l.archive.is_some()) && crate::export_json::is_model_path(path) && self.find_row(path).is_some()
+        l.is_some_and(|l| l.has_files()) && crate::export_json::is_model_path(path) && self.find_row(path).is_some()
     }
 
     /// Test hook: "Export as JSON..." for the selected file, writing to `path` without the save dialog.
@@ -1991,7 +2200,7 @@ impl ArchiveView {
     /// (an output that exists is kept and listed). Refused with a message, before anything is read, when `out` is inside a client folder.
     pub fn export_folder_json_to(&mut self, folder: &str, out: PathBuf, cx: &mut ToolkitCx<'_>) {
         let Some(l) = &self.loaded else { return };
-        let Some(a) = l.archive.clone() else { return };
+        let Some(a) = l.source() else { return };
         let dir = l.client_dir.clone();
         let items = self.model_files_under(folder);
         if items.is_empty() {
@@ -2220,6 +2429,9 @@ impl ArchiveView {
 
     /// Opens the "Add to archive" dialog for dropped or chosen files and folders.
     pub fn begin_add(&mut self, paths: Vec<PathBuf>) {
+        if self.is_loose() {
+            return;
+        }
         let target = self.folder.clone();
         let mut d = AddDialog { paths, target, keep_folder_names: false, rows: Vec::new(), error: None, findings: Vec::new(), checked: false, asking: false, check_gen: 0, checking: None };
         self.recompute_add(&mut d);
@@ -2275,6 +2487,10 @@ impl ArchiveView {
     /// decrypted), then queues it. A file the checks ask about waits for "Add anyway" (see `replace_ask`); other findings are shown in
     /// the status bar and the file is queued. A check that did not finish asks too.
     pub fn replace_with_file(&mut self, row: usize, file: PathBuf, cx: &mut ToolkitCx<'_>) {
+        if self.is_loose() {
+            cx.shell.status(format!("Replace: {LOOSE_NOT_YET}"));
+            return;
+        }
         let Some(l) = &self.loaded else { return };
         let path = l.rows[row].path.clone();
         let version = mtime(&file);
@@ -2418,14 +2634,15 @@ impl ArchiveView {
     pub fn commands(&self) -> Vec<Command> {
         use egui::{Key, KeyboardShortcut as K, Modifiers as M};
         let open = self.loaded.as_ref().is_some_and(|l| l.archive.is_some());
+        let files = self.loaded.as_ref().is_some_and(|l| l.has_files());
         let edit = open && self.client_dir().is_some();
         let busy = self.is_applying();
         let writes = self.write_actions_enabled();
         let c = |id: &'static str, label: &str, shortcut: Option<K>, enabled: bool| Command { id, label: label.to_string(), shortcut, enabled };
         vec![
             c("archive-search", "Search the archive", Some(K::new(M::COMMAND, Key::F)), self.is_open()),
-            c("archive-extract", "Extract selected files...", Some(K::new(M::COMMAND, Key::E)), open && (!self.selected.is_empty() || self.selected_folder.is_some())),
-            c("archive-extract-all", "Extract all shown files...", Some(K::new(M::COMMAND | M::SHIFT, Key::E)), open),
+            c("archive-extract", "Extract selected files...", Some(K::new(M::COMMAND, Key::E)), files && (!self.selected.is_empty() || self.selected_folder.is_some())),
+            c("archive-extract-all", "Extract all shown files...", Some(K::new(M::COMMAND | M::SHIFT, Key::E)), files),
             c("archive-export-json", "Export as JSON...", None, self.export_json_row().is_some()),
             c("archive-export-gltf", "Export as glTF...", None, self.export_gltf_row().is_some()),
             c("archive-export-obj", "Export as OBJ...", None, self.export_row(crate::export_interchange::Interchange::Obj).is_some()),
@@ -2509,6 +2726,7 @@ impl ArchiveView {
         }
         let mut acts: Vec<Act> = Vec::new();
         let has_saf = self.loaded.as_ref().is_some_and(|l| l.archive.is_some());
+        let has_files = self.loaded.as_ref().is_some_and(|l| l.has_files());
         let can_edit = self.client_dir().is_some() && has_saf;
         // header
         {
@@ -2523,18 +2741,23 @@ impl ArchiveView {
                 _ => "data.saf not found".to_string(),
             };
             ui.horizontal_wrapped(|ui| {
-                ui.label(RichText::new(l.sah.parent().map(|p| cx.shell.folder_text(&client_name, p)).unwrap_or_default()).strong());
-                ui.label(format!("data.sah v{}, {} ({} shadowed)  ·  {saf}", l.sah_version, shaiya_inspect::counted((l.visible) as u64, "file", "files"), l.rows.len() - l.visible));
-                if !has_saf {
+                let shown_dir = if l.is_loose() { Some(l.sah.as_path()) } else { l.sah.parent() };
+                ui.label(RichText::new(shown_dir.map(|p| cx.shell.folder_text(&client_name, p)).unwrap_or_default()).strong());
+                if l.is_loose() {
+                    ui.label(format!("loose folder, {}", shaiya_inspect::counted((l.visible) as u64, "file", "files")));
+                } else {
+                    ui.label(format!("data.sah v{}, {} ({} shadowed)  ·  {saf}", l.sah_version, shaiya_inspect::counted((l.visible) as u64, "file", "files"), l.rows.len() - l.visible));
+                }
+                if !has_saf && !l.is_loose() {
                     ui.label(RichText::new("browsing the index only: preview, extract and changes are off").color(pal.warning));
                 }
-                if ui.add_enabled(has_saf, egui::Button::new("Check")).clicked() {
+                if ui.add_enabled(has_saf, egui::Button::new("Check")).on_disabled_hover_text(if l.is_loose() { LOOSE_HAS_NO_ARCHIVE } else { "data.saf not found" }).clicked() {
                     acts.push(Act::Check(false));
                 }
                 if ui.button("Compare...").on_hover_text("Compare any two saved clients or archive files: OLD on the left, NEW on the right").clicked() {
                     acts.push(Act::Compare);
                 }
-                if lock_hover(ui.add_enabled(can_edit && !self.is_applying() && self.write_actions_enabled(), egui::Button::new("Compact...")), !self.write_actions_enabled()).clicked() {
+                if lock_hover(ui.add_enabled(can_edit && !self.is_applying() && self.write_actions_enabled(), egui::Button::new("Compact...")).on_disabled_hover_text(if l.is_loose() { LOOSE_HAS_NO_ARCHIVE } else { "Needs a client folder with its data.saf" }), !self.write_actions_enabled()).clicked() {
                     acts.push(Act::Compact);
                 }
             });
@@ -2577,14 +2800,14 @@ impl ArchiveView {
             ui.checkbox(&mut self.show_shadowed, "shadowed");
             cx.settings.show_shadowed = self.show_shadowed;
             ui.label(RichText::new(if self.search.is_empty() { format!("/{}", self.folder) } else { "search".to_string() }).color(pal.weak));
-            if ui.add_enabled(can_edit, egui::Button::new("Add...")).on_hover_text("Insert").clicked() {
+            if ui.add_enabled(can_edit, egui::Button::new("Add...")).on_hover_text("Insert").on_disabled_hover_text(if self.loaded.as_ref().is_some_and(|l| l.is_loose()) { LOOSE_NOT_YET } else { "Needs a client folder with its data.saf" }).clicked() {
                 acts.push(Act::AddFiles);
             }
             let any = !self.selected.is_empty() || self.selected_folder.is_some();
-            if ui.add_enabled(has_saf && any, egui::Button::new("Extract...")).on_hover_text("Ctrl+E").clicked() {
+            if ui.add_enabled(has_files && any, egui::Button::new("Extract...")).on_hover_text("Ctrl+E").clicked() {
                 acts.push(Act::Extract { all: false, flat: false });
             }
-            if ui.add_enabled(has_saf, egui::Button::new("Extract all shown...")).clicked() {
+            if ui.add_enabled(has_files, egui::Button::new("Extract all shown...")).clicked() {
                 acts.push(Act::Extract { all: true, flat: false });
             }
         });
@@ -2785,16 +3008,16 @@ impl ArchiveView {
                                 ("Compare with...", MenuChoice::CompareWith),
                                 ("Edit animation...", MenuChoice::EditAnimation),
                             ] {
-                                if matches!(choice, MenuChoice::ExportJson) && !matches!(v, ViewRow::File(i) if l.archive.is_some() && crate::export_json::is_model_path(&l.rows[i].path)) {
+                                if matches!(choice, MenuChoice::ExportJson) && !matches!(v, ViewRow::File(i) if l.has_files() && crate::export_json::is_model_path(&l.rows[i].path)) {
                                     continue;
                                 }
-                                if matches!(choice, MenuChoice::ExportGltf) && !matches!(v, ViewRow::File(i) if l.archive.is_some() && crate::export_interchange::is_gltf_path(&l.rows[i].path)) {
+                                if matches!(choice, MenuChoice::ExportGltf) && !matches!(v, ViewRow::File(i) if l.has_files() && crate::export_interchange::is_gltf_path(&l.rows[i].path)) {
                                     continue;
                                 }
-                                if matches!(choice, MenuChoice::ExportObj) && !matches!(v, ViewRow::File(i) if l.archive.is_some() && crate::export_interchange::is_obj_path(&l.rows[i].path)) {
+                                if matches!(choice, MenuChoice::ExportObj) && !matches!(v, ViewRow::File(i) if l.has_files() && crate::export_interchange::is_obj_path(&l.rows[i].path)) {
                                     continue;
                                 }
-                                if matches!(choice, MenuChoice::ExportBvh) && !matches!(v, ViewRow::File(i) if l.archive.is_some() && crate::export_interchange::is_bvh_path(&l.rows[i].path)) {
+                                if matches!(choice, MenuChoice::ExportBvh) && !matches!(v, ViewRow::File(i) if l.has_files() && crate::export_interchange::is_bvh_path(&l.rows[i].path)) {
                                     continue;
                                 }
                                 if matches!(choice, MenuChoice::ImportGltf) && !matches!(v, ViewRow::File(i) if l.archive.is_some() && crate::export_interchange::is_gltf_path(&l.rows[i].path)) {
@@ -2806,7 +3029,11 @@ impl ArchiveView {
                                 if matches!(choice, MenuChoice::CompareWith) && !matches!(v, ViewRow::File(i) if l.archive.is_some() && is_ani_path(&l.rows[i].path)) {
                                     continue;
                                 }
-                                let mut b = ui.button(label);
+                                let off = if l.is_loose() && matches!(choice, MenuChoice::Replace | MenuChoice::Remove) { Some(LOOSE_NOT_YET) } else { None };
+                                let mut b = ui.add_enabled(off.is_none(), egui::Button::new(label));
+                                if let Some(t) = off {
+                                    b = b.on_disabled_hover_text(t);
+                                }
                                 if matches!(choice, MenuChoice::ExportGltf | MenuChoice::ExportObj | MenuChoice::ExportBvh | MenuChoice::ImportGltf) {
                                     b = b.on_hover_text(crate::export_interchange::LOSSY_SENTENCE);
                                 }
@@ -2820,7 +3047,7 @@ impl ArchiveView {
                                 open = Some(path.clone());
                                 ui.close();
                             }
-                            if l.archive.is_some() && ui.button("Export folder as JSON...").clicked() {
+                            if l.has_files() && ui.button("Export folder as JSON...").clicked() {
                                 menu = Some((vi, MenuChoice::ExportFolderJson));
                                 ui.close();
                             }
@@ -3514,7 +3741,7 @@ impl ArchiveView {
                         let v = t.strip_prefix("0x").map(|h| u64::from_str_radix(h, 16).ok()).unwrap_or_else(|| t.parse().ok());
                         if let (Some(off), Some(row)) = (v, self.preview.row) {
                             if let (Some(l), true) = (&self.loaded, true) {
-                                if let (Some(a), Some(r)) = (l.archive.clone(), l.rows.get(row)) {
+                                if let (Some(a), Some(r)) = (l.source(), l.rows.get(row)) {
                                     let path = r.path.clone();
                                     let h = cx.shell.tasks().spawn(TaskSpec { title: "Preview".into(), cancellable: true, exclusive: None }, move |job| preview::make_preview(&*a, &path, false, off, job));
                                     self.preview.handle = Some(h);
@@ -3622,11 +3849,11 @@ impl ArchiveView {
                 }
                 Act::DecryptTo(i) => {
                     let Some(l) = &self.loaded else { continue };
-                    let (Some(a), r) = (l.archive.clone(), &l.rows[i]) else { continue };
+                    let (Some(a), r) = (l.source(), &l.rows[i]) else { continue };
                     if let Some(out) = cx.shell.save_file("decrypt", r.name(), &[("All files", &["*"])]) {
-                        let (entry, path) = (r.entry.clone(), r.path.clone());
+                        let path = r.path.clone();
                         cx.shell.tasks().spawn(TaskSpec { title: format!("Decrypting {}", r.name()), cancellable: true, exclusive: None }, move |_job| {
-                            let data = a.read_entry(&entry)?;
+                            let data = a.read(&path, u64::MAX, &shaiya_core::Job::silent())?;
                             let plain = shaiya_seed::unwrap(&data, &path)?.0;
                             shaiya_core::fs::write_atomic(&out, &plain)
                         });

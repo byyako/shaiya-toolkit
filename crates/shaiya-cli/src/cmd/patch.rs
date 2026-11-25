@@ -328,7 +328,7 @@ fn build(ctx: &Ctx, a: &BuildArgs, job: &Job) -> Result<i32> {
     let mut input = input;
     let mut unchanged: Vec<String> = Vec::new();
     if let Some(c) = &a.only_changed {
-        unchanged = input.skip_same_as(&client_dir(ctx, c)?, job)?;
+        unchanged = input.skip_same_as(&archive_client_dir(ctx, c)?, job)?;
         if !unchanged.is_empty() {
             note(ctx, &format!("left out, already the same in the client ({}):", count(unchanged.len(), "file")));
             for p in &unchanged {
@@ -406,7 +406,7 @@ fn verify_cmd(ctx: &Ctx, a: &VerifyArgs, job: &Job) -> Result<i32> {
     if a.require_signature && key.is_none() {
         return Err(Error::Refused("--require-signature needs a key (--key FILE or --public-hex HEX with --check-version)".to_string()));
     }
-    let client = a.client.as_deref().map(|c| client_dir(ctx, c)).transpose()?;
+    let client = a.client.as_deref().map(|c| archive_client_dir(ctx, c)).transpose()?;
     let mut reports = Vec::new();
     let mut failed = false;
     for p in &a.patches {
@@ -457,7 +457,7 @@ fn verify_cmd(ctx: &Ctx, a: &VerifyArgs, job: &Job) -> Result<i32> {
 // ---------------------------------------------------------------------------------------------------------- apply
 
 fn apply(ctx: &Ctx, a: &ApplyArgs, job: &Job) -> Result<i32> {
-    let dir = client_dir(ctx, &a.client)?;
+    let dir = archive_client_dir(ctx, &a.client)?;
     let key = key_of(&a.key, &a.public_hex, a.check_version)?;
     let numbers: Vec<Option<u32>> = a.patches.iter().map(|p| patch_number(&file_name(p))).collect();
     if numbers.windows(2).any(|w| matches!((w[0], w[1]), (Some(x), Some(y)) if y <= x)) {
@@ -619,7 +619,7 @@ fn publish_cmd(ctx: &Ctx, a: &PublishArgs, job: &Job) -> Result<i32> {
 // ---------------------------------------------------------------------------------------------------------- rollback / history
 
 fn rollback(ctx: &Ctx, a: &RollbackArgs, job: &Job) -> Result<i32> {
-    let dir = client_dir(ctx, &a.client)?;
+    let dir = archive_client_dir(ctx, &a.client)?;
     prepare_write(ctx, &dir, !a.dry_run)?;
     let root = journal_root(&dir, a.journal_dir.as_deref());
     let all = journal::list(&dir, &root)?;
@@ -669,7 +669,7 @@ fn rollback(ctx: &Ctx, a: &RollbackArgs, job: &Job) -> Result<i32> {
 }
 
 fn history(ctx: &Ctx, a: &HistoryArgs) -> Result<i32> {
-    let dir = client_dir(ctx, &a.client)?;
+    let dir = archive_client_dir(ctx, &a.client)?;
     for n in shaiya_archive::client::recover(&dir)? {
         note(ctx, &format!("note: {n}"));
     }

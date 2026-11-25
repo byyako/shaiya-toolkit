@@ -19,6 +19,7 @@ pub mod extract;
 pub mod health;
 pub mod journal;
 pub mod layout;
+pub mod loose;
 pub mod pack;
 #[cfg(feature = "serde")]
 pub(crate) mod ser;

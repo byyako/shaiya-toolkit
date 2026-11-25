@@ -3,6 +3,7 @@
 //! [`shaiya_clientdata::anim::diff`] and hands back the numbers; nothing is written anywhere.
 
 use crate::ToolkitSettings;
+use crate::source::FileSource;
 use shaiya_archive::Archive;
 use shaiya_clientdata::anim::{self, AniDiff, RigDiff};
 use shaiya_clientdata::modeljson::MAX_MODEL_BYTES;
@@ -44,12 +45,12 @@ pub struct Shown {
     pub diff: AniDiff,
 }
 
-pub(crate) fn read_ani(archive: &Archive, path: &str, label: &str) -> Result<Ani> {
-    let entry = archive.index().get(path).ok_or_else(|| Error::io(path, std::io::Error::new(std::io::ErrorKind::NotFound, format!("not in {label}"))))?;
-    if u64::from(entry.length) > MAX_MODEL_BYTES {
-        return Err(Error::format(path, None, format!("{} bytes is over the {MAX_MODEL_BYTES}-byte limit for a model file", entry.length)));
+pub(crate) fn read_ani(archive: &dyn FileSource, path: &str, label: &str) -> Result<Ani> {
+    let length = archive.len(path).ok_or_else(|| Error::io(path, std::io::Error::new(std::io::ErrorKind::NotFound, format!("not in {label}"))))?;
+    if length > MAX_MODEL_BYTES {
+        return Err(Error::format(path, None, format!("{} bytes is over the {MAX_MODEL_BYTES}-byte limit for a model file", length)));
     }
-    let bytes = archive.read_entry(entry)?;
+    let bytes = archive.read(path, u64::MAX, &shaiya_core::Job::silent())?;
     Ani::parse(&bytes, path).map_err(|e| match e {
         shaiya_clientdata::Error::Format { file, what, offset } => Error::format(file, Some(offset as u64), what),
         other => Error::format(path, None, other.to_string()),
@@ -57,7 +58,7 @@ pub(crate) fn read_ani(archive: &Archive, path: &str, label: &str) -> Result<Ani
 }
 
 /// What the worker does: read `path` from `archive` and the other side, and diff them.
-pub fn compare(archive: &Archive, path: &str, other: &Other, job: &shaiya_core::Job) -> Result<Shown> {
+pub fn compare(archive: &dyn FileSource, path: &str, other: &Other, job: &shaiya_core::Job) -> Result<Shown> {
     job.check()?;
     let a = read_ani(archive, path, "the open archive")?;
     job.check()?;
@@ -77,7 +78,7 @@ pub fn compare(archive: &Archive, path: &str, other: &Other, job: &shaiya_core::
 /// The window of one comparison.
 pub struct AnimCompare {
     path: String,
-    archive: Arc<Archive>,
+    archive: Arc<dyn FileSource>,
     siblings: Vec<String>,
     clients: Vec<(String, PathBuf)>,
     pick: Option<Other>,
@@ -90,7 +91,7 @@ pub struct AnimCompare {
 impl AnimCompare {
     /// A window comparing the `.ANI` at `path` of `archive`; `siblings` are the other `.ANI` paths it can be compared with (archive paths),
     /// `clients` the saved clients (name, folder) whose archive has the same path to offer.
-    pub fn new(path: String, archive: Arc<Archive>, siblings: Vec<String>, clients: Vec<(String, PathBuf)>) -> AnimCompare {
+    pub fn new(path: String, archive: Arc<dyn FileSource>, siblings: Vec<String>, clients: Vec<(String, PathBuf)>) -> AnimCompare {
         AnimCompare { path, archive, siblings, clients, pick: None, handle: None, result: None, open: true }
     }
 
@@ -111,7 +112,7 @@ impl AnimCompare {
         self.result = None;
         let (archive, path) = (self.archive.clone(), self.path.clone());
         let name = path.rsplit('/').next().unwrap_or(&path).to_string();
-        self.handle = Some(cx.shell.tasks().spawn(TaskSpec { title: format!("Compare {name}"), cancellable: true, exclusive: None }, move |job| compare(&archive, &path, &other, job)));
+        self.handle = Some(cx.shell.tasks().spawn(TaskSpec { title: format!("Compare {name}"), cancellable: true, exclusive: None }, move |job| compare(&*archive, &path, &other, job)));
     }
 
     /// Takes in the worker's answer.

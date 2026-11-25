@@ -53,10 +53,13 @@ pub enum Cmd {
 pub struct AddArgs {
     /// 1 to 40 characters, no / \ or @
     pub name: String,
-    /// The client folder (it must hold data.sah)
+    /// The client folder: it holds data.sah, or it is a loose data folder (see docs/tools/shaiya.md)
     pub path: PathBuf,
     #[arg(long, default_value = "")]
     pub note: String,
+    /// For a loose data folder: the backup folder (outside the data folder); without it the client is read-only until one is chosen
+    #[arg(long, value_name = "DIR")]
+    pub backups: Option<PathBuf>,
 }
 
 #[derive(clap::Args)]
@@ -99,17 +102,42 @@ fn go(ctx: &Ctx, cmd: &Cmd) -> Result<i32> {
                 let width = clients.iter().map(|c| c.name.chars().count()).max().unwrap_or(0).max(4);
                 let mut w = out();
                 for c in &clients {
-                    outln!(w, "{:<width$}  {}  {}  {}", c.name, if c.path.is_dir() { "found  " } else { "missing" }, c.path.display(), c.note);
+                    let kind = if c.kind == config::ClientKind::Loose { "  [loose]" } else { "" };
+                    outln!(w, "{:<width$}  {}  {}  {}{kind}", c.name, if c.path.is_dir() { "found  " } else { "missing" }, c.path.display(), c.note);
                 }
             }
             Ok(0)
         }
         Cmd::Add(a) => {
             config::validate_client_name(&a.name)?;
-            let files = ClientFiles::locate(&a.path)?;
-            let path = std::path::absolute(&files.dir).unwrap_or(files.dir.clone());
             let root = root(ctx)?;
-            let entry = ClientFolder { name: a.name.clone(), path, added_utc: utc_iso(std::time::SystemTime::now()), note: a.note.clone() };
+            let abs = std::path::absolute(&a.path).unwrap_or_else(|_| a.path.clone());
+            let entry = match loose_layout(&abs)? {
+                Some(layout) => {
+                    if let Some(b) = &a.backups {
+                        if let Some(why) = shaiya_archive::loose::backup_folder_problem(&layout, b) {
+                            return Err(Error::Refused(why));
+                        }
+                    }
+                    ClientFolder {
+                        name: a.name.clone(),
+                        path: layout.root.clone(),
+                        added_utc: utc_iso(std::time::SystemTime::now()),
+                        note: a.note.clone(),
+                        kind: config::ClientKind::Loose,
+                        data: (layout.data != layout.root).then(|| layout.data.clone()),
+                        backups: a.backups.as_ref().map(|b| std::path::absolute(b).unwrap_or_else(|_| b.clone())),
+                    }
+                }
+                None => {
+                    if a.backups.is_some() {
+                        return Err(Error::Refused("--backups is for a loose data folder; this folder holds data.sah".to_string()));
+                    }
+                    let files = ClientFiles::locate(&a.path)?;
+                    let path = std::path::absolute(&files.dir).unwrap_or(files.dir.clone());
+                    ClientFolder::archive(a.name.clone(), path, utc_iso(std::time::SystemTime::now()), a.note.clone())
+                }
+            };
             config::update_clients(&root, &mut |list| {
                 if config::find_client(list, &a.name).is_some() {
                     return Err(Error::Refused(format!("a client named {:?} is already saved (shaiya clients remove it first)", a.name)));
@@ -151,6 +179,9 @@ fn go(ctx: &Ctx, cmd: &Cmd) -> Result<i32> {
             let clients = crate::config::load_clients(ctx.data_dir.as_deref())?;
             let c = config::find_client(&clients, name)
                 .ok_or_else(|| Error::io(PathBuf::from(format!("@{name}")), std::io::Error::new(std::io::ErrorKind::NotFound, "no saved client folder with this name (hint: shaiya clients list)")))?;
+            if c.kind == config::ClientKind::Loose {
+                return show_loose(ctx, c);
+            }
             let files = ClientFiles::locate(&c.path)?;
             let idx = Index::read(&files.sah)?;
             let ini = read_version_ini(&files).map(|i| (i.check_version, i.current_version));
@@ -204,8 +235,11 @@ fn parse_kind(s: &str) -> std::result::Result<Kind, String> {
 fn target(ctx: &Ctx, arg: &str) -> Result<PathBuf> {
     let clients = crate::config::load_clients(ctx.data_dir.as_deref())?;
     match config::find_client(&clients, strip(arg)) {
-        Some(c) => Ok(c.path.clone()),
-        None => client_dir(ctx, arg),
+        Some(c) => {
+            refuse_loose(arg, &c.path)?;
+            Ok(c.path.clone())
+        }
+        None => archive_client_dir(ctx, arg),
     }
 }
 
@@ -310,6 +344,37 @@ fn clean_cmd(ctx: &Ctx, a: &CleanArgs) -> Result<i32> {
     } else {
         println!("moved {} ({}) to {}", count(r.moved.len(), "file"), size(r.bytes), r.path.display());
         println!("undo with: shaiya clients clean --put-back {}", shell_arg(&r.path.display().to_string()));
+    }
+    Ok(0)
+}
+
+/// `clients show` of a loose client: where its folders are, how many files it lists, whether it is a Shaiya-GX layout (read from Shaiya-GX's
+/// data-format document), and whether a backup folder is confirmed.
+fn show_loose(ctx: &Ctx, c: &ClientFolder) -> Result<i32> {
+    let layout = loose_layout(&c.path)?.ok_or_else(|| Error::Refused(format!("{} is no longer a loose data folder ({})", c.path.display(), shaiya_archive::loose::detect_hint())))?;
+    let tree = shaiya_clientdata::LooseTree::open(&layout, &Job::silent())?;
+    let notes = tree.notes();
+    let backups_problem = match &c.backups {
+        None => Some("choose a backup folder outside the data folder".to_string()),
+        Some(b) => shaiya_archive::loose::backup_folder_problem(&layout, b),
+    };
+    if ctx.json {
+        print_json(&json!({
+            "name": c.name, "path": c.path.display().to_string(), "kind": "loose", "note": c.note, "added_utc": c.added_utc,
+            "data": layout.data.display().to_string(), "files": tree.files().len(), "gx_layout": layout.gx,
+            "backups": c.backups.as_ref().map(|b| b.display().to_string()), "read_only_reason": backups_problem, "notes": notes
+        }));
+    } else {
+        println!("{}  {}", c.name, c.path.display());
+        println!("  kind:      loose folder, {}", layout.describe());
+        println!("  files:     {}", count(tree.files().len(), "file"));
+        match &backups_problem {
+            None => println!("  backups:   {}", c.backups.as_ref().map(|b| b.display().to_string()).unwrap_or_default()),
+            Some(why) => println!("  backups:   none confirmed ({why}); read-only"),
+        }
+        for n in &notes {
+            println!("  note:      {n}");
+        }
     }
     Ok(0)
 }

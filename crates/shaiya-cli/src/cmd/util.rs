@@ -24,6 +24,9 @@ pub fn fail(ctx: &Ctx, e: &Error) -> i32 {
     if ctx.json {
         crate::output::print_json(&error_json(e));
     }
+    if loose_refused() {
+        return 2;
+    }
     crate::exit_code_for(e.kind()) as i32
 }
 
@@ -124,6 +127,7 @@ impl Opened {
 /// ARCHIVE argument: a client folder, a `.sah` file, or `@name`. A missing `.saf` gives index-only mode with a note.
 pub fn open_read(ctx: &Ctx, arg: &str) -> Result<Opened> {
     let path = resolve(ctx, arg)?;
+    refuse_loose(arg, &path)?;
     let (sah, index) = Archive::open_index(&path)?;
     if saf_of(&sah).is_file() {
         return Ok(Opened::Full(Archive::open_parsed(sah, index)?));
@@ -135,6 +139,7 @@ pub fn open_read(ctx: &Ctx, arg: &str) -> Result<Opened> {
 /// Like [`open_read`] but the `.saf` must be there.
 pub fn open_full(ctx: &Ctx, arg: &str) -> Result<Archive> {
     let path = resolve(ctx, arg)?;
+    refuse_loose(arg, &path)?;
     Archive::open(&path)
 }
 
@@ -239,6 +244,93 @@ pub fn need_target(in_place: bool, out: &Option<PathBuf>) -> Result<()> {
         ));
     }
     Ok(())
+}
+
+
+/// Set when a command refused a loose client: the exit code is 2 (usage) then, not the 4 of a safety refusal.
+static LOOSE_REFUSED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Whether the last refusal was "this is a loose folder" (exit 2).
+pub fn loose_refused() -> bool {
+    LOOSE_REFUSED.load(std::sync::atomic::Ordering::SeqCst)
+}
+
+/// The loose layout of `path` when it is a folder with no `data.sah` that passes the loose detection (a saved loose client, or a folder).
+pub fn loose_layout(path: &Path) -> Result<Option<shaiya_archive::loose::LooseLayout>> {
+    if !path.is_dir() {
+        return Ok(None);
+    }
+    let has_sah = std::fs::read_dir(path).is_ok_and(|rd| rd.flatten().any(|e| e.file_name().to_string_lossy().eq_ignore_ascii_case("data.sah")));
+    if has_sah {
+        return Ok(None);
+    }
+    shaiya_archive::loose::detect(path)
+}
+
+/// The refusal an archive command gives for a loose client (`arg` as the person typed it): exit 2.
+pub fn loose_refusal(arg: &str) -> Error {
+    LOOSE_REFUSED.store(true, std::sync::atomic::Ordering::SeqCst);
+    Error::Refused(format!("{arg} is a loose folder, not an archive: the archive commands do not work on it (shaiya anim and shaiya info read its files)"))
+}
+
+/// Refuses `arg` (already resolved to `path`) when it is a loose client.
+pub fn refuse_loose(arg: &str, path: &Path) -> Result<()> {
+    match loose_layout(path)? {
+        Some(_) => Err(loose_refusal(arg)),
+        None => Ok(()),
+    }
+}
+
+/// Where `--from` reads files: an archive pair, or a loose folder (a saved loose client `@name`, or a folder that passes the detection).
+pub enum Store {
+    Archive(Archive),
+    Loose(shaiya_clientdata::LooseTree),
+}
+
+impl Store {
+    /// Every file path (archive: the visible ones) with its size.
+    pub fn visible(&self) -> Vec<(String, u64)> {
+        match self {
+            Store::Archive(a) => a.index().visible().into_iter().map(|f| (f.path, f.entry.length as u64)).collect(),
+            Store::Loose(t) => t.files().iter().map(|f| (f.rel.clone(), f.len)).collect(),
+        }
+    }
+
+    /// The size of the file, `None` when there is no such file.
+    pub fn len(&self, path: &str) -> Option<u64> {
+        match self {
+            Store::Archive(a) => a.index().get(path).map(|e| e.length as u64),
+            Store::Loose(t) => t.len(path),
+        }
+    }
+
+    pub fn read(&self, path: &str) -> Result<Vec<u8>> {
+        match self {
+            Store::Archive(a) => a.read(path),
+            Store::Loose(t) => t.read(path, u64::MAX, &shaiya_core::Job::silent()),
+        }
+    }
+}
+
+/// Opens the `--from` argument for reading files: like [`open_full`], or the files of a loose client (with the notes of what was left out).
+pub fn open_store(ctx: &Ctx, arg: &str) -> Result<Store> {
+    let path = resolve(ctx, arg)?;
+    if let Some(layout) = loose_layout(&path)? {
+        let tree = shaiya_clientdata::LooseTree::open(&layout, &shaiya_core::Job::silent())?;
+        for n in tree.notes() {
+            note(ctx, &format!("note: {n}"));
+        }
+        return Ok(Store::Loose(tree));
+    }
+    Ok(Store::Archive(Archive::open(&path)?))
+}
+
+/// [`client_dir`] for the commands that work on a client's archive pair (`archive`, `patch`, `clients health|clean`): a loose client is
+/// refused (exit 2). `svmap` keeps [`client_dir`]: an extracted client folder is a normal `--client` there.
+pub fn archive_client_dir(ctx: &Ctx, arg: &str) -> Result<PathBuf> {
+    let p = resolve(ctx, arg)?;
+    refuse_loose(arg, &p)?;
+    client_dir(ctx, arg)
 }
 
 #[cfg(test)]

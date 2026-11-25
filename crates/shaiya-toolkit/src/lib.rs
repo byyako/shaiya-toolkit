@@ -256,7 +256,7 @@ impl ToolkitApp {
             return;
         };
         let dir = PathBuf::from(&c.path);
-        if !has_sah(&dir) {
+        if !has_sah(&dir) && !(c.kind == shaiya_core::config::ClientKind::Loose && dir.is_dir()) {
             cx.shell.status(format!("{} was not found at {}", c.name, c.path));
             return;
         }
@@ -420,6 +420,16 @@ impl ToolkitApp {
     /// Opens the Health window for a saved client by name; `None` is the open client (even when it is no longer in the saved list), else
     /// the first saved client that is there.
     pub fn open_health(&mut self, name: Option<&str>, cx: &mut ToolkitCx<'_>) {
+        let loose_name = match name {
+            Some(n) => Some(n.to_string()),
+            None => self.current.as_ref().map(|c| c.name.clone()),
+        };
+        if let Some(n) = loose_name {
+            if cx.shell.shared().clients.iter().any(|c| c.name.eq_ignore_ascii_case(&n) && c.kind == shaiya_core::config::ClientKind::Loose) {
+                cx.shell.status(format!("Health of {n}: {}", archive_view::LOOSE_HAS_NO_ARCHIVE));
+                return;
+            }
+        }
         if name.is_none() {
             if let Some(c) = &self.current {
                 let (n, d) = (c.name.clone(), c.dir.clone());
@@ -488,6 +498,10 @@ impl ToolkitApp {
         for p in paths {
             if p.is_dir() && has_sah(&p) {
                 self.folder_prompt = Some(FolderPrompt { dir: p, archive_open: self.archive.is_open() });
+            } else if p.is_dir() && matches!(clients::detect_folder(&p), clients::FolderKind::Loose(_)) {
+                // a loose data folder: the Add dialog shows what was detected and asks for the backup folder
+                cx.shell.status(format!("{} looks like a loose data folder: confirm it to add it as a client", p.display()));
+                self.clients.open_add(Some(&p));
             } else if ext_of(&p) == "sah" {
                 self.open_archive_file(p, cx);
             } else if ext_of(&p) == "patch" {
@@ -582,7 +596,7 @@ impl ToolkitApp {
             ui.label("Client");
             egui::ComboBox::from_id_salt("toolkit-client").selected_text(shown).width(220.0).show_ui(ui, |ui| {
                 for c in &clients {
-                    let found = has_sah(Path::new(&c.path));
+                    let found = has_sah(Path::new(&c.path)) || (c.kind == shaiya_core::config::ClientKind::Loose && Path::new(&c.path).is_dir());
                     let label = self.picker_label_of(c, found, cx);
                     let text = if found { RichText::new(label) } else { RichText::new(label).color(pal.weak) };
                     if multi_lock::lock_hover(ui.add_enabled(found && switch_ok, egui::Button::selectable(current.as_deref() == Some(c.name.as_str()), text)), !switch_ok).clicked() {

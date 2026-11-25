@@ -9,7 +9,7 @@
 
 use crate::export_interchange::LOSSY_SENTENCE;
 use crate::ToolkitSettings;
-use shaiya_archive::Archive;
+use crate::source::FileSource;
 use shaiya_clientdata::anim::{passes, rig_check, validate, RigDiff, Severity};
 use shaiya_clientdata::interchange::bvh::import_bvh;
 use shaiya_clientdata::interchange::gltf_read::{read_beside, Gltf};
@@ -128,12 +128,12 @@ fn rig_lines(candidate: &Ani, like: &Ani) -> Vec<String> {
     v
 }
 
-fn read_like(archive: &Archive, path: &str) -> Result<Vec<u8>> {
-    let entry = archive.index().get(path).ok_or_else(|| Error::format(path, None, "not in the archive"))?;
-    if u64::from(entry.length) > MAX_MODEL_BYTES {
-        return Err(Error::format(path, None, format!("{} bytes is over the {MAX_MODEL_BYTES}-byte limit for a model file", entry.length)));
+fn read_like(archive: &dyn FileSource, path: &str) -> Result<Vec<u8>> {
+    let length = archive.len(path).ok_or_else(|| Error::format(path, None, "not in the archive"))?;
+    if length > MAX_MODEL_BYTES {
+        return Err(Error::format(path, None, format!("{} bytes is over the {MAX_MODEL_BYTES}-byte limit for a model file", length)));
     }
-    archive.read(path)
+    archive.read(path, u64::MAX, &shaiya_core::Job::silent())
 }
 
 /// Reads at most `cap` bytes: a file that grows after the size check is still stopped.
@@ -160,7 +160,7 @@ fn parse_error(path: &str, e: shaiya_clientdata::Error) -> Error {
 }
 
 /// What the task does: the kind comes from the row at `path`; an `.ANI` or `.3DC` row is read as the like file.
-pub fn run(archive: &Archive, path: &str, s: &Settings, cancel: shaiya_core::job::Cancel) -> std::result::Result<Made, Refused> {
+pub fn run(archive: &dyn FileSource, path: &str, s: &Settings, cancel: shaiya_core::job::Cancel) -> std::result::Result<Made, Refused> {
     let Some(kind) = ImportKind::of_name(path) else { return Err(one("This kind of file is not imported from a model or animation file")) };
     let Some(input) = &s.input else { return Err(one("Choose the file to import")) };
     let src = Source::of(input);
@@ -250,7 +250,7 @@ fn write_checked(out: &Path, made: &Made) -> Result<()> {
 /// The window of one import.
 pub struct ImportGltf {
     path: String,
-    archive: Arc<Archive>,
+    archive: Arc<dyn FileSource>,
     client_dir: Option<PathBuf>,
     kind: ImportKind,
     pub settings: Settings,
@@ -265,7 +265,7 @@ pub struct ImportGltf {
 
 impl ImportGltf {
     /// A window importing a glTF as a new file of the kind of the row at `path` of `archive`.
-    pub fn new(path: String, archive: Arc<Archive>, client_dir: Option<PathBuf>) -> Option<ImportGltf> {
+    pub fn new(path: String, archive: Arc<dyn FileSource>, client_dir: Option<PathBuf>) -> Option<ImportGltf> {
         let kind = ImportKind::of_name(&path)?;
         Some(ImportGltf { path, archive, client_dir, kind, settings: Settings::default(), started: None, handle: None, result: None, saving: None, open: true })
     }
@@ -297,7 +297,7 @@ impl ImportGltf {
         let (archive, path) = (self.archive.clone(), self.path.clone());
         let name = s.input.as_ref().and_then(|p| p.file_name()).map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
         self.handle = Some(cx.shell.tasks().spawn(TaskSpec { title: format!("Import {name} as {}", label(self.kind)), cancellable: true, exclusive: None }, move |job| {
-            let r = run(&archive, &path, &s, job.cancel_token().clone());
+            let r = run(&*archive, &path, &s, job.cancel_token().clone());
             job.check()?;
             Ok(r)
         }));
@@ -346,7 +346,7 @@ impl ImportGltf {
             return;
         }
         let want = label(self.kind).trim_start_matches('.').to_ascii_lowercase();
-        let saved: Vec<PathBuf> = cx.shell.shared().clients.iter().map(|c| PathBuf::from(&c.path)).collect();
+        let saved: Vec<PathBuf> = crate::clients::guard_paths(&cx.shell.shared().clients);
         let name = out.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
         let sources = [self.settings.input.as_deref(), self.settings.map.as_deref()];
         let problem = if !out.extension().is_some_and(|x| x.eq_ignore_ascii_case(&want)) {

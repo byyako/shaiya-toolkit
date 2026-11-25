@@ -1,7 +1,7 @@
 //! Readers for Shaiya client data: files in `data.sah`/`data.saf` or an extracted
 //! folder, `.wld` maps, `.dg` dungeons, `.ANI` animations, `.3DC` skinned meshes, `.VANI` vertex-animated models, `.MANI` building motion, `.3DO` meshes, `.3DE` effect meshes, the model list files `.MLT`, `.MON` and `.ITM` (and the texture index built from them), SEED-encrypted SData (`Monster`, `NpcQuest`), `sysmsg-uni.txt`, map names and textures.
 //! Readers only, except the JSON form of the six model formats (`modeljson`), the lossless `.wld` model (`wld_raw`), the `<id>.txt` line model (`area_txt`), the `.ANI` model (`anim`), the `.3DC` model (`mesh3dc`), the `.VANI` model (`vani`), the `.MANI` file (`mani`), the `.3DO` model (`mesh3do`), the `.3DE` model (`mesh3de`) and the list files (`modellist`) and the glTF export (`interchange`), which build bytes
-//! in memory: nothing here writes a file.
+//! in memory: nothing here writes a file. `loose` lists and reads a client folder of loose files (read only).
 
 pub mod anim;
 pub mod animedit;
@@ -9,6 +9,7 @@ pub mod area_txt;
 pub mod dg;
 pub mod error;
 pub mod interchange;
+pub mod loose;
 pub mod mani;
 pub mod mesh3dc;
 pub mod mesh3de;
@@ -33,6 +34,7 @@ pub mod wld_raw;
 pub use anim::Ani;
 pub use dg::{dungeon_map_size, Dg};
 pub use error::{Error, Result};
+pub use loose::{LooseFile, LooseTree};
 pub use mani::Mani;
 pub use mesh3dc::C3dc;
 pub use mesh3de::Mesh3de;

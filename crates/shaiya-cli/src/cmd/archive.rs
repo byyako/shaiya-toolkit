@@ -843,7 +843,7 @@ fn edit_cmd(ctx: &Ctx, kind: Kind, archive: &str, src: &[PathBuf], at: &str, as_
     };
     let plan = EditPlan { puts, removes: removes.to_vec(), ignore_missing, loose: Vec::new(), label };
     if t.in_place {
-        let dir = client_dir(ctx, archive)?;
+        let dir = archive_client_dir(ctx, archive)?;
         let files = prepare_write(ctx, &dir, !t.dry_run)?;
         if t.dry_run {
             let idx = Index::read(&files.sah)?;
@@ -929,7 +929,7 @@ fn compact_cmd(ctx: &Ctx, a: &CompactArgs, job: &Job) -> Result<i32> {
     need_target(t.in_place, &t.out)?;
     let min_dead = parse_size(&a.min_dead)?;
     if t.in_place {
-        let dir = client_dir(ctx, &a.archive)?;
+        let dir = archive_client_dir(ctx, &a.archive)?;
         let files = prepare_write(ctx, &dir, !t.dry_run)?;
         let (saf, live) = compact::usage(&dir)?;
         let dead = saf.saturating_sub(live);
@@ -1068,7 +1068,7 @@ fn pack_cmd(ctx: &Ctx, a: &PackArgs, job: &Job) -> Result<i32> {
 }
 
 fn swap_cmd(ctx: &Ctx, a: &SwapArgs, job: &Job) -> Result<i32> {
-    let dir = client_dir(ctx, &a.client)?;
+    let dir = archive_client_dir(ctx, &a.client)?;
     let other = resolve(ctx, &a.other)?;
     if a.dry_run {
         ClientFiles::locate(&dir)?;

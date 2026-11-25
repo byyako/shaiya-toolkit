@@ -72,6 +72,42 @@ pub struct ClientFolder {
     pub added_utc: String,
     #[serde(default)]
     pub note: String,
+    /// `archive` (`data.sah` + `data.saf`, the default and never written) or `loose` (a folder of loose files).
+    #[serde(default, skip_serializing_if = "ClientKind::is_archive")]
+    pub kind: ClientKind,
+    /// A loose client's `data` folder when it differs from `path` (which is the install `root`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub data: Option<PathBuf>,
+    /// A loose client's confirmed backup folder (outside `data`); none until one is chosen.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub backups: Option<PathBuf>,
+}
+
+/// How a saved client keeps its data.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ClientKind {
+    #[default]
+    Archive,
+    Loose,
+}
+
+impl ClientKind {
+    pub fn is_archive(&self) -> bool {
+        *self == ClientKind::Archive
+    }
+}
+
+impl ClientFolder {
+    /// A saved archive client (`data.sah` + `data.saf` in `path`).
+    pub fn archive(name: impl Into<String>, path: PathBuf, added_utc: impl Into<String>, note: impl Into<String>) -> ClientFolder {
+        ClientFolder { name: name.into(), path, added_utc: added_utc.into(), note: note.into(), kind: ClientKind::Archive, data: None, backups: None }
+    }
+
+    /// The folder that holds the files: `data` for a loose client that has one, else `path`.
+    pub fn data_folder(&self) -> &Path {
+        self.data.as_deref().unwrap_or(&self.path)
+    }
 }
 
 fn shared_path(root: &Path) -> PathBuf {
@@ -152,7 +188,7 @@ mod tests {
     }
 
     fn client(name: &str, path: &str) -> ClientFolder {
-        ClientFolder { name: name.into(), path: PathBuf::from(path), added_utc: "2026-11-15T12:00:00Z".into(), note: String::new() }
+        ClientFolder::archive(name, PathBuf::from(path), "2026-11-15T12:00:00Z", "")
     }
 
     #[test]
@@ -239,6 +275,51 @@ mod tests {
         let _ = std::fs::remove_dir_all(&d);
     }
 
+
+    #[test]
+    fn an_old_client_list_without_kind_loads_as_archive() {
+        let d = tmp("old-kind");
+        std::fs::write(d.join("shared.json"), r#"{"format": 1, "clients": [{"name": "us", "path": "/games/us", "note": "n"}]}"#).unwrap();
+        let list = load_clients(&d).unwrap();
+        assert_eq!(list.len(), 1);
+        assert_eq!((list[0].kind, list[0].data.clone(), list[0].backups.clone()), (ClientKind::Archive, None, None));
+        assert!(list[0].kind.is_archive());
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn kind_data_and_backups_round_trip_and_are_omitted_for_archive() {
+        let d = tmp("kind-round");
+        let loose = ClientFolder {
+            kind: ClientKind::Loose,
+            data: Some(PathBuf::from("/games/gx/Client/data")),
+            backups: Some(PathBuf::from("/games/gx/backups")),
+            ..client("gx", "/games/gx/Client")
+        };
+        update_clients(&d, &mut |l| {
+            l.push(client("us", "/games/us"));
+            l.push(loose.clone());
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(load_clients(&d).unwrap()[1], loose);
+        let v: Value = serde_json::from_str(&std::fs::read_to_string(d.join("shared.json")).unwrap()).unwrap();
+        let (us, gx) = (&v["clients"][0], &v["clients"][1]);
+        for k in ["kind", "data", "backups"] {
+            assert!(us.get(k).is_none(), "an archive client has no {k} key");
+        }
+        assert_eq!(gx["kind"], "loose");
+        assert_eq!(load_clients(&d).unwrap()[1].data_folder(), Path::new("/games/gx/Client/data"));
+        assert_eq!(load_clients(&d).unwrap()[0].data_folder(), Path::new("/games/us"));
+        // an unrelated change of the list keeps the loose entry whole
+        update_clients(&d, &mut |l| {
+            l[0].note = "x".into();
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(load_clients(&d).unwrap()[1], loose);
+        let _ = std::fs::remove_dir_all(&d);
+    }
     #[test]
     fn names_are_validated_and_found_without_case() {
         for ok in ["US 108", "x", &"a".repeat(40), "\u{C6D0}\u{BC14}"] {

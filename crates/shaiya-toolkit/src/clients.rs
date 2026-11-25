@@ -10,7 +10,8 @@ use egui::RichText;
 use shaiya_archive::client::{read_version_ini, ClientFiles};
 use shaiya_archive::swap::{swap, SwapReport};
 use shaiya_archive::Archive;
-use shaiya_core::config::{self, ClientFolder};
+use shaiya_archive::loose::{self, LooseLayout};
+use shaiya_core::config::{self, ClientFolder, ClientKind};
 use shaiya_core::{Error, Result};
 use shaiya_ui::{Client, Confirm, Cx, Shell, TaskHandle, TaskOutcome, TaskSpec};
 use std::path::{Path, PathBuf};
@@ -37,6 +38,11 @@ pub struct ClientStatus {
     pub check_version: Option<u32>,
     pub current_version: Option<u32>,
     pub problem: Option<String>,
+    /// A loose client: what was found (`describe`), and why it cannot be written to yet (no confirmed backup folder), if so.
+    pub loose: Option<String>,
+    pub loose_read_only: Option<String>,
+    /// An archive entry with no `data.sah` whose folder is a loose data folder (offered for re-detection).
+    pub redetect: Option<String>,
 }
 
 /// Reads the index and `Version.ini` of a client folder (index only; fast).
@@ -64,6 +70,32 @@ pub fn status_of(dir: &Path) -> ClientStatus {
     s
 }
 
+/// The Manage dialog's line of a saved client: an archive client is read like `status_of`; a loose one is looked at by `detect` and says
+/// whether it can be written to; an archive entry that is really a loose folder is offered for re-detection.
+pub fn status_for(c: &Client) -> ClientStatus {
+    let dir = Path::new(&c.path);
+    if c.kind == ClientKind::Loose {
+        let mut s = ClientStatus::default();
+        match detect_folder(dir) {
+            FolderKind::Loose(l) => {
+                s.found = true;
+                s.loose = Some(l.describe());
+                s.loose_read_only = loose_write_problem(c);
+            }
+            FolderKind::Archive => s.problem = Some("this folder has a data.sah now: remove the entry and add it again".to_string()),
+            FolderKind::Neither(why) => s.problem = Some(why),
+        }
+        return s;
+    }
+    let mut s = status_of(dir);
+    if !s.found {
+        if let Some(l) = redetection_offer(c) {
+            s.redetect = Some(l.describe());
+        }
+    }
+    s
+}
+
 /// `Version.ini` numbers of a folder, when it has a pair and the file.
 pub fn version_numbers(dir: &Path) -> (Option<u32>, Option<u32>) {
     match ClientFiles::locate(dir).ok().and_then(|f| read_version_ini(&f)) {
@@ -73,11 +105,131 @@ pub fn version_numbers(dir: &Path) -> (Option<u32>, Option<u32>) {
 }
 
 fn to_ui(c: &ClientFolder) -> Client {
-    Client { name: c.name.clone(), path: c.path.display().to_string(), added_utc: c.added_utc.clone(), note: c.note.clone() }
+    Client {
+        name: c.name.clone(),
+        path: c.path.display().to_string(),
+        added_utc: c.added_utc.clone(),
+        note: c.note.clone(),
+        kind: c.kind,
+        data: c.data.as_ref().map(|p| p.display().to_string()),
+        backups: c.backups.as_ref().map(|p| p.display().to_string()),
+    }
 }
 
 fn from_ui(c: &Client) -> ClientFolder {
-    ClientFolder { name: c.name.clone(), path: PathBuf::from(&c.path), added_utc: c.added_utc.clone(), note: c.note.clone() }
+    ClientFolder {
+        name: c.name.clone(),
+        path: PathBuf::from(&c.path),
+        added_utc: c.added_utc.clone(),
+        note: c.note.clone(),
+        kind: c.kind,
+        data: c.data.as_ref().map(PathBuf::from),
+        backups: c.backups.as_ref().map(PathBuf::from),
+    }
+}
+
+/// The paths a write of any tool must stay out of for these saved clients: the folder, and for a loose client also its `data` and backup
+/// folders (they can sit outside the folder). Hand it to `client_folder_above` and its relatives as `saved`.
+pub fn guard_paths(clients: &[Client]) -> Vec<PathBuf> {
+    let mut v = Vec::new();
+    for c in clients {
+        v.push(PathBuf::from(&c.path));
+        v.extend(c.data.as_ref().map(PathBuf::from));
+        v.extend(c.backups.as_ref().map(PathBuf::from));
+    }
+    v
+}
+
+/// What a folder offered to the Add dialog is.
+#[derive(Clone, Debug)]
+pub enum FolderKind {
+    /// Holds `data.sah` (in any letter case).
+    Archive,
+    /// A loose data folder (detected layout; `backups` is `None`).
+    Loose(LooseLayout),
+    /// Neither: the message says what was looked for.
+    Neither(String),
+}
+
+/// Looks at a folder the person chose: an archive client, a loose one (layout 1, 2 or 3 of the detection rule), or neither.
+pub fn detect_folder(path: &Path) -> FolderKind {
+    if !path.is_dir() {
+        return FolderKind::Neither("folder not found".into());
+    }
+    if has_data_sah(path) {
+        return FolderKind::Archive;
+    }
+    match loose::detect(path) {
+        Ok(Some(l)) => FolderKind::Loose(l),
+        Ok(None) => FolderKind::Neither(format!("no data.sah here, and not a loose data folder: {}", loose::detect_hint())),
+        Err(e) => FolderKind::Neither(e.to_string()),
+    }
+}
+
+fn has_data_sah(dir: &Path) -> bool {
+    std::fs::read_dir(dir).is_ok_and(|rd| rd.flatten().any(|e| e.file_name().to_string_lossy().eq_ignore_ascii_case("data.sah")))
+}
+
+/// A saved entry that has no `kind`, no `data.sah` and a folder that passes the loose detection (an entry an older version saved and
+/// listed as an archive client, or one whose `kind` was dropped): the layout to offer for re-detection.
+pub fn redetection_offer(c: &Client) -> Option<LooseLayout> {
+    if c.kind != ClientKind::Archive {
+        return None;
+    }
+    match detect_folder(Path::new(&c.path)) {
+        FolderKind::Loose(l) => Some(l),
+        _ => None,
+    }
+}
+
+/// Makes the archive entry `name` a loose client again: `kind`, `data` from the detection, no backup folder (read-only until one is chosen).
+pub fn redetect_client(shell: &mut Shell, name: &str) -> Result<()> {
+    let found = shell.shared().clients.iter().find(|c| c.name.eq_ignore_ascii_case(name)).and_then(redetection_offer);
+    let Some(layout) = found else { return Err(Error::Refused(format!("{name}: not a loose data folder"))) };
+    update(shell, &mut |list| {
+        if let Some(c) = list.iter_mut().find(|c| c.name.eq_ignore_ascii_case(name)) {
+            c.kind = ClientKind::Loose;
+            c.data = (layout.data != layout.root).then(|| layout.data.clone());
+            c.path = layout.root.clone();
+            c.backups = None;
+        }
+        Ok(())
+    })
+}
+
+/// Sets the confirmed backup folder of a loose client; refused (with the reason) inside or equal to its `data` folder.
+pub fn set_backups(shell: &mut Shell, name: &str, folder: &Path) -> Result<()> {
+    let layout = shell.shared().clients.iter().find(|c| c.name.eq_ignore_ascii_case(name)).and_then(layout_of).ok_or_else(|| Error::Refused(format!("{name} is not a loose client")))?;
+    if let Some(why) = loose::backup_folder_problem(&layout, folder) {
+        return Err(Error::Refused(why));
+    }
+    let abs = std::path::absolute(folder).unwrap_or_else(|_| folder.to_path_buf());
+    update(shell, &mut |list| {
+        if let Some(c) = list.iter_mut().find(|c| c.name.eq_ignore_ascii_case(name)) {
+            c.backups = Some(abs.clone());
+        }
+        Ok(())
+    })
+}
+
+/// The layout of a saved loose client (`None` for an archive client).
+pub fn layout_of(c: &Client) -> Option<LooseLayout> {
+    (c.kind == ClientKind::Loose).then(|| {
+        let root = PathBuf::from(&c.path);
+        let data = c.data.as_ref().map(PathBuf::from).unwrap_or_else(|| root.clone());
+        let gx = loose::probe_gx(&data);
+        LooseLayout { root, data, gx, backups: c.backups.as_ref().map(PathBuf::from) }
+    })
+}
+
+/// Whether a loose client can be written to: it has a backup folder outside `data`. The reason when it cannot. (Writes arrive later; this
+/// is what they will ask.)
+pub fn loose_write_problem(c: &Client) -> Option<String> {
+    let layout = layout_of(c)?;
+    match &layout.backups {
+        None => Some("choose a backup folder outside the data folder".to_string()),
+        Some(b) => loose::backup_folder_problem(&layout, b),
+    }
 }
 
 /// The toolkit data folder (the parent of the tool's own folder), when settings are stored.
@@ -99,9 +251,13 @@ pub fn update(shell: &mut Shell, f: &mut dyn FnMut(&mut Vec<ClientFolder>) -> Re
     Ok(())
 }
 
-/// Adds a client folder: the name per `validate_client_name`, the folder must hold `data.sah`.
+/// Adds a client folder: the name per `validate_client_name`; the folder holds `data.sah`, or it is a loose data folder (then it is saved as a
+/// loose client with no backup folder yet, so it is read-only until one is chosen).
 pub fn add_client(shell: &mut Shell, name: &str, path: &Path) -> Result<()> {
     config::validate_client_name(name)?;
+    if let FolderKind::Loose(layout) = detect_folder(path) {
+        return add_loose_client(shell, name, &layout, None);
+    }
     Archive::open_index(path)?;
     let abs = std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf());
     let name = name.to_string();
@@ -109,7 +265,35 @@ pub fn add_client(shell: &mut Shell, name: &str, path: &Path) -> Result<()> {
         if config::find_client(list, &name).is_some() {
             return Err(Error::Refused(format!("there is already a client named {name:?}")));
         }
-        list.push(ClientFolder { name: name.clone(), path: abs.clone(), added_utc: shaiya_core::time::utc_iso(std::time::SystemTime::now()), note: String::new() });
+        list.push(ClientFolder::archive(name.clone(), abs.clone(), shaiya_core::time::utc_iso(std::time::SystemTime::now()), ""));
+        Ok(())
+    })
+}
+
+/// Adds a loose client: its root as the path, `data` when it differs, and the backup folder the person confirmed (refused inside or equal to
+/// `data`; `None` leaves the client read-only until one is chosen).
+pub fn add_loose_client(shell: &mut Shell, name: &str, layout: &LooseLayout, backups: Option<&Path>) -> Result<()> {
+    config::validate_client_name(name)?;
+    if let Some(b) = backups {
+        if let Some(why) = loose::backup_folder_problem(layout, b) {
+            return Err(Error::Refused(why));
+        }
+    }
+    let name = name.to_string();
+    let backups = backups.map(|b| std::path::absolute(b).unwrap_or_else(|_| b.to_path_buf()));
+    update(shell, &mut |list| {
+        if config::find_client(list, &name).is_some() {
+            return Err(Error::Refused(format!("there is already a client named {name:?}")));
+        }
+        list.push(ClientFolder {
+            name: name.clone(),
+            path: layout.root.clone(),
+            added_utc: shaiya_core::time::utc_iso(std::time::SystemTime::now()),
+            note: String::new(),
+            kind: ClientKind::Loose,
+            data: (layout.data != layout.root).then(|| layout.data.clone()),
+            backups: backups.clone(),
+        });
         Ok(())
     })
 }
@@ -163,6 +347,11 @@ pub struct AddClient {
     pub error: Option<String>,
     /// Open it right after adding.
     pub open_after: bool,
+    /// What the folder in `path` is, looked at when the text last changed (`checked_path` is the text it was looked at for).
+    pub found: Option<FolderKind>,
+    pub checked_path: String,
+    /// The backup folder text of a loose folder (the proposal until the person changes it).
+    pub backups: String,
 }
 
 enum EditKind {
@@ -287,7 +476,7 @@ impl Default for ClientsUi {
 impl ClientsUi {
     pub fn open_add(&mut self, path: Option<&Path>) {
         let name = path.and_then(|p| p.file_name()).map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-        self.add = Some(AddClient { name, path: path.map(|p| p.display().to_string()).unwrap_or_default(), error: None, open_after: true });
+        self.add = Some(AddClient { name, path: path.map(|p| p.display().to_string()).unwrap_or_default(), error: None, open_after: true, found: None, checked_path: String::new(), backups: String::new() });
     }
 
     pub fn open_manage(&mut self, shell: &Shell) {
@@ -296,7 +485,7 @@ impl ClientsUi {
     }
 
     fn refresh(&mut self, shell: &Shell) {
-        self.statuses = shell.shared().clients.iter().map(|c| (c.name.clone(), status_of(Path::new(&c.path)))).collect();
+        self.statuses = shell.shared().clients.iter().map(|c| (c.name.clone(), status_for(c))).collect();
     }
 
     pub fn is_swapping(&self) -> bool {
@@ -356,6 +545,46 @@ impl ClientsUi {
                     ui.add(egui::TextEdit::singleline(&mut d.name).desired_width(200.0));
                     ui.checkbox(&mut d.open_after, "Open it");
                 });
+                // what the folder is (looked at again only when the text changed)
+                if d.checked_path != d.path.trim() {
+                    d.checked_path = d.path.trim().to_string();
+                    let f = if d.checked_path.is_empty() { None } else { Some(detect_folder(Path::new(&d.checked_path))) };
+                    d.backups = match &f {
+                        Some(FolderKind::Loose(l)) => loose::proposed_backups(l).map(|p| p.display().to_string()).unwrap_or_default(),
+                        _ => String::new(),
+                    };
+                    d.found = f;
+                }
+                match d.found.clone() {
+                    Some(FolderKind::Archive) => {
+                        ui.label(RichText::new("Archive client: data.sah found").color(pal.weak));
+                    }
+                    Some(FolderKind::Loose(l)) => {
+                        ui.label(RichText::new(format!("Loose data folder: {}", l.describe())).color(pal.weak));
+                        ui.horizontal(|ui| {
+                            ui.label("Backup folder");
+                            ui.add(egui::TextEdit::singleline(&mut d.backups).desired_width(300.0).hint_text("outside the data folder"));
+                            if ui.button("Browse...").clicked() {
+                                if let Some(p) = cx.shell.pick_folder("loose-backups") {
+                                    d.backups = p.display().to_string();
+                                }
+                            }
+                        });
+                        let hint = if d.backups.trim().is_empty() {
+                            "No backup folder: the client opens read-only until you choose one outside the data folder.".to_string()
+                        } else {
+                            match loose::backup_folder_problem(&l, Path::new(d.backups.trim())) {
+                                Some(why) => why,
+                                None => "Adding the client confirms this folder; nothing is written there now.".to_string(),
+                            }
+                        };
+                        ui.label(RichText::new(hint).color(pal.weak));
+                    }
+                    Some(FolderKind::Neither(why)) => {
+                        ui.label(RichText::new(why).color(pal.warning));
+                    }
+                    None => {}
+                }
                 if let Some(e) = &d.error {
                     ui.label(RichText::new(e).color(pal.error));
                 }
@@ -369,7 +598,11 @@ impl ClientsUi {
                 });
             });
             if submit {
-                match add_client(cx.shell, d.name.trim(), Path::new(d.path.trim())) {
+                let added = match detect_folder(Path::new(d.path.trim())) {
+                    FolderKind::Loose(l) => add_loose_client(cx.shell, d.name.trim(), &l, Some(d.backups.trim()).filter(|b| !b.is_empty()).map(Path::new)),
+                    _ => add_client(cx.shell, d.name.trim(), Path::new(d.path.trim())),
+                };
+                match added {
                     Ok(()) => {
                         keep = false;
                         cx.shell.status(format!("Added client {}", d.name.trim()));
@@ -390,6 +623,8 @@ impl ClientsUi {
             let mut remove: Option<String> = None;
             let mut open_client: Option<String> = None;
             let mut health_for: Option<String> = None;
+            let mut backups_for: Option<String> = None;
+            let mut redetect_for: Option<String> = None;
             let mut edit: Option<(String, EditKind)> = None;
             let mut swap_for: Option<(String, PathBuf)> = None;
             let clients = cx.shell.shared().clients.clone();
@@ -412,7 +647,15 @@ impl ClientsUi {
                         ui.label(&c.name);
                         ui.vertical(|ui| {
                             ui.label(shown_path);
-                            if st.found {
+                            if let Some(l) = &st.loose {
+                                ui.label(RichText::new(format!("found, loose folder: {l}")).color(pal.weak));
+                                match &st.loose_read_only {
+                                    Some(why) => ui.label(RichText::new(format!("read-only: {why}")).color(pal.warning)),
+                                    None => ui.label(RichText::new("backup folder confirmed").color(pal.weak)),
+                                };
+                            } else if let Some(r) = &st.redetect {
+                                ui.label(RichText::new(format!("this looks like a loose data folder ({r}); it was saved without a kind")).color(pal.warning));
+                            } else if st.found {
                                 let ini = match (st.check_version, st.current_version) {
                                     (Some(a), Some(b)) => format!(", Version.ini CheckVersion {a}, CurrentVersion {b}"),
                                     (Some(a), None) => format!(", Version.ini CheckVersion {a}"),
@@ -430,7 +673,13 @@ impl ClientsUi {
                             if ui.add_enabled(st.found, egui::Button::new("Open")).clicked() {
                                 open_client = Some(c.name.clone());
                             }
-                            if ui.add_enabled(st.found, egui::Button::new("Health...")).on_hover_text("Look at leftovers, dead space and unfinished changes; nothing is changed until you confirm a clean-up").clicked() {
+                            if st.loose.is_some() && ui.button("Choose backup folder...").on_hover_text("A folder outside the data folder; writes to loose folders come later").clicked() {
+                                backups_for = Some(c.name.clone());
+                            }
+                            if st.redetect.is_some() && ui.button("Detect as loose folder").on_hover_text("Saves this entry as a loose client; no backup folder is chosen yet").clicked() {
+                                redetect_for = Some(c.name.clone());
+                            }
+                            if ui.add_enabled(st.found && st.loose.is_none(), egui::Button::new("Health...")).on_hover_text(if st.loose.is_some() { "not yet for loose folders" } else { "Look at leftovers, dead space and unfinished changes; nothing is changed until you confirm a clean-up" }).clicked() {
                                 health_for = Some(c.name.clone());
                             }
                             if ui.button("Rename...").clicked() {
@@ -439,7 +688,7 @@ impl ClientsUi {
                             if ui.button("Edit note...").clicked() {
                                 edit = Some((c.name.clone(), EditKind::Note));
                             }
-                            let swap_btn = ui.add_enabled(st.found && queued_of(&c.path) == 0 && !multi_locked, egui::Button::new("Use another archive pair...")).on_hover_text(if queued_of(&c.path) > 0 { SWAP_BLOCKED_HOVER } else { "Swap in another data.sah/data.saf; the current pair is kept" });
+                            let swap_btn = ui.add_enabled(st.found && st.loose.is_none() && queued_of(&c.path) == 0 && !multi_locked, egui::Button::new("Use another archive pair...")).on_hover_text(if st.loose.is_some() { "a loose folder has no archive" } else if queued_of(&c.path) > 0 { SWAP_BLOCKED_HOVER } else { "Swap in another data.sah/data.saf; the current pair is kept" });
                             if lock_hover(swap_btn, multi_locked).clicked() {
                                 swap_for = Some((c.name.clone(), PathBuf::from(&c.path)));
                             }
@@ -461,6 +710,22 @@ impl ClientsUi {
             });
             if !open {
                 self.manage = false;
+            }
+            if let Some(n) = redetect_for {
+                match redetect_client(cx.shell, &n) {
+                    Ok(()) => cx.shell.status(format!("{n} is now a loose client; choose a backup folder to allow writes later")),
+                    Err(e) => cx.shell.error("Cannot detect the folder", &e),
+                }
+                self.refresh(cx.shell);
+            }
+            if let Some(n) = backups_for {
+                if let Some(p) = cx.shell.pick_folder("loose-backups") {
+                    match set_backups(cx.shell, &n, &p) {
+                        Ok(()) => cx.shell.status(format!("Backup folder of {n}: {}", p.display())),
+                        Err(e) => cx.shell.error("Backup folder refused", &e),
+                    }
+                }
+                self.refresh(cx.shell);
             }
             if let Some(n) = health_for {
                 out.push(ClientsAction::Health(n));
@@ -673,10 +938,33 @@ pub fn queued_label(label: String, queued: usize) -> String {
 /// A one-line name for a client in the picker: its name and where it is. `shown` is the folder as `Shell::folder_text` gives it (the
 /// path, or under `--shot` the name, so that the name is not repeated).
 pub fn picker_label(c: &Client, shown: &str, found: bool) -> String {
-    let line = if shown == c.name { c.name.clone() } else { format!("{}  ({shown})", c.name) };
+    let mut line = if shown == c.name { c.name.clone() } else { format!("{}  ({shown})", c.name) };
+    if c.kind == ClientKind::Loose {
+        line.push_str(" - loose");
+        if gx_cached(c.data.as_deref().unwrap_or(&c.path)) {
+            line.push_str(", Shaiya-GX layout");
+        }
+    }
     if found {
         line
     } else {
         format!("{line} - not found")
     }
+}
+
+/// Whether a loose data folder has the Shaiya-GX layout, looked at once per folder (the picker asks every frame; the bounded probe lists up
+/// to 20,000 entries). A folder changed later is looked at again after the program restarts.
+fn gx_cached(data: &str) -> bool {
+    use std::collections::HashMap;
+    use std::sync::{Mutex, OnceLock};
+    static SEEN: OnceLock<Mutex<HashMap<String, bool>>> = OnceLock::new();
+    let seen = SEEN.get_or_init(|| Mutex::new(HashMap::new()));
+    if let Some(v) = seen.lock().ok().and_then(|m| m.get(data).copied()) {
+        return v;
+    }
+    let v = Path::new(data).is_dir() && loose::probe_gx(Path::new(data));
+    if let Ok(mut m) = seen.lock() {
+        m.insert(data.to_string(), v);
+    }
+    v
 }

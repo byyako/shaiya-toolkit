@@ -257,7 +257,7 @@ fn a_shot_run_does_not_open_its_files_and_keeps_no_settings() {
 
 #[test]
 fn the_picker_shows_a_saved_client_by_name_under_shot_and_by_path_otherwise() {
-    let c = shaiya_ui::Client { name: "Demo client".into(), path: "/somewhere/else".into(), added_utc: String::new(), note: String::new() };
+    let c = shaiya_ui::Client { name: "Demo client".into(), path: "/somewhere/else".into(), ..Default::default() };
     assert_eq!(shaiya_toolkit::clients::picker_label(&c, "Demo client", true), "Demo client");
     assert_eq!(shaiya_toolkit::clients::picker_label(&c, "Demo client", false), "Demo client - not found");
     assert_eq!(shaiya_toolkit::clients::picker_label(&c, "/somewhere/else", true), "Demo client  (/somewhere/else)");

@@ -6,7 +6,8 @@
 //! that exists is replaced).
 
 use crate::ToolkitSettings;
-use shaiya_archive::{Archive, Entry};
+use crate::source::FileSource;
+use shaiya_archive::Entry;
 use shaiya_clientdata::modeljson::{self, ModelFormat, MAX_MODEL_BYTES};
 use shaiya_core::fs::{client_folder_above, client_folder_for_new, ensure_out_folder, out_key, out_name_problem, write_atomic_checked};
 use shaiya_core::{Error, Result};
@@ -70,11 +71,11 @@ fn to_error(path: &str, e: modeljson::JsonError) -> Error {
 }
 
 /// What the task does: size cap, read, export, write with the read-back check.
-fn run(archive: &Archive, entry: &Entry, path: &str, format: ModelFormat, out: &Path) -> Result<()> {
+fn run(archive: &dyn FileSource, entry: &Entry, path: &str, format: ModelFormat, out: &Path) -> Result<()> {
     if u64::from(entry.length) > MAX_MODEL_BYTES {
         return Err(Error::format(path, None, format!("{} bytes is over the {MAX_MODEL_BYTES}-byte limit for a model file", entry.length)));
     }
-    let bytes = archive.read_entry(entry)?;
+    let bytes = archive.read(path, u64::MAX, &shaiya_core::Job::silent())?;
     let text = modeljson::export(format, &bytes, path).map_err(|e| to_error(path, e))?;
     write_atomic_checked(out, text.as_bytes(), &|tmp: &Path| {
         let back = std::fs::read(tmp).map_err(|e| Error::io(tmp, e))?;
@@ -91,14 +92,14 @@ impl JsonExports {
     }
 
     /// Checks the target against the client folders (before anything is read), then starts the task. A refusal is shown and nothing starts.
-    pub(crate) fn start(&mut self, archive: Arc<Archive>, entry: Entry, path: String, out: PathBuf, client_dir: Option<&Path>, cx: &mut ToolkitCx<'_>) {
+    pub(crate) fn start(&mut self, archive: Arc<dyn FileSource>, entry: Entry, path: String, out: PathBuf, client_dir: Option<&Path>, cx: &mut ToolkitCx<'_>) {
         let name = path.rsplit('/').next().unwrap_or(&path).to_string();
         let Some(format) = ModelFormat::from_file_name(&name) else { return };
         if !is_json_name(&out) {
             cx.shell.error("Export failed", &Error::Refused(format!("The file name must end in .json: {}", out.display())));
             return;
         }
-        let saved: Vec<PathBuf> = cx.shell.shared().clients.iter().map(|c| PathBuf::from(&c.path)).collect();
+        let saved: Vec<PathBuf> = crate::clients::guard_paths(&cx.shell.shared().clients);
         if let Some(text) = refusal(&out, client_dir, &saved) {
             cx.shell.error("Export failed", &Error::Refused(text));
             return;
@@ -108,7 +109,7 @@ impl JsonExports {
             return;
         }
         let target = out.clone();
-        let h = cx.shell.tasks().spawn(TaskSpec { title: format!("Export {name} as JSON"), cancellable: false, exclusive: None }, move |_job| run(&archive, &entry, &path, format, &out));
+        let h = cx.shell.tasks().spawn(TaskSpec { title: format!("Export {name} as JSON"), cancellable: false, exclusive: None }, move |_job| run(&*archive, &entry, &path, format, &out));
         self.running.push((name, target, h));
     }
 
@@ -183,7 +184,7 @@ pub(crate) fn folder_refusal(dir: &Path, client_dir: Option<&Path>, saved: &[Pat
 /// What the worker does for a folder: each item (archive path, entry) in turn, checking the job before each. A file that does not read,
 /// a name the archive writers refuse, a path part named `data.sah`, an output that exists, or a folder that turns out to lead into a client
 /// is counted as failed and the rest go on. Nothing is replaced.
-pub fn run_folder(archive: &Archive, items: &[(String, Entry)], dir: &Path, saved: &[PathBuf], job: &shaiya_core::Job) -> FolderReport {
+pub fn run_folder(archive: &dyn FileSource, items: &[(String, Entry)], dir: &Path, saved: &[PathBuf], job: &shaiya_core::Job) -> FolderReport {
     job.total(Some(items.len() as u64), shaiya_core::Unit::Files);
     let mut report = FolderReport { total: items.len(), dir: dir.to_path_buf(), ..FolderReport::default() };
     let mut taken: std::collections::HashSet<String> = std::collections::HashSet::new();
@@ -202,7 +203,7 @@ pub fn run_folder(archive: &Archive, items: &[(String, Entry)], dir: &Path, save
     report
 }
 
-fn one_of_folder(archive: &Archive, entry: &Entry, path: &str, dir: &Path, saved: &[PathBuf], taken: &mut std::collections::HashSet<String>, folders: &mut std::collections::HashSet<PathBuf>) -> std::result::Result<(), String> {
+fn one_of_folder(archive: &dyn FileSource, entry: &Entry, path: &str, dir: &Path, saved: &[PathBuf], taken: &mut std::collections::HashSet<String>, folders: &mut std::collections::HashSet<PathBuf>) -> std::result::Result<(), String> {
     let rel = path.replace('\\', "/");
     let Some(format) = ModelFormat::from_file_name(rel.rsplit('/').next().unwrap_or(&rel)) else { return Err("not an .ANI, .3DC, .VANI, .MANI, .3DO or .3DE file".to_string()) };
     if let Some(problem) = shaiya_archive::edit::loose_name_problem(&rel) {
@@ -297,12 +298,12 @@ impl FolderExports {
     }
 
     /// Checks `dir` against the client folders (before anything is read), then starts the task over `items`.
-    pub(crate) fn start(&mut self, archive: Arc<Archive>, items: Vec<(String, Entry)>, dir: PathBuf, client_dir: Option<&Path>, cx: &mut ToolkitCx<'_>) {
+    pub(crate) fn start(&mut self, archive: Arc<dyn FileSource>, items: Vec<(String, Entry)>, dir: PathBuf, client_dir: Option<&Path>, cx: &mut ToolkitCx<'_>) {
         if self.running.is_some() {
             cx.shell.error("Export failed", &Error::Refused("A folder export is running".to_string()));
             return;
         }
-        let saved: Vec<PathBuf> = cx.shell.shared().clients.iter().map(|c| PathBuf::from(&c.path)).collect();
+        let saved: Vec<PathBuf> = crate::clients::guard_paths(&cx.shell.shared().clients);
         if let Some(text) = folder_refusal(&dir, client_dir, &saved) {
             cx.shell.error("Export failed", &Error::Refused(text));
             return;
@@ -322,7 +323,7 @@ impl FolderExports {
         let title = format!("Export {} as JSON", shaiya_inspect::counted(items.len() as u64, "file", "files"));
         self.running = Some(cx.shell.tasks().spawn(TaskSpec { title, cancellable: true, exclusive: None }, move |job| {
             let _claim = claim;
-            let report = run_folder(&archive, &items, &dir, &all, job);
+            let report = run_folder(&*archive, &items, &dir, &all, job);
             if report.cancelled {
                 *slot.lock().unwrap_or_else(|e| e.into_inner()) = Some(report);
                 return Err(Error::Cancelled);
@@ -399,6 +400,7 @@ impl FolderExports {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use shaiya_archive::Archive;
 
     #[test]
     fn a_saved_folder_without_data_sah_still_refuses_and_a_json_name_is_checked() {

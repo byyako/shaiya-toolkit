@@ -6,7 +6,7 @@
 
 use crate::anim_compare::read_ani;
 use crate::ToolkitSettings;
-use shaiya_archive::Archive;
+use crate::source::FileSource;
 use shaiya_clientdata::anim::{self, passes, AniDiff};
 use shaiya_clientdata::animedit::{self, Tracks};
 use shaiya_clientdata::Ani;
@@ -47,7 +47,7 @@ fn refused(e: shaiya_clientdata::Error) -> Error {
 }
 
 /// What the worker does: read, edit, check against the input, build the bytes.
-pub fn run(archive: &Archive, path: &str, tool: &Tool, job: &shaiya_core::Job) -> Result<Edited> {
+pub fn run(archive: &dyn FileSource, path: &str, tool: &Tool, job: &shaiya_core::Job) -> Result<Edited> {
     job.check()?;
     let input = read_ani(archive, path, "the open archive")?;
     job.check()?;
@@ -111,7 +111,7 @@ pub enum Kind {
 /// The window of one edit.
 pub struct AnimEdit {
     path: String,
-    archive: Arc<Archive>,
+    archive: Arc<dyn FileSource>,
     siblings: Vec<String>,
     client_dir: Option<PathBuf>,
     pub kind: Kind,
@@ -140,7 +140,7 @@ pub struct AnimEdit {
 
 impl AnimEdit {
     /// A window editing the `.ANI` at `path` of `archive`; `siblings` are the other `.ANI` paths copy tracks can read from.
-    pub fn new(path: String, archive: Arc<Archive>, siblings: Vec<String>, client_dir: Option<PathBuf>) -> AnimEdit {
+    pub fn new(path: String, archive: Arc<dyn FileSource>, siblings: Vec<String>, client_dir: Option<PathBuf>) -> AnimEdit {
         AnimEdit {
             path,
             archive,
@@ -235,7 +235,7 @@ impl AnimEdit {
         self.started = Some(tool.clone());
         let (archive, path) = (self.archive.clone(), self.path.clone());
         let name = path.rsplit('/').next().unwrap_or(&path).to_string();
-        self.handle = Some(cx.shell.tasks().spawn(TaskSpec { title: format!("Edit {name}"), cancellable: true, exclusive: None }, move |job| run(&archive, &path, &tool, job)));
+        self.handle = Some(cx.shell.tasks().spawn(TaskSpec { title: format!("Edit {name}"), cancellable: true, exclusive: None }, move |job| run(&*archive, &path, &tool, job)));
     }
 
     /// Takes in the worker's answer and the save's.
@@ -290,7 +290,7 @@ impl AnimEdit {
             return;
         }
         let ani_name = out.extension().is_some_and(|x| x.eq_ignore_ascii_case("ani"));
-        let saved: Vec<PathBuf> = cx.shell.shared().clients.iter().map(|c| PathBuf::from(&c.path)).collect();
+        let saved: Vec<PathBuf> = crate::clients::guard_paths(&cx.shell.shared().clients);
         let problem = if !ani_name {
             Some(format!("The file name must end in .ANI: {}", out.display()))
         } else if out.exists() {
@@ -332,7 +332,7 @@ impl AnimEdit {
             return None;
         };
         let file = staged_path(&dir, &self.path);
-        let saved: Vec<PathBuf> = cx.shell.shared().clients.iter().map(|c| PathBuf::from(&c.path)).collect();
+        let saved: Vec<PathBuf> = crate::clients::guard_paths(&cx.shell.shared().clients);
         let made = match shaiya_core::fs::ensure_out_folder(&dir, &saved) {
             Ok(None) => {
                 sweep_staged(&dir, keep, std::time::Duration::from_secs(STAGED_KEEP_DAYS * 24 * 3600));

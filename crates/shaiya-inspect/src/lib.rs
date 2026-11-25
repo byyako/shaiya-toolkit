@@ -43,6 +43,8 @@ pub enum Kind {
     Jpg,
     /// A PNG picture.
     Png,
+    /// A loose client folder: a data folder of loose files (no `data.sah`).
+    LooseClient,
     Unknown,
 }
 
@@ -65,6 +67,9 @@ pub enum Details {
     Sound { format: String, channels: u32, rate: u32, duration_s: f64 },
     /// A picture: what its header says ("JPEG baseline, 3 components") and its size (zeros when the header did not read).
     Picture { what: String, width: u32, height: u32 },
+    /// A loose client folder: which of the three layouts was found, how many files it lists, whether it is a Shaiya-GX layout (converted
+    /// media; read from Shaiya-GX's data-format document) and what the listing left out.
+    LooseClient { layout: String, data: String, files: usize, gx: bool, left_out: Vec<String> },
     /// First 16 bytes.
     Unknown { magic_hex: String },
 }
@@ -237,11 +242,35 @@ pub fn describe(i: &Info) -> String {
             format!("{format}, {ch}, {rate} Hz, {duration_s:.1} s, {size} bytes")
         }
         Details::Picture { what, width, height } => format!("{what}, {width} x {height}, {size} bytes"),
+        Details::LooseClient { layout, files, .. } => format!("Loose client folder, {}; {layout}", counted(*files as u64, "file", "files")),
         Details::Unknown { magic_hex } => format!("Unknown file type, starts with {magic_hex}, {size} bytes"),
     }
 }
 
+
+/// A folder given to `shaiya info`: a loose client folder is described (layout, file count, Shaiya-GX flag); any other folder is "a folder,
+/// not a file" with what the detection looked for.
+fn loose_client(path: &Path, job: &Job) -> Result<Info> {
+    let Some(layout) = shaiya_archive::loose::detect(path)? else {
+        return Err(Error::io(path, std::io::Error::new(std::io::ErrorKind::InvalidInput, format!("is a folder, not a file, and not a loose client folder ({})", shaiya_archive::loose::detect_hint()))));
+    };
+    let tree = shaiya_clientdata::LooseTree::open(&layout, job)?;
+    let files = tree.files().len();
+    let size = tree.files().iter().map(|f| f.len).sum();
+    let left_out = tree.notes();
+    Ok(Info {
+        path: path.display().to_string(),
+        size,
+        kind: Kind::LooseClient,
+        details: Details::LooseClient { layout: layout.describe(), data: layout.data.display().to_string(), files, gx: layout.gx, left_out: left_out.clone() },
+        sha256: None,
+        problems: Vec::new(),
+    })
+}
 pub fn inspect(path: &Path, opts: &Options, job: &Job) -> Result<Info> {
+    if path.is_dir() {
+        return loose_client(path, job);
+    }
     let mut f = File::open(path).map_err(|e| Error::io(path, e))?;
     let size = f.metadata().map_err(|e| Error::io(path, e))?.len();
     if f.metadata().map(|m| m.is_dir()).unwrap_or(false) {

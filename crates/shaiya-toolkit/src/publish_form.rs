@@ -405,5 +405,5 @@ impl PublishForm {
 
 /// The saved client folders (a publish into one of them is refused).
 pub fn client_dirs(cx: &ToolkitCx<'_>) -> Vec<PathBuf> {
-    cx.shell.shared().clients.iter().map(|c| PathBuf::from(&c.path)).collect()
+    crate::clients::guard_paths(&cx.shell.shared().clients)
 }

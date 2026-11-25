@@ -1,8 +1,9 @@
 //! Where the previews read their files from. A preview is built from a path and a [`FileSource`], not from one kind of archive, so
-//! the code that draws a model does not care where the bytes sit. The only implementation is the opened [`Archive`]; other client
-//! layouts add theirs without any preview function changing its signature.
+//! the code that draws a model does not care where the bytes sit. Other client
+//! layouts add theirs without any preview function changing its signature. Two implementations: the opened [`Archive`] and a loose folder ([`LooseTree`]).
 
 use shaiya_archive::Archive;
+use shaiya_clientdata::LooseTree;
 use shaiya_core::{Error, Job, Result, Unit};
 
 /// A read-only set of files named by `/` paths, asked on a worker thread. Path lookups ignore letter case and take `/` or `\`.
@@ -74,6 +75,29 @@ impl FileSource for Archive {
     }
 }
 
+impl FileSource for LooseTree {
+    fn paths(&self) -> Vec<String> {
+        LooseTree::paths(self)
+    }
+
+    fn len(&self, path: &str) -> Option<u64> {
+        LooseTree::len(self, path)
+    }
+
+    fn read(&self, path: &str, cap: u64, job: &Job) -> Result<Vec<u8>> {
+        LooseTree::read(self, path, cap, job)
+    }
+
+    fn read_range(&self, path: &str, from: u64, n: usize) -> Result<Vec<u8>> {
+        LooseTree::read_range(self, path, from, n)
+    }
+
+    /// `(modification time in nanoseconds, length)` of the file now, so a file changed on disk changes its stamp and the mesh cache learns it again.
+    fn stamp(&self, path: &str) -> Option<(u64, u64)> {
+        LooseTree::stamp(self, path)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -107,6 +131,40 @@ mod tests {
         assert!(src.read("B/none.bin", 10, &job).is_err() && src.read_range("B/none.bin", 0, 1).is_err());
     }
 
+
+    #[test]
+    fn a_loose_file_source_reads_and_its_stamp_follows_the_file() {
+        use shaiya_archive::loose::detect;
+        let d = TempDir::new("w16-loose-source");
+        let big: Vec<u8> = (0..(3 << 20) + 5).map(|i| (i % 251) as u8).collect();
+        std::fs::create_dir_all(d.path().join("Character")).unwrap();
+        std::fs::create_dir_all(d.path().join("Item")).unwrap();
+        std::fs::write(d.path().join("Item/one.txt"), b"hello").unwrap();
+        std::fs::write(d.path().join("Character/Two.bin"), &big).unwrap();
+        let layout = detect(d.path()).unwrap().unwrap();
+        let tree = LooseTree::open(&layout, &Job::silent()).unwrap();
+        let src: &dyn FileSource = &tree;
+        assert_eq!(src.paths(), vec!["Character/Two.bin", "Item/one.txt"]);
+        assert_eq!((src.len("ITEM/one.txt"), src.len("item/none.txt")), (Some(5), None));
+        assert!(src.has("character\\two.bin") && !src.has("character/two.txt"));
+        let job = Job::silent();
+        assert_eq!(src.read("Character/Two.bin", u64::MAX, &job).unwrap(), big);
+        assert_eq!(src.read("Character/Two.bin", 1000, &job).unwrap(), big[..1000]);
+        assert_eq!(src.read_range("Character/Two.bin", 77, 4096).unwrap(), big[77..77 + 4096]);
+        assert!(src.read("Item/none.txt", 10, &job).is_err() && src.read_range("Item/none.txt", 0, 1).is_err());
+        // a file changed on disk (same length, later time) has another stamp, so a cache keyed by it learns the file again
+        let first = src.stamp("Item/one.txt").unwrap();
+        assert_eq!(first.1, 5);
+        let f = std::fs::OpenOptions::new().write(true).open(d.path().join("Item/one.txt")).unwrap();
+        f.set_modified(std::time::UNIX_EPOCH + std::time::Duration::from_nanos(first.0) + std::time::Duration::from_secs(3)).unwrap();
+        drop(f);
+        assert_ne!(src.stamp("Item/one.txt"), Some(first));
+        assert_eq!(src.stamp("Item/none.txt"), None);
+        // a cancelled read ends cancelled
+        let cancel = shaiya_core::Cancel::new();
+        cancel.cancel();
+        assert!(matches!(FileSource::read(&tree, "Item/one.txt", 10, &Job::new(&shaiya_core::Silent, cancel)), Err(Error::Cancelled)));
+    }
     #[test]
     fn a_cancelled_read_ends_cancelled() {
         let d = TempDir::new("w6-source-cancel");

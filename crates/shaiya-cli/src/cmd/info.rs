@@ -10,7 +10,7 @@ use std::path::PathBuf;
 
 #[derive(clap::Args)]
 pub struct Args {
-    /// Files to identify (data.sah, data.saf, SData, patches, game.exe, ...)
+    /// Files to identify (data.sah, data.saf, SData, patches, game.exe, ...), a loose client folder, or @name of a saved client
     #[arg(required = true, value_name = "PATH")]
     pub paths: Vec<PathBuf>,
     /// Also compute the SHA-256 of each file
@@ -53,7 +53,21 @@ pub fn run(ctx: &Ctx, args: &Args, job: &Job) -> i32 {
     let mut files = Vec::new();
     let mut errors = Vec::new();
     let mut code = 0;
-    for path in &args.paths {
+    for arg in &args.paths {
+        // `@name` is a saved client (a loose one is described; an archive client is its folder)
+        let resolved = match arg.to_string_lossy().strip_prefix('@') {
+            Some(_) if !arg.exists() => match super::util::resolve(ctx, &arg.to_string_lossy()) {
+                Ok(p) => p,
+                Err(e) => {
+                    code = code.max(crate::exit_code_for(e.kind()) as i32);
+                    report_error(ctx, &e);
+                    errors.push(error_json(&e)["error"].clone());
+                    continue;
+                }
+            },
+            _ => arg.clone(),
+        };
+        let path = &resolved;
         let started = std::time::Instant::now();
         job.stage(&format!("hashing {}", path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()));
         match shaiya_inspect::inspect(path, &Options { hash: args.hash }, job) {

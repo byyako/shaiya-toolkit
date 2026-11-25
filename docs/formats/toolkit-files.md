@@ -111,6 +111,18 @@ Put back reads the manifest: it refuses (moving nothing) when a `from` name is a
 
 A patch's loose file that you protect (`patch apply --protect NAME`) is written as `NAME.new` and the original is left alone; Shaiya Toolkit's Apply does not protect any name.
 
+## The saved client list (`shared.json`, key `clients`)
+
+Each saved client has `name`, `path`, `added_utc` and `note`. A loose data folder ([loose-client.md](loose-client.md)) has three more keys, written only for it:
+
+| Key | Meaning |
+|---|---|
+| `kind` | `loose` (omitted for an archive client; a list without it loads every entry as an archive client; test `an_old_client_list_without_kind_loads_as_archive`) |
+| `data` | the `data` folder when it differs from `path` (which is the install root) |
+| `backups` | the backup folder the person confirmed, outside `data`; none until one is chosen |
+
+The three keys round trip and are left out for an archive client (test `kind_data_and_backups_round_trip_and_are_omitted_for_archive`). **Older versions.** A 0.4.1 Shaiya Toolkit or editor lists a loose entry as an archive client (it does not open: there is no `data.sah`) and drops `kind`, `data` and `backups` the next time it changes the list. Version 0.5.0 offers "Detect as loose folder" for such an entry, and the entry is read-only until a backup folder is confirmed again.
+
 ## What is not written into a client folder
 
 [Publish](version-ini.md) writes only into a separate server folder; a destination that is a client folder or inside one is refused. `shaiya patch build`, the Patch builder and the table views write only to paths you name.

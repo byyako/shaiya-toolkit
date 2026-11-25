@@ -181,7 +181,7 @@ impl PreviewControls {
         if !out.extension().is_some_and(|e| e.eq_ignore_ascii_case("png")) {
             return fail(cx, format!("The file name must end in .png: {}", out.display()));
         }
-        let saved: Vec<PathBuf> = cx.shell.shared().clients.iter().map(|c| PathBuf::from(&c.path)).collect();
+        let saved: Vec<PathBuf> = crate::clients::guard_paths(&cx.shell.shared().clients);
         if let Some(text) = crate::export_json::refusal(&out, client_dir, &saved) {
             return fail(cx, text);
         }

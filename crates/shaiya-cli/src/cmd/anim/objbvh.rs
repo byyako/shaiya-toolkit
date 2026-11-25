@@ -33,7 +33,7 @@ pub(super) fn run(ctx: &Ctx, a: &ExportArgs) -> Res {
         return Err(Fail::Usage("--drop-translation and --scale need --format bvh".to_string()));
     }
     let archive = match &a.from {
-        Some(arch) => Some(open_full(ctx, arch)?),
+        Some(arch) => Some(open_store(ctx, arch)?),
         None => None,
     };
     // the outputs are checked before anything is read: folder, not the input, not existing, not inside a client

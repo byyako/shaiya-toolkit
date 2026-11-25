@@ -109,6 +109,7 @@ nav:
       - TacticsZone.zon: formats/tacticszone-zon.md
       - Afterglow mobs.psv: formats/mobs-psv.md
       - SVMap Editor's own files: formats/svmap-editor-files.md
+      - Loose data folders: formats/loose-client.md
       - Toolkit files in a client folder: formats/toolkit-files.md
   - Version matrix: version-matrix.md
   - FAQ: faq.md

@@ -8,7 +8,8 @@
 
 use crate::export_json::refusal;
 use crate::ToolkitSettings;
-use shaiya_archive::{Archive, Entry};
+use crate::source::FileSource;
+use shaiya_archive::Entry;
 use shaiya_clientdata::interchange::bvh::{export_bvh, BvhOptions};
 use shaiya_clientdata::interchange::obj::{export_obj, ObjInput, ObjOptions};
 use shaiya_clientdata::interchange::{export_gltf, GltfInput, GltfOptions, InterchangeError};
@@ -119,12 +120,12 @@ fn clientdata_error(path: &str, e: shaiya_clientdata::Error) -> Error {
     }
 }
 
-fn read_capped(archive: &Archive, path: &str) -> Result<Vec<u8>> {
-    let entry = archive.index().get(path).ok_or_else(|| Error::format(path, None, "not in the archive"))?;
-    if u64::from(entry.length) > MAX_MODEL_BYTES {
-        return Err(Error::format(path, None, format!("{} bytes is over the {MAX_MODEL_BYTES}-byte limit for a model file", entry.length)));
+fn read_capped(archive: &dyn FileSource, path: &str) -> Result<Vec<u8>> {
+    let length = archive.len(path).ok_or_else(|| Error::format(path, None, "not in the archive"))?;
+    if length > MAX_MODEL_BYTES {
+        return Err(Error::format(path, None, format!("{} bytes is over the {MAX_MODEL_BYTES}-byte limit for a model file", length)));
     }
-    archive.read(path)
+    archive.read(path, u64::MAX, &shaiya_core::Job::silent())
 }
 
 /// The check of `write_atomic_checked`: the temp file read back must hold `want`.
@@ -140,11 +141,11 @@ fn same(want: Vec<u8>) -> impl Fn(&Path) -> Result<()> {
 }
 
 /// An OBJ (and its `.mtl` of names) or a BVH: reads the entry, makes the text, writes it.
-fn run_text(format: Interchange, archive: &Archive, entry: &Entry, path: &str, out: &Path) -> Result<Vec<String>> {
+fn run_text(format: Interchange, archive: &dyn FileSource, entry: &Entry, path: &str, out: &Path) -> Result<Vec<String>> {
     if u64::from(entry.length) > MAX_MODEL_BYTES {
         return Err(Error::format(path, None, format!("{} bytes is over the {MAX_MODEL_BYTES}-byte limit for a model file", entry.length)));
     }
-    let bytes = archive.read_entry(entry)?;
+    let bytes = archive.read(path, u64::MAX, &shaiya_core::Job::silent())?;
     let lower = path.to_ascii_lowercase();
     let ce = |e| clientdata_error(path, e);
     if format == Interchange::Bvh {
@@ -184,13 +185,13 @@ fn run_text(format: Interchange, archive: &Archive, entry: &Entry, path: &str, o
 }
 
 /// What the task does; returns the notes of the export. `with_mesh` is the `.3DC` an `.ANI` goes out on.
-fn run(archive: &Archive, entry: &Entry, path: &str, with_mesh: Option<&str>, out: &Path) -> Result<Vec<String>> {
+fn run(archive: &dyn FileSource, entry: &Entry, path: &str, with_mesh: Option<&str>, out: &Path) -> Result<Vec<String>> {
     if u64::from(entry.length) > MAX_MODEL_BYTES {
         return Err(Error::format(path, None, format!("{} bytes is over the {MAX_MODEL_BYTES}-byte limit for a model file", entry.length)));
     }
     let binary = out.extension().is_some_and(|e| e.eq_ignore_ascii_case("glb"));
     let bin_path = (!binary).then(|| out.with_extension("bin"));
-    let bytes = archive.read_entry(entry)?;
+    let bytes = archive.read(path, u64::MAX, &shaiya_core::Job::silent())?;
     let name = path.rsplit('/').next().unwrap_or(path).to_string();
     let lower = name.to_ascii_lowercase();
     let ce = |e| clientdata_error(path, e);
@@ -245,7 +246,7 @@ impl InterchangeExports {
 
     /// Checks the target against the client folders (before anything is read), then starts the task. A refusal is shown and nothing starts.
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn start(&mut self, format: Interchange, archive: Arc<Archive>, entry: Entry, path: String, with_mesh: Option<String>, out: PathBuf, client_dir: Option<&Path>, cx: &mut ToolkitCx<'_>) {
+    pub(crate) fn start(&mut self, format: Interchange, archive: Arc<dyn FileSource>, entry: Entry, path: String, with_mesh: Option<String>, out: PathBuf, client_dir: Option<&Path>, cx: &mut ToolkitCx<'_>) {
         let name = path.rsplit('/').next().unwrap_or(&path).to_string();
         let ext = out.extension().map(|e| e.to_string_lossy().to_ascii_lowercase());
         if !ext.as_deref().is_some_and(|e| format.extensions().contains(&e)) {
@@ -253,7 +254,7 @@ impl InterchangeExports {
             cx.shell.error("Export failed", &Error::Refused(format!("The file name must end in {}: {}", want.join(" or "), out.display())));
             return;
         }
-        let saved: Vec<PathBuf> = cx.shell.shared().clients.iter().map(|c| PathBuf::from(&c.path)).collect();
+        let saved: Vec<PathBuf> = crate::clients::guard_paths(&cx.shell.shared().clients);
         if let Some(text) = refusal(&out, client_dir, &saved) {
             cx.shell.error("Export failed", &Error::Refused(text));
             return;
@@ -272,8 +273,8 @@ impl InterchangeExports {
         }
         let target = out.clone();
         let h = cx.shell.tasks().spawn(TaskSpec { title: format!("Export {name} as {}", format.label()), cancellable: false, exclusive: None }, move |_job| match format {
-            Interchange::Gltf => run(&archive, &entry, &path, with_mesh.as_deref(), &out),
-            f => run_text(f, &archive, &entry, &path, &out),
+            Interchange::Gltf => run(&*archive, &entry, &path, with_mesh.as_deref(), &out),
+            f => run_text(f, &*archive, &entry, &path, &out),
         });
         self.running.push((name, target, format, h));
     }
