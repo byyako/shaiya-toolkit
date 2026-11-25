@@ -1,16 +1,19 @@
-//! "Import glTF...": a glTF 2.0 file (`.gltf` with its `.bin`, or `.glb`) as a new `.ANI`, `.3DC`, `.3DO` or `.3DE` file. The row it is opened
-//! from says what is made: an `.ANI` or `.3DC` row is also the like file (the skeleton, reference matrices and first field come from it),
-//! a `.3DO` or `.3DE` row only names the kind. A background task reads the file (buffers only from a data uri or from the same folder),
-//! imports it with [`shaiya_clientdata::interchange::import`] and runs the checks of `shaiya anim import`: an `.ANI` must pass against its
-//! like file, a `.3DC` must fit it, every game file is read back from its own bytes. The window shows what the import did or every reason it
-//! refused; nothing is written until "Save as new file..." (a new file outside every client folder, written with the read-back check).
-//! glTF is a lossy view of the game file: the game file's own round trip (JSON) stays byte for byte.
+//! "Import model/animation...": a glTF 2.0 file (`.gltf` with its `.bin`, or `.glb`), a Wavefront OBJ (`.obj`) or a BVH (`.bvh`) as a new
+//! `.ANI`, `.3DC`, `.3DO` or `.3DE` file. The row it is opened from says what is made: an `.ANI` or `.3DC` row is also the like file (the
+//! skeleton, reference matrices and first field come from it), a `.3DO` or `.3DE` row only names the kind. An OBJ makes a `.3DO` or `.3DE`, a
+//! BVH an `.ANI` (it needs the like file of its row). A background task reads the file (a glTF's buffers only from a data uri or from the same
+//! folder; an OBJ's `mtllib` is never opened), imports it with [`shaiya_clientdata::interchange`] and runs the checks of `shaiya anim import`:
+//! an `.ANI` must pass against its like file, a `.3DC` must fit it, every game file is read back from its own bytes. The window shows what the
+//! import did or every reason it refused; nothing is written until "Save as new file..." (a new file outside every client folder, written
+//! with the read-back check). glTF, OBJ and BVH are a lossy view of the game file: the game file's own round trip (JSON) stays byte for byte.
 
 use crate::export_interchange::LOSSY_SENTENCE;
 use crate::ToolkitSettings;
 use shaiya_archive::Archive;
 use shaiya_clientdata::anim::{passes, rig_check, validate, RigDiff, Severity};
+use shaiya_clientdata::interchange::bvh::import_bvh;
 use shaiya_clientdata::interchange::gltf_read::{read_beside, Gltf};
+use shaiya_clientdata::interchange::obj::import_obj;
 use shaiya_clientdata::interchange::import::{finish, import_gltf, parse_name_map, ImportError, ImportKind, ImportOptions, ImportReport, Imported, Like};
 use shaiya_clientdata::modeljson::MAX_MODEL_BYTES;
 use shaiya_clientdata::{Ani, C3dc, Mesh3de, Mesh3do};
@@ -28,6 +31,7 @@ const SHOWN: usize = 20;
 /// The settings of one import (the window's checkboxes, and what a test sets).
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Settings {
+    /// The file to read: `.gltf`, `.glb`, `.obj` or `.bvh`.
     pub input: Option<PathBuf>,
     /// A `--map` file: lines `node name = bone index`.
     pub map: Option<PathBuf>,
@@ -64,6 +68,25 @@ pub struct Refused {
     pub lines: Vec<String>,
     /// True for an `.ANI` that was read but does not pass the rig check (the CLI's exit 1); false for a file that cannot be imported.
     pub does_not_pass: bool,
+}
+
+/// What the chosen file is.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Source {
+    Gltf,
+    Obj,
+    Bvh,
+}
+
+impl Source {
+    /// The kind of a file name (`.obj` and `.bvh` in any letter case; anything else is read as glTF).
+    pub fn of(path: &Path) -> Source {
+        match path.extension().map(|e| e.to_string_lossy().to_ascii_lowercase()).as_deref() {
+            Some("obj") => Source::Obj,
+            Some("bvh") => Source::Bvh,
+            _ => Source::Gltf,
+        }
+    }
 }
 
 fn label(kind: ImportKind) -> &'static str {
@@ -138,8 +161,17 @@ fn parse_error(path: &str, e: shaiya_clientdata::Error) -> Error {
 
 /// What the task does: the kind comes from the row at `path`; an `.ANI` or `.3DC` row is read as the like file.
 pub fn run(archive: &Archive, path: &str, s: &Settings, cancel: shaiya_core::job::Cancel) -> std::result::Result<Made, Refused> {
-    let Some(kind) = ImportKind::of_name(path) else { return Err(one("This kind of file is not imported from glTF")) };
-    let Some(input) = &s.input else { return Err(one("Choose the glTF file")) };
+    let Some(kind) = ImportKind::of_name(path) else { return Err(one("This kind of file is not imported from a model or animation file")) };
+    let Some(input) = &s.input else { return Err(one("Choose the file to import")) };
+    let src = Source::of(input);
+    match (src, kind) {
+        (Source::Gltf, _) | (Source::Obj, ImportKind::Mesh3do | ImportKind::Mesh3de) | (Source::Bvh, ImportKind::Ani) => {}
+        (Source::Obj, _) => return Err(one("An OBJ is imported as a .3DO or .3DE (it holds no skin and no keys): open this from a .3DO or .3DE row")),
+        (Source::Bvh, _) => return Err(one("A BVH is imported as an .ANI (it holds no mesh): open this from an .ANI row")),
+    }
+    if src != Source::Gltf && (s.map.is_some() || s.reduce_influences || s.reduce || s.keys_exact) {
+        return Err(one("Bone names, reduce and exact keys are for a glTF file only"));
+    }
     if kind != ImportKind::C3dc && s.reduce_influences {
         return Err(one("Reduce influences is for a .3DC"));
     }
@@ -151,8 +183,12 @@ pub fn run(archive: &Archive, path: &str, s: &Settings, cancel: shaiya_core::job
     }
     let io = |e: Error| one(e.to_string());
     let bytes = read_capped(input, MAX_MODEL_BYTES).map_err(io)?;
-    let folder = input.parent().filter(|p| !p.as_os_str().is_empty()).map_or_else(|| PathBuf::from("."), Path::to_path_buf);
-    let g = Gltf::open(&bytes, &mut |name| read_beside(&folder, name)).map_err(|(_, m)| one(format!("{}: {m}", input.display())))?;
+    let g = if src == Source::Gltf {
+        let folder = input.parent().filter(|p| !p.as_os_str().is_empty()).map_or_else(|| PathBuf::from("."), Path::to_path_buf);
+        Some(Gltf::open(&bytes, &mut |name| read_beside(&folder, name)).map_err(|(_, m)| one(format!("{}: {m}", input.display())))?)
+    } else {
+        None
+    };
     let like = if kind.needs_like() {
         let like_bytes = read_like(archive, path).map_err(io)?;
         Some(if kind == ImportKind::Ani { Like::Ani(Ani::parse(&like_bytes, path).map_err(|e| io(parse_error(path, e)))?) } else { Like::C3dc(C3dc::parse(&like_bytes, path).map_err(|e| io(parse_error(path, e)))?) })
@@ -168,7 +204,14 @@ pub fn run(archive: &Archive, path: &str, s: &Settings, cancel: shaiya_core::job
         None => Vec::new(),
     };
     let opts = ImportOptions { map, reduce_influences: s.reduce_influences, reduce: s.reduce, keys_exact: s.keys_exact, cancel: Some(cancel) };
-    let (imp, report) = import_gltf(&g, kind, like.as_ref(), &opts).map_err(|e| refused_lines(&e))?;
+    let (imp, report) = match (&g, &like) {
+        (Some(g), _) => import_gltf(g, kind, like.as_ref(), &opts).map_err(|e| refused_lines(&e))?,
+        (None, Some(Like::Ani(l))) => {
+            let (ani, r) = import_bvh(&bytes, l, opts.cancel.as_ref()).map_err(|e| refused_lines(&e))?;
+            (Imported::Ani(ani), r)
+        }
+        (None, _) => import_obj(&bytes, kind, opts.cancel.as_ref()).map_err(|e| refused_lines(&e))?,
+    };
     if let (Imported::Ani(candidate), Some(Like::Ani(target))) = (&imp, &like) {
         if !passes(candidate, target) {
             return Err(Refused { lines: rig_lines(candidate, target), does_not_pass: true });
@@ -327,21 +370,23 @@ impl ImportGltf {
         let mut open = self.open;
         let (mut run_now, mut save) = (false, false);
         let name = self.path.rsplit('/').next().unwrap_or(&self.path).to_string();
-        egui::Window::new("Import glTF").open(&mut open).default_size([600.0, 420.0]).show(ctx, |ui| {
+        egui::Window::new("Import model/animation").open(&mut open).default_size([600.0, 420.0]).show(ctx, |ui| {
             let what = if self.kind.needs_like() { format!("A new {} like {name}: the skeleton, reference matrices and first field come from it.", label(self.kind)) } else { format!("A new {} mesh.", label(self.kind)) };
             ui.label(egui::RichText::new(what).strong());
             ui.label(egui::RichText::new(LOSSY_SENTENCE).color(pal.weak));
             ui.horizontal(|ui| {
-                ui.label("glTF file");
+                ui.label("File");
                 let shown = self.settings.input.as_ref().map(|p| p.display().to_string()).unwrap_or_else(|| "(none chosen)".to_string());
                 ui.label(shown);
                 if ui.button("Choose...").clicked() {
-                    if let Some(p) = cx.shell.pick_file("import-gltf", &[("glTF", &["gltf", "glb"])]) {
+                    if let Some(p) = cx.shell.pick_file("import-gltf", &[("glTF, OBJ or BVH", &["gltf", "glb", "obj", "bvh"]), ("glTF", &["gltf", "glb"]), ("OBJ", &["obj"]), ("BVH", &["bvh"])]) {
                         self.settings.input = Some(p);
                     }
                 }
             });
-            if self.kind.needs_like() {
+            ui.label(egui::RichText::new(".gltf and .glb make any of the four kinds; .obj makes a .3DO or .3DE; .bvh makes an .ANI").color(pal.weak));
+            let gltf_only = self.settings.input.as_deref().is_none_or(|p| Source::of(p) == Source::Gltf);
+            if self.kind.needs_like() && gltf_only {
                 ui.horizontal(|ui| {
                     ui.label("Bone names");
                     let shown = self.settings.map.as_ref().map(|p| p.display().to_string()).unwrap_or_else(|| "Bone_NNN".to_string());
@@ -356,15 +401,16 @@ impl ImportGltf {
                     }
                 });
             }
-            match self.kind {
-                ImportKind::Ani => {
+            match (gltf_only, self.kind) {
+                (false, _) => {}
+                (true, ImportKind::Ani) => {
                     ui.checkbox(&mut self.settings.keys_exact, "Use the file's own keys (each a multiple of 1/30 s; no resampling)");
                     ui.checkbox(&mut self.settings.reduce, "Drop keys that the others reproduce (within 1e-5)");
                 }
-                ImportKind::C3dc => {
+                (true, ImportKind::C3dc) => {
                     ui.checkbox(&mut self.settings.reduce_influences, "Keep the two largest influences of a vertex that has more");
                 }
-                _ => {}
+                (true, _) => {}
             }
             ui.separator();
             ui.horizontal(|ui| {
@@ -423,6 +469,13 @@ impl ImportGltf {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_file_decides_how_it_is_read() {
+        for (p, s) in [("a.gltf", Source::Gltf), ("a.GLB", Source::Gltf), ("a.obj", Source::Obj), ("b.OBJ", Source::Obj), ("c.bvh", Source::Bvh), ("d.BVH", Source::Bvh), ("e", Source::Gltf)] {
+            assert_eq!(Source::of(Path::new(p)), s, "{p}");
+        }
+    }
 
     #[test]
     fn a_row_decides_what_is_made() {

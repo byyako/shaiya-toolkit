@@ -106,7 +106,7 @@ impl Collect {
     }
 }
 
-fn not_trs_kind(e: NotTrs) -> RefusalKind {
+pub(crate) fn not_trs_kind(e: NotTrs) -> RefusalKind {
     match e {
         NotTrs::NotFinite => RefusalKind::NotFinite,
         NotTrs::NotAffine => RefusalKind::NotAffine,
@@ -212,7 +212,7 @@ fn from_3de(m: &Mesh3de, c: &mut Collect, name: &str) -> Scene {
 }
 
 /// One `.3DC` mesh: the vertices, the faces and (for a skinned layout) the skin with `bones` joints.
-fn c3dc_mesh(m: &C3dcMesh, c: &mut Collect, name: &str, skinned: bool, limit: usize) -> Mesh3d {
+pub(crate) fn c3dc_mesh(m: &C3dcMesh, c: &mut Collect, name: &str, skinned: bool, limit: usize) -> Mesh3d {
     let mut ok = check_faces(c, name, &m.faces, m.vertices.len());
     // the joints are the mesh's bones the skeleton also has (what the game's skinning poses)
     let nb = m.bones.len().min(limit);
@@ -408,7 +408,7 @@ fn clips_of(c: &mut Collect, anims: &[Ani], opts: &GltfOptions) -> Vec<Clip> {
     clips
 }
 
-fn parents_of(a: &Ani) -> Vec<i32> {
+pub(crate) fn parents_of(a: &Ani) -> Vec<i32> {
     a.bones.iter().enumerate().map(|(i, b)| if b.parent >= 0 && (b.parent as usize) < i { b.parent } else { -1 }).collect()
 }
 

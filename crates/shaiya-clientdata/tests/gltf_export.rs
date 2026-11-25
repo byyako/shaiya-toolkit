@@ -627,7 +627,7 @@ fn the_node_layout_follows_the_file() {
 #[test]
 fn an_error_from_a_bug_is_not_a_refusal() {
     assert!(InterchangeError::SelfCheck("x".into()).is_bug());
-    assert!(!InterchangeError::Refused { list: vec![], more: 0 }.is_bug());
+    assert!(!InterchangeError::Refused { format: "glTF", list: vec![], more: 0 }.is_bug());
 }
 
 #[test]

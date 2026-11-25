@@ -1,14 +1,17 @@
-//! glTF 2.0 (and later OBJ and BVH) as a lossy view of the game's model and animation files, hand-written on `serde_json`.
+//! glTF 2.0, OBJ and BVH as a lossy view of the game's model and animation files, hand-written on `serde_json`.
 //!
 //! The mapping: one mirror (`z` becomes `-z`, triangles swap two corners, quaternions become `(-x, -y, z, w)`, matrices `S M S` copied
 //! without transposition), time `(key - start) / 30` seconds, two bone influences per vertex, names only for textures. glTF, OBJ and BVH
 //! are a lossy view of the game file: the game file's own round trip (JSON) stays byte for byte. The import ([`import`]) reads a glTF into the model of a new game file and refuses what the game
-//! format cannot hold. Nothing here writes a file.
+//! format cannot hold. Nothing here writes a file. [`obj`] writes and reads static meshes (`.3DO`, `.3DE`, a `.3DC` at rest) as Wavefront OBJ, [`bvh`] writes an
+//! `.ANI` as BVH and reads back the layout it writes.
 
+pub mod bvh;
 pub mod gltf_read;
 pub mod gltf_write;
 pub mod import;
 pub mod mesh;
+pub mod obj;
 pub mod selfcheck;
 pub mod xform;
 
@@ -101,8 +104,9 @@ impl std::fmt::Display for Refusal {
 
 #[derive(Debug)]
 pub enum InterchangeError {
-    /// The file cannot be written as asked: every reason found (at most 200), and how many more there were.
-    Refused { list: Vec<Refusal>, more: usize },
+    /// The file cannot be written as asked: every reason found (at most 200), and how many more there were. `format` names the format asked
+    /// for (`glTF`, `OBJ` or `BVH`).
+    Refused { format: &'static str, list: Vec<Refusal>, more: usize },
     /// The toolkit's own check of what it made failed: a bug of ours; nothing is returned.
     SelfCheck(String),
 }
@@ -130,12 +134,16 @@ impl InterchangeError {
 impl std::fmt::Display for InterchangeError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            InterchangeError::Refused { list, more } => {
+            InterchangeError::Refused { format, list, more } => {
                 let shown: Vec<String> = list.iter().take(3).map(|r| r.to_string()).collect();
-                write!(f, "cannot be written as glTF: {}", shown.join("; "))?;
+                write!(f, "cannot be written as {format}: {}", shown.join("; "))?;
                 let rest = list.len().saturating_sub(3) + more;
                 if rest > 0 {
-                    write!(f, "; and {rest} more (--allow-lossy projects what can be projected)")?;
+                    write!(f, "; and {rest} more")?;
+                    // only the glTF export has a projection
+                    if *format == "glTF" {
+                        write!(f, " (--allow-lossy projects what can be projected)")?;
+                    }
                 }
                 Ok(())
             }
@@ -220,7 +228,7 @@ pub fn export_gltf(input: GltfInput, opts: &GltfOptions) -> Result<GltfOutput, I
         GltfInput::Mesh3de(m) => mesh::scene_of_3de(m, &mut c, opts),
     };
     if c.failed() {
-        return Err(InterchangeError::Refused { list: c.refused, more: c.more });
+        return Err(InterchangeError::Refused { format: "glTF", list: c.refused, more: c.more });
     }
     let built = gltf_write::write(&scene, opts, &input);
     let pose_checked = c.projected == 0 && selfcheck::has_pose_check(&input);

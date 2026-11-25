@@ -22,6 +22,7 @@ use std::path::{Path, PathBuf};
 
 mod gltf;
 mod gltf_import;
+mod objbvh;
 
 #[derive(clap::Subcommand)]
 pub enum Cmd {
@@ -61,7 +62,13 @@ pub enum Cmd {
     /// by the toolkit before it is written (structure, ranges, finite numbers, weights, quaternions and the skinned pose against the toolkit's
     /// renderer; the pose is not compared when --allow-lossy projected something, and the output says so); a file that cannot be written as glTF is exit 3 and the reason names the bone or vertex, a failed check is exit 5.
     ///
+    /// With --format obj the file goes out as Wavefront OBJ (a .3DO, .3DE or, at rest with no bones, .3DC; -o ends in .obj, and a .mtl of texture
+    /// names is written next to it when the mesh names a texture). With --format bvh an .ANI goes out as BVH (-o ends in .bvh; one frame per key,
+    /// 30 per second; a bone that moves relative to its parent is refused unless --drop-translation leaves its motion out; --scale multiplies
+    /// offsets and positions). Both are a lossy view of the game file and take -o only (no --out-dir).
+    ///
     /// Example: shaiya anim export character/human/3dc/huwm_torso001.3dc --from "@us" --format glb --anim character/human/ani/huwm_000_normal.ani -o torso.glb
+    /// Example: shaiya anim export character/human/ani/huwm_000_normal.ani --from "@us" --format bvh -o walk.bvh
     Export(ExportArgs),
     /// Compare the poses of two .ANI files: skeleton, end key and the bones whose pose differs
     ///
@@ -88,7 +95,16 @@ pub enum Cmd {
     /// view of the game file: the game file's own round trip (JSON) stays byte for byte; an import builds a new file and runs the same checks
     /// as `shaiya anim import` before it writes. Exit 2 for a bad argument (no --like for .ANI or .3DC).
     ///
+    /// With IN.obj the file is read as Wavefront OBJ and -o must end in .3do or .3de (no --like): triangles and quads, negative indices, one
+    /// material; missing normals are computed (and said); a missing texture coordinate, a second material or more than 65,535 vertices are
+    /// refused; the .mtl named by mtllib is never opened. With IN.bvh (laid out as `export --format bvh` writes it) -o must end in .ani and
+    /// --like is required: a joint is a bone by its name Bone_NNN, the channels must be the ZXY order the export writes, Frame Time 1/30 and only
+    /// the root has position channels; a track equal to the like file's reference is left out; written only when it passes the rig check
+    /// (exit 1 otherwise), exit 2 without --like. OBJ and BVH are a lossy view of the game file as well.
+    ///
     /// Example: shaiya anim import wave.glb -o new.ani --like "character/human/ani/huwm_117_x.ani" --from "@us" --keys exact
+    /// Example: shaiya anim import walk.bvh -o new.ani --like "character/human/ani/huwm_000_normal.ani" --from "@us"
+    /// Example: shaiya anim import crate.obj -o crate.3do
     /// Example: shaiya anim import wave.json -o new.ani --like "character/human/ani/huwm_117_x.ani" --from "@us"
     Import(ImportArgs),
     /// Retime, trim or copy tracks of an .ANI into a new file (`edit retime`, `edit trim`, `edit copy-track`)
@@ -221,7 +237,7 @@ pub struct ExportArgs {
     /// Replace an existing output
     #[arg(long)]
     pub force: bool,
-    /// json (the default: the file's own lossless JSON), gltf (a .gltf and a .bin) or glb (one .glb file); glTF, OBJ and BVH are a lossy view of the game file
+    /// json (the default: the file's own lossless JSON), gltf (a .gltf and a .bin), glb (one .glb file), obj (a .3DO, .3DE or .3DC at rest) or bvh (an .ANI); glTF, OBJ and BVH are a lossy view of the game file
     #[arg(long, value_enum, default_value = "json")]
     pub format: ExportFormat,
     /// glTF of a .3DC: an .ANI (a file, or with --from its path in the archive) that moves it; repeat for more animations of the same skeleton
@@ -236,6 +252,12 @@ pub struct ExportArgs {
     /// glTF: write texture references as DIR/<name>.png (names only; the toolkit never writes or embeds a picture)
     #[arg(long, value_name = "DIR")]
     pub texture_uri_base: Option<String>,
+    /// BVH: leave out the motion of a bone that moves relative to its parent (a BVH keeps only constant offsets) instead of refusing the file
+    #[arg(long)]
+    pub drop_translation: bool,
+    /// BVH: multiply every offset and position by F (100 for tools that expect centimetres); the import reads 1 only
+    #[arg(long, value_name = "F", default_value_t = 1.0)]
+    pub scale: f64,
 }
 
 /// What `export` writes.
@@ -244,6 +266,8 @@ pub enum ExportFormat {
     Json,
     Gltf,
     Glb,
+    Obj,
+    Bvh,
 }
 
 #[derive(clap::Args)]
@@ -264,10 +288,10 @@ pub struct DiffArgs {
 
 #[derive(clap::Args)]
 pub struct ImportArgs {
-    /// The JSON file made by `export`, or a glTF file (.gltf or .glb)
-    #[arg(value_name = "IN.json|IN.gltf|IN.glb")]
+    /// The JSON file made by `export`, a glTF file (.gltf or .glb), an OBJ (.obj) or a BVH (.bvh)
+    #[arg(value_name = "IN.json|IN.gltf|IN.glb|IN.obj|IN.bvh")]
     pub input: String,
-    /// The file to write; its extension must be the JSON's format (.ANI, .3DC, .VANI, .MANI, .3DO or .3DE); for a glTF input .ani, .3dc, .3do or .3de
+    /// The file to write; its extension must be the JSON's format (.ANI, .3DC, .VANI, .MANI, .3DO or .3DE); for a glTF input .ani, .3dc, .3do or .3de; for an OBJ .3do or .3de; for a BVH .ani
     #[arg(short = 'o', long = "out", value_name = "OUT")]
     pub out: PathBuf,
     /// For .ANI only (required there): the file the new animation will replace, a file or with --from its path in the archive
@@ -1161,11 +1185,20 @@ fn same_bytes_check<'a>(want: &'a [u8], bug: &'a Cell<bool>) -> impl Fn(&Path) -
 }
 
 fn export(ctx: &Ctx, a: &ExportArgs, job: &shaiya_core::Job) -> Res {
-    if a.format == ExportFormat::Json && (!a.anims.is_empty() || a.allow_lossy || a.pad_end || a.texture_uri_base.is_some()) {
-        return Err(Fail::Usage("--anim, --allow-lossy, --pad-end and --texture-uri-base need --format gltf or glb".to_string()));
+    let interchange = matches!(a.format, ExportFormat::Gltf | ExportFormat::Glb);
+    if !interchange && (a.allow_lossy || a.pad_end || a.texture_uri_base.is_some()) {
+        return Err(Fail::Usage("--allow-lossy, --pad-end and --texture-uri-base need --format gltf or glb".to_string()));
     }
-    if a.format != ExportFormat::Json {
-        return gltf::run(ctx, a, job);
+    if !interchange && !a.anims.is_empty() {
+        return Err(Fail::Usage("--anim needs --format gltf or glb".to_string()));
+    }
+    if a.format != ExportFormat::Bvh && (a.drop_translation || a.scale != 1.0) {
+        return Err(Fail::Usage("--drop-translation and --scale need --format bvh".to_string()));
+    }
+    match a.format {
+        ExportFormat::Gltf | ExportFormat::Glb => return gltf::run(ctx, a, job),
+        ExportFormat::Obj | ExportFormat::Bvh => return objbvh::run(ctx, a),
+        ExportFormat::Json => {}
     }
     match (&a.out, &a.out_dir) {
         (Some(_), Some(_)) => Err(Fail::Usage("-o and --out-dir cannot be used together".to_string())),
@@ -1364,7 +1397,7 @@ fn export_one(ctx: &Ctx, a: &ExportArgs, input: &str, out_file: &Path) -> Res {
 }
 
 fn import(ctx: &Ctx, a: &ImportArgs) -> Res {
-    if has_ext(&a.input, &["gltf", "glb"]) {
+    if has_ext(&a.input, &["gltf", "glb", "obj", "bvh"]) {
         return gltf_import::run(ctx, a);
     }
     if a.map.is_some() || a.reduce || a.reduce_influences || a.keys.is_some() {
@@ -1712,7 +1745,7 @@ mod tests {
         });
         let job = shaiya_core::Job::new(&progress, cancel);
         let c = Ctx { data_dir: Some(base.join("data")), ..ctx() };
-        let args = ExportArgs { inputs: vec![src.to_string_lossy().into_owned()], from: None, out: None, out_dir: Some(out.clone()), force: false, format: ExportFormat::Json, anims: Vec::new(), allow_lossy: false, pad_end: false, texture_uri_base: None };
+        let args = ExportArgs { inputs: vec![src.to_string_lossy().into_owned()], from: None, out: None, out_dir: Some(out.clone()), force: false, format: ExportFormat::Json, anims: Vec::new(), allow_lossy: false, pad_end: false, texture_uri_base: None, drop_translation: false, scale: 1.0 };
         let r = export_dir(&c, &args, &out, &job);
         assert!(matches!(r, Err(Fail::Error(Error::Cancelled))));
         let written = std::fs::read_dir(&out).unwrap().count();

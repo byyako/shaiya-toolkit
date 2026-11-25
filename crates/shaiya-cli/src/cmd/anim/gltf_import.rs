@@ -1,5 +1,7 @@
 //! `shaiya anim import IN.gltf|IN.glb -o OUT.ani|.3dc|.3do|.3de`: a glTF 2.0 file as a new game file, through
-//! [`shaiya_clientdata::interchange::import`]. glTF is a lossy view of the game file: an import builds a new file and runs the same checks as
+//! [`shaiya_clientdata::interchange::import`]. The same command reads `IN.obj` (a `.3DO` or `.3DE`) and `IN.bvh` (an `.ANI`, `--like`
+//! required) through [`shaiya_clientdata::interchange::obj`] and [`shaiya_clientdata::interchange::bvh`], with the same output rules and
+//! checks (an `.ANI` is written only when it passes the rig check, exit 1 otherwise). glTF is a lossy view of the game file: an import builds a new file and runs the same checks as
 //! `shaiya anim import` of a JSON before it writes: an `.ANI` is written only when it passes the rig check against its `--like` file (same
 //! skeleton, same first field, no validation error), a `.3DC` only when its bone count is the like file's and every vertex names a bone the
 //! rig has. The output rules are those of the JSON import: a new file (an existing one only with `--force`), never inside a client folder,
@@ -7,6 +9,8 @@
 
 use super::*;
 use shaiya_clientdata::interchange::gltf_read::{buffer_name, read_beside, Gltf};
+use shaiya_clientdata::interchange::bvh::import_bvh;
+use shaiya_clientdata::interchange::obj::import_obj;
 use shaiya_clientdata::interchange::import::{finish, import_gltf, parse_name_map, ImportError, ImportKind, ImportOptions, ImportReport, Imported, Like};
 
 const MAX_MAP_BYTES: u64 = 1 << 20;
@@ -22,11 +26,39 @@ fn reasons(e: &ImportError) -> String {
     s
 }
 
+/// What the input is.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Source {
+    Gltf,
+    Obj,
+    Bvh,
+}
+
 pub(super) fn run(ctx: &Ctx, a: &ImportArgs) -> Res {
+    let src = if has_ext(&a.input, &["obj"]) {
+        Source::Obj
+    } else if has_ext(&a.input, &["bvh"]) {
+        Source::Bvh
+    } else {
+        Source::Gltf
+    };
     let out_text = a.out.to_string_lossy().into_owned();
     let Some(kind) = ImportKind::of_name(&out_text) else {
-        return Err(Fail::Usage("-o of a glTF import must end in .ani, .3dc, .3do or .3de".to_string()));
+        return Err(Fail::Usage(match src {
+            Source::Gltf => "-o of a glTF import must end in .ani, .3dc, .3do or .3de",
+            Source::Obj => "-o of an OBJ import must end in .3do or .3de",
+            Source::Bvh => "-o of a BVH import must end in .ani",
+        }
+        .to_string()));
     };
+    match (src, kind) {
+        (Source::Obj, ImportKind::Mesh3do | ImportKind::Mesh3de) | (Source::Bvh, ImportKind::Ani) | (Source::Gltf, _) => {}
+        (Source::Obj, _) => return Err(Fail::Usage("-o of an OBJ import must end in .3do or .3de (an OBJ holds no skin and no keys)".to_string())),
+        (Source::Bvh, _) => return Err(Fail::Usage("-o of a BVH import must end in .ani (a BVH holds no mesh)".to_string())),
+    }
+    if src != Source::Gltf && (a.map.is_some() || a.reduce || a.reduce_influences || a.keys.is_some()) {
+        return Err(Fail::Usage("--map, --reduce, --reduce-influences and --keys are for a glTF import (IN.gltf or IN.glb) only".to_string()));
+    }
     match (kind.needs_like(), &a.like) {
         (true, None) => return Err(Fail::Usage("--like is required for .ANI and .3DC: the file it will replace (or, for a .3DC, the .ANI of its rig)".to_string())),
         (false, Some(_)) => return Err(Fail::Usage("--like is for .ANI and .3DC only".to_string())),
@@ -73,14 +105,19 @@ pub(super) fn run(ctx: &Ctx, a: &ImportArgs) -> Res {
     }
     // read, open, import
     let bytes = read_capped(&in_path, Some(&in_path), MAX_MODEL_BYTES)?;
-    let folder = in_path.parent().filter(|p| !p.as_os_str().is_empty()).map_or_else(|| PathBuf::from("."), Path::to_path_buf);
-    let g = Gltf::open(&bytes, &mut |name| read_beside(&folder, name)).map_err(|(_, m)| Error::format(&a.input, None, m))?;
-    // the buffer files read next to the input are inputs too: the output may not be one of them
-    let buffers: Vec<PathBuf> = g.array("buffers").iter().filter_map(|b| b.get("uri").and_then(|u| u.as_str())).filter_map(|u| buffer_name(u).ok()).map(|n| folder.join(n)).collect();
-    if !buffers.is_empty() {
-        let all: Vec<&Path> = protected.iter().copied().chain(buffers.iter().map(PathBuf::as_path)).collect();
-        check_output(ctx, &a.out, a.force, &all)?;
-    }
+    let gltf = if src == Source::Gltf {
+        let folder = in_path.parent().filter(|p| !p.as_os_str().is_empty()).map_or_else(|| PathBuf::from("."), Path::to_path_buf);
+        let g = Gltf::open(&bytes, &mut |name| read_beside(&folder, name)).map_err(|(_, m)| Error::format(&a.input, None, m))?;
+        // the buffer files read next to the input are inputs too: the output may not be one of them
+        let buffers: Vec<PathBuf> = g.array("buffers").iter().filter_map(|b| b.get("uri").and_then(|u| u.as_str())).filter_map(|u| buffer_name(u).ok()).map(|n| folder.join(n)).collect();
+        if !buffers.is_empty() {
+            let all: Vec<&Path> = protected.iter().copied().chain(buffers.iter().map(PathBuf::as_path)).collect();
+            check_output(ctx, &a.out, a.force, &all)?;
+        }
+        Some(g)
+    } else {
+        None
+    };
     let like = match &a.like {
         None => None,
         Some(l) => {
@@ -100,7 +137,15 @@ pub(super) fn run(ctx: &Ctx, a: &ImportArgs) -> Res {
         None => Vec::new(),
     };
     let opts = ImportOptions { map, reduce_influences: a.reduce_influences, reduce: a.reduce, keys_exact: a.keys.is_some(), cancel: None };
-    let (imp, report) = import_gltf(&g, kind, like.as_ref(), &opts).map_err(|e| Error::format(&a.input, None, reasons(&e)))?;
+    let refused = |e: ImportError| Error::format(&a.input, None, reasons(&e));
+    let (imp, report) = match (&gltf, &like) {
+        (Some(g), _) => import_gltf(g, kind, like.as_ref(), &opts).map_err(refused)?,
+        (None, Some(Like::Ani(l))) => {
+            let (ani, r) = import_bvh(&bytes, l, None).map_err(refused)?;
+            (Imported::Ani(ani), r)
+        }
+        (None, _) => import_obj(&bytes, kind, None).map_err(refused)?,
+    };
     // an .ANI is written only when it passes the rig check against its like file, as `anim import` does
     let mut rig = None;
     if let (Imported::Ani(candidate), Some(Like::Ani(target)), Some(l)) = (&imp, &like, &a.like) {
@@ -145,11 +190,11 @@ pub(super) fn run(ctx: &Ctx, a: &ImportArgs) -> Res {
     if let Err(e) = write_atomic_checked(&a.out, &bytes, &check) {
         return Err(if bug.get() { Fail::Bug(e.to_string()) } else { e.into() });
     }
-    print_result(ctx, a, kind, &report, bytes.len(), rig.as_ref());
+    print_result(ctx, a, kind, &report, bytes.len(), rig.as_ref(), src != Source::Gltf);
     Ok(0)
 }
 
-fn print_result(ctx: &Ctx, a: &ImportArgs, kind: ImportKind, r: &ImportReport, bytes: usize, rig: Option<&RigResult>) {
+fn print_result(ctx: &Ctx, a: &ImportArgs, kind: ImportKind, r: &ImportReport, bytes: usize, rig: Option<&RigResult>, obj_or_bvh: bool) {
     let label = match kind {
         ImportKind::Ani => ".ANI",
         ImportKind::C3dc => ".3DC",
@@ -189,5 +234,9 @@ fn print_result(ctx: &Ctx, a: &ImportArgs, kind: ImportKind, r: &ImportReport, b
     for n in &r.notes {
         note(ctx, &format!("note: {n}"));
     }
-    note(ctx, "note: glTF is a lossy view of the game file; an import builds a new file and runs the same checks as `shaiya anim import` of a JSON before it writes");
+    if obj_or_bvh {
+        note(ctx, &format!("note: {}", super::objbvh::LOSSY));
+    } else {
+        note(ctx, "note: glTF is a lossy view of the game file; an import builds a new file and runs the same checks as `shaiya anim import` of a JSON before it writes");
+    }
 }

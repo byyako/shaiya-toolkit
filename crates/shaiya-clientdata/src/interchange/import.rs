@@ -218,6 +218,11 @@ fn bone_of_name(name: &str, map: &HashMap<&str, usize>) -> Option<usize> {
     digits.parse().ok()
 }
 
+/// The bone number a node or joint name stands for (`Bone_NNN` of any width), with no explicit map.
+pub(crate) fn bone_number(name: &str) -> Option<usize> {
+    bone_of_name(name, &HashMap::new())
+}
+
 // ---- nodes --------------------------------------------------------------------------------------------------------------------------
 
 struct Node {
@@ -603,7 +608,7 @@ fn read_prim(g: &Gltf, mesh: usize, what: &str, col: &mut Col) -> Option<Prim> {
 
 /// Vertex normals of a mesh in game space (area-weighted face normals; the game's clockwise faces have the cross product of their
 /// first two edges as the outward normal), for a file that has none.
-fn computed_normals(pos: &[[f32; 3]], faces: &[[u16; 3]]) -> Vec<[f32; 3]> {
+pub(crate) fn computed_normals(pos: &[[f32; 3]], faces: &[[u16; 3]]) -> Vec<[f32; 3]> {
     let mut acc = vec![[0f64; 3]; pos.len()];
     for f in faces {
         let (a, b, c) = (pos[f[0] as usize], pos[f[1] as usize], pos[f[2] as usize]);

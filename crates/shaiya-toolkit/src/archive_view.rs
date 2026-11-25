@@ -1856,25 +1856,34 @@ impl ArchiveView {
         (self.selected_folder.is_none() && l.rows.get(i).is_some_and(|r| crate::export_json::is_model_path(&r.path))).then_some(i)
     }
 
-    /// The one selected file when it is an `.ANI`, `.3DC`, `.3DO` or `.3DE` (what "Export as glTF..." works on).
-    fn export_gltf_row(&self) -> Option<usize> {
+    /// The one selected file when it is one `format` is written from (what "Export as glTF...", "Export as OBJ..." and "Export as BVH..." work
+    /// on): `.ANI`, `.3DC`, `.3DO` or `.3DE` for glTF, `.3DO`, `.3DE` or `.3DC` for OBJ, `.ANI` for BVH.
+    fn export_row(&self, format: crate::export_interchange::Interchange) -> Option<usize> {
         let l = self.loaded.as_ref().filter(|l| l.archive.is_some())?;
         let mut it = self.selected.iter();
         let (&i, None) = (it.next()?, it.next()) else { return None };
-        (self.selected_folder.is_none() && l.rows.get(i).is_some_and(|r| crate::export_interchange::is_gltf_path(&r.path))).then_some(i)
+        (self.selected_folder.is_none() && l.rows.get(i).is_some_and(|r| format.takes(&r.path))).then_some(i)
     }
 
-    fn export_gltf_row_to(&mut self, row: usize, out: PathBuf, cx: &mut ToolkitCx<'_>) {
+    fn export_gltf_row(&self) -> Option<usize> {
+        self.export_row(crate::export_interchange::Interchange::Gltf)
+    }
+
+    fn export_row_to(&mut self, format: crate::export_interchange::Interchange, row: usize, out: PathBuf, cx: &mut ToolkitCx<'_>) {
         let Some(l) = &self.loaded else { return };
         let (Some(a), Some(r)) = (l.archive.clone(), l.rows.get(row)) else { return };
         let (entry, path) = (r.entry.clone(), r.path.clone());
         let dir = l.client_dir.clone();
-        // an animation goes out on the one mesh the Mesh box shows, else alone
-        let mesh = match (&self.preview.anim_mesh, is_ani_path(&path)) {
-            (MeshChoice::One(m), true) => Some(m.clone()),
+        // a glTF animation goes out on the one mesh the Mesh box shows, else alone (OBJ and BVH hold no skin)
+        let mesh = match (&self.preview.anim_mesh, is_ani_path(&path), format) {
+            (MeshChoice::One(m), true, crate::export_interchange::Interchange::Gltf) => Some(m.clone()),
             _ => None,
         };
-        self.gltf_exports.start(a, entry, path, mesh, out, dir.as_deref(), cx);
+        self.gltf_exports.start(format, a, entry, path, mesh, out, dir.as_deref(), cx);
+    }
+
+    fn export_gltf_row_to(&mut self, row: usize, out: PathBuf, cx: &mut ToolkitCx<'_>) {
+        self.export_row_to(crate::export_interchange::Interchange::Gltf, row, out, cx);
     }
 
     /// Whether the row menu of the file at `path` offers "Export as glTF..." (needs the data.saf and one of the four kinds).
@@ -1891,6 +1900,35 @@ impl ArchiveView {
         }
     }
 
+    /// Whether the row menu of the file at `path` offers "Export as OBJ..." (needs the data.saf and a `.3DO`, `.3DE` or `.3DC`).
+    #[doc(hidden)]
+    pub fn offers_export_obj(&self, path: &str) -> bool {
+        self.loaded.as_ref().is_some_and(|l| l.archive.is_some()) && crate::export_interchange::is_obj_path(path) && self.find_row(path).is_some()
+    }
+
+    /// Whether the row menu of the file at `path` offers "Export as BVH..." (needs the data.saf and an `.ANI`).
+    #[doc(hidden)]
+    pub fn offers_export_bvh(&self, path: &str) -> bool {
+        self.loaded.as_ref().is_some_and(|l| l.archive.is_some()) && crate::export_interchange::is_bvh_path(path) && self.find_row(path).is_some()
+    }
+
+    /// Test hook: "Export as OBJ..." for the selected file, writing to `path` (`.obj`) without the save dialog.
+    #[doc(hidden)]
+    pub fn export_obj_to(&mut self, path: &Path, cx: &mut ToolkitCx<'_>) {
+        if let Some(i) = self.export_row(crate::export_interchange::Interchange::Obj) {
+            self.export_row_to(crate::export_interchange::Interchange::Obj, i, path.to_path_buf(), cx);
+        }
+    }
+
+    /// Test hook: "Export as BVH..." for the selected file, writing to `path` (`.bvh`) without the save dialog.
+    #[doc(hidden)]
+    pub fn export_bvh_to(&mut self, path: &Path, cx: &mut ToolkitCx<'_>) {
+        if let Some(i) = self.export_row(crate::export_interchange::Interchange::Bvh) {
+            self.export_row_to(crate::export_interchange::Interchange::Bvh, i, path.to_path_buf(), cx);
+        }
+    }
+
+    /// Whether a glTF, OBJ or BVH export is running.
     #[doc(hidden)]
     pub fn is_exporting_gltf(&self) -> bool {
         self.gltf_exports.is_running()
@@ -2011,7 +2049,7 @@ impl ArchiveView {
         self.anim_edit.as_mut()
     }
 
-    /// Opens the "Import glTF..." window for the file in row `row` (an `.ANI` or `.3DC` row is the like file; a `.3DO` or `.3DE` row names
+    /// Opens the "Import model/animation..." window for the file in row `row` (an `.ANI` or `.3DC` row is the like file; a `.3DO` or `.3DE` row names
     /// the kind of the new file).
     fn open_import_gltf(&mut self, row: usize) {
         let Some(l) = &self.loaded else { return };
@@ -2019,7 +2057,7 @@ impl ArchiveView {
         self.gltf_import = crate::import_gltf::ImportGltf::new(r.path.clone(), a, l.client_dir.clone());
     }
 
-    /// Test hook: "Import glTF..." for the file at `path` with `settings` chosen; the worker starts at once.
+    /// Test hook: "Import model/animation..." for the file at `path` with `settings` chosen; the worker starts at once.
     #[doc(hidden)]
     pub fn import_gltf_with(&mut self, path: &str, settings: crate::import_gltf::Settings, cx: &mut ToolkitCx<'_>) {
         let Some(i) = self.find_row(path) else { return };
@@ -2030,7 +2068,7 @@ impl ArchiveView {
         }
     }
 
-    /// The window of "Import glTF...", when open.
+    /// The window of "Import model/animation...", when open.
     #[doc(hidden)]
     pub fn gltf_import(&self) -> Option<&crate::import_gltf::ImportGltf> {
         self.gltf_import.as_ref()
@@ -2041,7 +2079,7 @@ impl ArchiveView {
         self.gltf_import.as_mut()
     }
 
-    /// Whether the row menu of the file at `path` offers "Import glTF..." (needs the data.saf and one of the four kinds).
+    /// Whether the row menu of the file at `path` offers "Import model/animation..." (needs the data.saf and one of the four kinds).
     #[doc(hidden)]
     pub fn offers_import_gltf(&self, path: &str) -> bool {
         self.offers_export_gltf(path)
@@ -2319,6 +2357,8 @@ enum Act {
     Extract { all: bool, flat: bool },
     ExportJson(usize),
     ExportGltf(usize),
+    ExportObj(usize),
+    ExportBvh(usize),
     ImportGltf(usize),
     ExportFolderJson(usize),
     CompareAni(usize),
@@ -2377,7 +2417,9 @@ impl ArchiveView {
             c("archive-extract-all", "Extract all shown files...", Some(K::new(M::COMMAND | M::SHIFT, Key::E)), open),
             c("archive-export-json", "Export as JSON...", None, self.export_json_row().is_some()),
             c("archive-export-gltf", "Export as glTF...", None, self.export_gltf_row().is_some()),
-            c("archive-import-gltf", "Import glTF...", None, self.export_gltf_row().is_some()),
+            c("archive-export-obj", "Export as OBJ...", None, self.export_row(crate::export_interchange::Interchange::Obj).is_some()),
+            c("archive-export-bvh", "Export as BVH...", None, self.export_row(crate::export_interchange::Interchange::Bvh).is_some()),
+            c("archive-import-gltf", "Import model/animation...", None, self.export_gltf_row().is_some()),
             c("archive-add", "Add files to the archive...", Some(K::new(M::NONE, Key::Insert)), edit),
             c("archive-remove", "Queue removal of selected files", Some(K::new(M::NONE, Key::Delete)), edit && !self.selected.is_empty()),
             c("archive-apply", "Apply pending changes to the client...", Some(K::new(M::COMMAND, Key::Enter)), edit && !busy && writes && !self.pending.is_empty()),
@@ -2406,6 +2448,8 @@ impl ArchiveView {
             "archive-extract-all" => Some(Act::Extract { all: true, flat: false }),
             "archive-export-json" => self.export_json_row().map(Act::ExportJson),
             "archive-export-gltf" => self.export_gltf_row().map(Act::ExportGltf),
+            "archive-export-obj" => self.export_row(crate::export_interchange::Interchange::Obj).map(Act::ExportObj),
+            "archive-export-bvh" => self.export_row(crate::export_interchange::Interchange::Bvh).map(Act::ExportBvh),
             "archive-import-gltf" => self.export_gltf_row().map(Act::ImportGltf),
             "archive-add" => Some(Act::AddFiles),
             "archive-remove" => Some(Act::QueueRemove),
@@ -2724,7 +2768,9 @@ impl ArchiveView {
                                 ("Decrypt to file...", MenuChoice::Decrypt),
                                 ("Export as JSON...", MenuChoice::ExportJson),
                                 ("Export as glTF...", MenuChoice::ExportGltf),
-                                ("Import glTF...", MenuChoice::ImportGltf),
+                                ("Export as OBJ...", MenuChoice::ExportObj),
+                                ("Export as BVH...", MenuChoice::ExportBvh),
+                                ("Import model/animation...", MenuChoice::ImportGltf),
                                 ("Compare with...", MenuChoice::CompareWith),
                                 ("Edit animation...", MenuChoice::EditAnimation),
                             ] {
@@ -2732,6 +2778,12 @@ impl ArchiveView {
                                     continue;
                                 }
                                 if matches!(choice, MenuChoice::ExportGltf) && !matches!(v, ViewRow::File(i) if l.archive.is_some() && crate::export_interchange::is_gltf_path(&l.rows[i].path)) {
+                                    continue;
+                                }
+                                if matches!(choice, MenuChoice::ExportObj) && !matches!(v, ViewRow::File(i) if l.archive.is_some() && crate::export_interchange::is_obj_path(&l.rows[i].path)) {
+                                    continue;
+                                }
+                                if matches!(choice, MenuChoice::ExportBvh) && !matches!(v, ViewRow::File(i) if l.archive.is_some() && crate::export_interchange::is_bvh_path(&l.rows[i].path)) {
                                     continue;
                                 }
                                 if matches!(choice, MenuChoice::ImportGltf) && !matches!(v, ViewRow::File(i) if l.archive.is_some() && crate::export_interchange::is_gltf_path(&l.rows[i].path)) {
@@ -2744,7 +2796,7 @@ impl ArchiveView {
                                     continue;
                                 }
                                 let mut b = ui.button(label);
-                                if matches!(choice, MenuChoice::ExportGltf | MenuChoice::ImportGltf) {
+                                if matches!(choice, MenuChoice::ExportGltf | MenuChoice::ExportObj | MenuChoice::ExportBvh | MenuChoice::ImportGltf) {
                                     b = b.on_hover_text(crate::export_interchange::LOSSY_SENTENCE);
                                 }
                                 if b.clicked() {
@@ -2816,6 +2868,16 @@ impl ArchiveView {
                 MenuChoice::ExportGltf => {
                     if let ViewRow::File(i) = self.view[vi] {
                         acts.push(Act::ExportGltf(i));
+                    }
+                }
+                MenuChoice::ExportObj => {
+                    if let ViewRow::File(i) = self.view[vi] {
+                        acts.push(Act::ExportObj(i));
+                    }
+                }
+                MenuChoice::ExportBvh => {
+                    if let ViewRow::File(i) = self.view[vi] {
+                        acts.push(Act::ExportBvh(i));
                     }
                 }
                 MenuChoice::ImportGltf => {
@@ -3476,6 +3538,22 @@ impl ArchiveView {
                         self.export_gltf_row_to(i, out, cx);
                     }
                 }
+                Act::ExportObj(i) => {
+                    let name = self.loaded.as_ref().and_then(|l| l.rows.get(i)).map(|r| r.name().to_string());
+                    cx.shell.status(crate::export_interchange::LOSSY_SENTENCE);
+                    let fmt = crate::export_interchange::Interchange::Obj;
+                    if let Some(out) = name.and_then(|n| cx.shell.save_file("export-obj", &crate::export_interchange::default_name_for(fmt, &n), &[("Wavefront OBJ (a .mtl of texture names beside it when the mesh names a texture)", &["obj"])])) {
+                        self.export_row_to(fmt, i, out, cx);
+                    }
+                }
+                Act::ExportBvh(i) => {
+                    let name = self.loaded.as_ref().and_then(|l| l.rows.get(i)).map(|r| r.name().to_string());
+                    cx.shell.status(crate::export_interchange::LOSSY_SENTENCE);
+                    let fmt = crate::export_interchange::Interchange::Bvh;
+                    if let Some(out) = name.and_then(|n| cx.shell.save_file("export-bvh", &crate::export_interchange::default_name_for(fmt, &n), &[("BVH (an animation-only reference)", &["bvh"])])) {
+                        self.export_row_to(fmt, i, out, cx);
+                    }
+                }
                 Act::AddFiles => {
                     let files = cx.shell.pick_files("add", &[("All files", &["*"])]);
                     if !files.is_empty() {
@@ -3589,6 +3667,8 @@ enum MenuChoice {
     Decrypt,
     ExportJson,
     ExportGltf,
+    ExportObj,
+    ExportBvh,
     ImportGltf,
     ExportFolderJson,
     CompareWith,

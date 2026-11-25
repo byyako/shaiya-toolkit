@@ -55,7 +55,7 @@ fn input_of(name: &str, bytes: &[u8], anims: Vec<Ani>) -> Result<GltfInput> {
 }
 
 /// A refusal of the exporter is a problem with the input (exit 3); a failed self-check is a bug of ours (exit 5).
-fn export_failure(name: &str, e: InterchangeError) -> Fail {
+pub(super) fn export_failure(name: &str, e: InterchangeError) -> Fail {
     if e.is_bug() {
         Fail::Bug(e.to_string())
     } else {
@@ -63,7 +63,7 @@ fn export_failure(name: &str, e: InterchangeError) -> Fail {
     }
 }
 
-fn stem_of(name: &str) -> String {
+pub(super) fn stem_of(name: &str) -> String {
     let file = name.rsplit(['/', '\\']).next().unwrap_or(name);
     file.rsplit_once('.').map_or(file, |(s, _)| s).to_string()
 }

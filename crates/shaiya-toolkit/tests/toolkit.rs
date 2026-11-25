@@ -4013,7 +4013,7 @@ fn importing_a_gltf_animation_makes_a_new_ani_that_passes_and_saves_it() {
     assert_eq!(kind, shaiya_clientdata::interchange::import::ImportKind::Ani);
     assert!(summary.starts_with(".ANI: 3 bones") && summary.contains("passes the rig check"), "{summary}");
     let t = w.h.text();
-    assert!(t.contains("Import glTF") && t.contains("a lossy view of the game file") && t.contains("Save as new file..."), "{t}");
+    assert!(t.contains("Import model/animation") && t.contains("a lossy view of the game file") && t.contains("Save as new file..."), "{t}");
     // save it as a new file
     let out = d.path().join("new.ani");
     with_cx(&mut w.h, |app, cx| app.archive.gltf_import_mut().unwrap().save_new(out.clone(), cx));
@@ -4145,7 +4145,7 @@ fn the_import_command_is_offered_for_the_four_kinds_only() {
         with_cx(&mut w.h, |app, cx| app.archive.select_path(p, cx));
         assert!(preview_ready(&mut w.h));
         let cmd = w.h.app.app.archive.commands().into_iter().find(|c| c.id == "archive-import-gltf").expect("the command is listed");
-        assert!(cmd.enabled && cmd.label == "Import glTF...", "{p}");
+        assert!(cmd.enabled && cmd.label == "Import model/animation...", "{p}");
     }
     let client = client_of("t12-w13-other", &[("tex/a.dds", b"DDS not really"), ("Monster/VANI/a.vani", b"not a vani")]);
     let mut w = world("t12-w13-other");
@@ -4198,4 +4198,268 @@ fn an_ani_that_does_not_pass_the_rig_check_is_shown_and_cannot_be_saved() {
     assert!(w.h.text().contains("does not pass the rig check"), "{}", w.h.text());
     with_cx(&mut w.h, |app, cx| app.archive.gltf_import_mut().unwrap().save_new(d.path().join("n.ani"), cx));
     assert!(!d.path().join("n.ani").exists());
+}
+
+// ------------------------------------------------------------------------------------------------ T12 W14: OBJ and BVH
+
+const CRATE_PATH: &str = "Item/3DO/crate.3DO";
+const LOSSY: &str = "glTF, OBJ and BVH are a lossy view of the game file: the game file's own round trip (JSON) stays byte for byte; an import builds a new file and runs the same checks as `shaiya anim import` before it writes";
+
+/// [`import_world`] with a `.3DO` that names a texture (`crate.3DO`).
+fn obj_world(tag: &str) -> World {
+    let mut w = world(tag);
+    SahBuilder::new(0)
+        .file(b"Character/Human/ANI/huwm_117_test.ANI", &shaiya_testkit::anim::arm_ani(60))
+        .file(b"Character/Human/3DC/huwm_torso001.3DC", &shaiya_testkit::anim::arm_mesh_3dc())
+        .file(b"Item/3DO/box.3DO", &shaiya_testkit::anim::box_3do())
+        .file(b"Item/3DO/crate.3DO", &shaiya_testkit::anim::animated_3do(1, 20))
+        .file(b"Character/Human/ANI/huwm_odd_test.ANI", &odd_ani())
+        .write_to(w.client.path());
+    w.h.frames(2);
+    let dir = w.client_dir();
+    with_cx(&mut w.h, |app, cx| app.add_client("US test", &dir, true, cx)).unwrap();
+    assert!(w.h.wait_until(WAIT, |h| h.app.app.archive.is_open()), "the archive opens");
+    w.h.frames(2);
+    w
+}
+
+fn names_in(dir: &std::path::Path) -> Vec<String> {
+    let mut v: Vec<String> = std::fs::read_dir(dir).unwrap().flatten().map(|e| e.file_name().to_string_lossy().into_owned()).collect();
+    v.sort();
+    v
+}
+
+#[test]
+fn exporting_as_bvh_and_obj_writes_the_files_and_says_the_lossy_sentence() {
+    let mut w = obj_world("t12-w14-export");
+    let d = TempDir::new("t12-w14-export-out");
+    // an .ANI as BVH
+    with_cx(&mut w.h, |app, cx| app.archive.select_path(ANI_PATH, cx));
+    assert!(preview_ready(&mut w.h));
+    let bvh = d.path().join("walk.bvh");
+    with_cx(&mut w.h, |app, cx| app.archive.export_bvh_to(&bvh, cx));
+    assert!(gltf_done(&mut w), "the export ends");
+    w.h.frames(2);
+    let t = std::fs::read_to_string(&bvh).expect("the .bvh is written");
+    assert!(t.starts_with("HIERARCHY\nROOT Bone_000\n") && t.contains("Frames: 61\nFrame Time: 0.0333333\n"), "{t}");
+    assert!(!t.contains(&d.path().display().to_string()), "no folder path in the file");
+    let status = w.h.app.app.archive.status_line.clone();
+    assert!(status.starts_with("Exported huwm_117_test.ANI to ") && status.contains(LOSSY), "{status}");
+    assert!(w.h.app.shell.banner_details().is_none(), "{:?}", w.h.app.shell.banner_details());
+    // a .3DO that names a texture as OBJ: the .obj and a .mtl of names
+    with_cx(&mut w.h, |app, cx| app.archive.select_path(CRATE_PATH, cx));
+    assert!(preview_ready(&mut w.h));
+    let obj = d.path().join("crate.obj");
+    with_cx(&mut w.h, |app, cx| app.archive.export_obj_to(&obj, cx));
+    assert!(gltf_done(&mut w));
+    w.h.frames(2);
+    let t = std::fs::read_to_string(&obj).expect("the .obj is written");
+    assert!(t.contains("mtllib crate.mtl") && t.contains("usemtl box.tga") && t.contains("# source crate.3DO"), "{t}");
+    assert!(std::fs::read_to_string(d.path().join("crate.mtl")).unwrap().contains("newmtl box.tga"));
+    assert!(w.h.app.app.archive.status_line.contains(LOSSY));
+    // a .3DC at rest (its texture name makes a .mtl too), and a .3DO with no texture name: one file
+    for (path, name, files) in [(TORSO_PATH, "torso.obj", 5), (BOX_PATH, "box.obj", 6)] {
+        with_cx(&mut w.h, |app, cx| app.archive.select_path(path, cx));
+        assert!(preview_ready(&mut w.h));
+        with_cx(&mut w.h, |app, cx| app.archive.export_obj_to(&d.path().join(name), cx));
+        assert!(gltf_done(&mut w));
+        w.h.frames(2);
+        assert!(d.path().join(name).exists());
+        assert_eq!(names_in(d.path()).len(), files, "{:?}", names_in(d.path()));
+    }
+    assert!(std::fs::read_to_string(d.path().join("torso.obj")).unwrap().lines().filter(|l| l.starts_with("v ")).count() == 16);
+    assert!(w.h.app.shell.banner_details().is_none(), "{:?}", w.h.app.shell.banner_details());
+    assert!(!names_in(d.path()).iter().any(|n| n.contains(".tmp") || n.starts_with('.')), "no temporary file stays: {:?}", names_in(d.path()));
+}
+
+#[test]
+fn the_obj_and_bvh_commands_are_offered_for_their_kinds_only() {
+    let mut w = obj_world("t12-w14-offer");
+    let enabled = |w: &World, id: &str| w.h.app.app.archive.commands().into_iter().find(|c| c.id == id).unwrap_or_else(|| panic!("{id} is listed")).enabled;
+    let label = |w: &World, id: &str| w.h.app.app.archive.commands().into_iter().find(|c| c.id == id).unwrap().label;
+    assert_eq!((label(&w, "archive-export-obj"), label(&w, "archive-export-bvh")), ("Export as OBJ...".to_string(), "Export as BVH...".to_string()));
+    assert!(!enabled(&w, "archive-export-obj") && !enabled(&w, "archive-export-bvh"), "nothing is selected");
+    for (p, obj, bvh) in [(ANI_PATH, false, true), (TORSO_PATH, true, false), (BOX_PATH, true, false), (CRATE_PATH, true, false)] {
+        with_cx(&mut w.h, |app, cx| app.archive.select_path(p, cx));
+        assert!(preview_ready(&mut w.h));
+        assert_eq!((enabled(&w, "archive-export-obj"), enabled(&w, "archive-export-bvh")), (obj, bvh), "{p}");
+        assert_eq!((w.h.app.app.archive.offers_export_obj(p), w.h.app.app.archive.offers_export_bvh(p)), (obj, bvh), "{p}");
+    }
+    let client = client_of("t12-w14-other", &[("tex/a.dds", b"DDS not really"), ("Monster/VANI/a.vani", b"not a vani")]);
+    let mut w = world("t12-w14-other");
+    let dir = client.path().to_path_buf();
+    add_saved(&mut w, "Other", &dir);
+    open_saved(&mut w, "Other", &dir);
+    for p in ["tex/a.dds", "Monster/VANI/a.vani"] {
+        with_cx(&mut w.h, |app, cx| app.archive.select_path(p, cx));
+        assert!(preview_ready(&mut w.h));
+        assert!(!enabled(&w, "archive-export-obj") && !enabled(&w, "archive-export-bvh"), "{p}");
+        assert!(!w.h.app.app.archive.offers_export_obj(p) && !w.h.app.app.archive.offers_export_bvh(p));
+    }
+}
+
+#[test]
+fn exporting_as_obj_or_bvh_into_the_client_folder_or_to_a_wrong_name_is_refused() {
+    let mut w = obj_world("t12-w14-guard");
+    let before = tree(w.client.path());
+    with_cx(&mut w.h, |app, cx| app.archive.select_path(ANI_PATH, cx));
+    assert!(preview_ready(&mut w.h));
+    let inside = w.client_dir().join("x.bvh");
+    with_cx(&mut w.h, |app, cx| app.archive.export_bvh_to(&inside, cx));
+    assert!(gltf_done(&mut w));
+    w.h.frames(2);
+    assert!(!inside.exists());
+    assert_eq!(tree(w.client.path()), before, "the client folder is as it was");
+    assert!(w.h.app.shell.banner_details().expect("the error is shown").contains("Choose a folder outside the client:"));
+    let d = TempDir::new("t12-w14-guard-out");
+    // a name of another format
+    for name in ["x.obj", "x.glb", "x.json"] {
+        with_cx(&mut w.h, |app, cx| app.archive.export_bvh_to(&d.path().join(name), cx));
+        assert!(!w.h.app.app.archive.is_exporting_gltf() && !d.path().join(name).exists(), "{name}");
+    }
+    assert!(w.h.app.shell.banner_details().is_some_and(|b| b.contains("must end in .bvh")), "{:?}", w.h.app.shell.banner_details());
+    with_cx(&mut w.h, |app, cx| app.archive.select_path(CRATE_PATH, cx));
+    assert!(preview_ready(&mut w.h));
+    with_cx(&mut w.h, |app, cx| app.archive.export_obj_to(&d.path().join("x.gltf"), cx));
+    assert!(!w.h.app.app.archive.is_exporting_gltf() && !d.path().join("x.gltf").exists());
+    // a .mtl that is not from an earlier export of this name is not replaced, and no .obj is written either
+    std::fs::write(d.path().join("y.mtl"), b"keep me").unwrap();
+    with_cx(&mut w.h, |app, cx| app.archive.export_obj_to(&d.path().join("y.obj"), cx));
+    assert!(gltf_done(&mut w));
+    w.h.frames(2);
+    assert!(!d.path().join("y.obj").exists());
+    assert_eq!(std::fs::read(d.path().join("y.mtl")).unwrap(), b"keep me");
+    assert!(w.h.app.shell.banner_details().is_some_and(|b| b.contains("y.mtl")), "{:?}", w.h.app.shell.banner_details());
+}
+
+/// Exports the archive file `path` with `export` (a Toolkit hook) to `out`.
+fn export_text_for_import(w: &mut World, path: &str, out: &std::path::Path, bvh: bool) {
+    with_cx(&mut w.h, |app, cx| app.archive.select_path(path, cx));
+    assert!(preview_ready(&mut w.h));
+    with_cx(&mut w.h, |app, cx| if bvh { app.archive.export_bvh_to(out, cx) } else { app.archive.export_obj_to(out, cx) });
+    assert!(gltf_done(w), "the export ends");
+    assert!(out.exists(), "{}", out.display());
+}
+
+#[test]
+fn importing_a_bvh_makes_a_new_ani_that_passes_and_saves_it() {
+    let mut w = obj_world("t12-w14-bvh");
+    let d = TempDir::new("t12-w14-bvh-files");
+    let bvh = d.path().join("a.bvh");
+    export_text_for_import(&mut w, ANI_PATH, &bvh, true);
+    let before = tree(w.client.path());
+    with_cx(&mut w.h, |app, cx| app.archive.import_gltf_with(ANI_PATH, import_settings(&bvh), cx));
+    assert!(import_done(&mut w), "the import ends");
+    w.h.frames(3);
+    let summary = {
+        let c = w.h.app.app.archive.gltf_import().expect("the window is open");
+        let m = c.made().unwrap_or_else(|| panic!("nothing made: {:?}", c.result.as_ref().map(|r| r.as_ref().err())));
+        assert_eq!(c.kind(), shaiya_clientdata::interchange::import::ImportKind::Ani);
+        m.summary()
+    };
+    assert!(summary.starts_with(".ANI: 3 bones") && summary.contains("passes the rig check"), "{summary}");
+    let t = w.h.text();
+    assert!(t.contains("Import model/animation") && t.contains("a lossy view of the game file") && t.contains("Save as new file..."), "{t}");
+    let out = d.path().join("new.ani");
+    with_cx(&mut w.h, |app, cx| app.archive.gltf_import_mut().unwrap().save_new(out.clone(), cx));
+    assert!(import_saved(&mut w));
+    w.h.frames(2);
+    let new = shaiya_clientdata::Ani::parse(&std::fs::read(&out).expect("the new file is written"), "new.ani").unwrap();
+    let like = shaiya_clientdata::Ani::parse(&shaiya_testkit::anim::arm_ani(60), "arm.ani").unwrap();
+    assert!(shaiya_clientdata::anim::passes(&new, &like), "the saved animation passes against its like file");
+    assert!(w.h.app.shell.banner_details().is_none(), "{:?}", w.h.app.shell.banner_details());
+    assert_eq!(tree(w.client.path()), before, "nothing was written to the client");
+    assert!(!names_in(d.path()).iter().any(|n| n.contains(".tmp") || n.starts_with('.')), "no temporary file stays: {:?}", names_in(d.path()));
+    // a BVH that is not in the layout the export writes shows its reasons and cannot be saved
+    let text = std::fs::read_to_string(&bvh).unwrap().replacen("CHANNELS 3 Zrotation Xrotation Yrotation", "CHANNELS 3 Xrotation Yrotation Zrotation", 1);
+    let bad = d.path().join("bad.bvh");
+    std::fs::write(&bad, text).unwrap();
+    with_cx(&mut w.h, |app, cx| app.archive.import_gltf_with(ANI_PATH, import_settings(&bad), cx));
+    assert!(import_done(&mut w));
+    w.h.frames(3);
+    {
+        let c = w.h.app.app.archive.gltf_import().unwrap();
+        assert!(c.made().is_none());
+        let Some(Err(r)) = &c.result else { panic!("{:?}", c.result.as_ref().map(|r| r.as_ref().ok().map(|m| m.summary()))) };
+        assert!(!r.does_not_pass && r.lines.iter().any(|l| l.contains("Zrotation Xrotation Yrotation")), "{:?}", r.lines);
+    }
+    with_cx(&mut w.h, |app, cx| app.archive.gltf_import_mut().unwrap().save_new(d.path().join("x.ani"), cx));
+    assert!(!d.path().join("x.ani").exists());
+    // an .ANI that does not pass the rig check is shown as such (the odd file's parent comes after its child)
+    export_text_for_import(&mut w, ODD_PATH, &d.path().join("odd.bvh"), true);
+    with_cx(&mut w.h, |app, cx| app.archive.import_gltf_with(ODD_PATH, import_settings(&d.path().join("odd.bvh")), cx));
+    assert!(import_done(&mut w));
+    w.h.frames(3);
+    let c = w.h.app.app.archive.gltf_import().unwrap();
+    let Some(Err(r)) = &c.result else { panic!("not refused") };
+    assert!(r.does_not_pass && r.lines.iter().any(|l| l.contains("parent-order")), "{:?}", r.lines);
+    assert!(c.made().is_none());
+}
+
+#[test]
+fn importing_an_obj_makes_a_new_3do_or_3de_and_refuses_the_wrong_rows_and_settings() {
+    let mut w = obj_world("t12-w14-obj");
+    let d = TempDir::new("t12-w14-obj-files");
+    let obj = d.path().join("b.obj");
+    export_text_for_import(&mut w, BOX_PATH, &obj, false);
+    let before = tree(w.client.path());
+    // a .3DO row: the box comes back byte for byte
+    with_cx(&mut w.h, |app, cx| app.archive.import_gltf_with(BOX_PATH, import_settings(&obj), cx));
+    assert!(import_done(&mut w));
+    w.h.frames(3);
+    {
+        let c = w.h.app.app.archive.gltf_import().unwrap();
+        let m = c.made().unwrap_or_else(|| panic!("nothing made: {:?}", c.result.as_ref().map(|r| r.as_ref().err())));
+        assert!(m.summary().starts_with(".3DO: 1 meshes, 8 vertices"), "{}", m.summary());
+    }
+    let out = d.path().join("b.3DO");
+    with_cx(&mut w.h, |app, cx| app.archive.gltf_import_mut().unwrap().save_new(out.clone(), cx));
+    assert!(import_saved(&mut w));
+    assert_eq!(std::fs::read(&out).unwrap(), shaiya_testkit::anim::box_3do());
+    // the same OBJ read for a .3DE row (no normals are stored) and a name that does not fit the kind
+    with_cx(&mut w.h, |app, cx| app.archive.import_gltf_with(BOX_PATH, import_settings(&obj), cx));
+    assert!(import_done(&mut w));
+    with_cx(&mut w.h, |app, cx| app.archive.gltf_import_mut().unwrap().save_new(d.path().join("b.3DE"), cx));
+    assert!(!d.path().join("b.3DE").exists() && w.h.app.shell.banner_details().is_some_and(|b| b.contains("must end in .3DO")), "{:?}", w.h.app.shell.banner_details());
+    // a mesh with a texture name: the name comes back
+    let cobj = d.path().join("c.obj");
+    export_text_for_import(&mut w, CRATE_PATH, &cobj, false);
+    with_cx(&mut w.h, |app, cx| app.archive.import_gltf_with(CRATE_PATH, import_settings(&cobj), cx));
+    assert!(import_done(&mut w));
+    let m = shaiya_clientdata::interchange::obj::import_obj(&std::fs::read(&cobj).unwrap(), shaiya_clientdata::interchange::import::ImportKind::Mesh3do, None).unwrap();
+    let shaiya_clientdata::interchange::import::Imported::Mesh3do(m) = m.0 else { panic!() };
+    assert_eq!(m.texture, b"box.tga\0");
+    assert!(w.h.app.app.archive.gltf_import().unwrap().made().is_some());
+    // the rows an OBJ cannot make, and the settings that are for glTF only
+    for row in [ANI_PATH, TORSO_PATH] {
+        with_cx(&mut w.h, |app, cx| app.archive.import_gltf_with(row, import_settings(&obj), cx));
+        assert!(import_done(&mut w));
+        let c = w.h.app.app.archive.gltf_import().unwrap();
+        assert!(matches!(&c.result, Some(Err(r)) if r.lines[0].contains("An OBJ is imported as a .3DO or .3DE")), "{row}: {:?}", c.result.as_ref().map(|r| r.as_ref().err()));
+        assert!(c.made().is_none());
+    }
+    let bvh = d.path().join("a.bvh");
+    export_text_for_import(&mut w, ANI_PATH, &bvh, true);
+    with_cx(&mut w.h, |app, cx| app.archive.import_gltf_with(TORSO_PATH, import_settings(&bvh), cx));
+    assert!(import_done(&mut w));
+    assert!(matches!(&w.h.app.app.archive.gltf_import().unwrap().result, Some(Err(r)) if r.lines[0].contains("A BVH is imported as an .ANI")));
+    for s in [
+        shaiya_toolkit::import_gltf::Settings { reduce: true, ..import_settings(&bvh) },
+        shaiya_toolkit::import_gltf::Settings { keys_exact: true, ..import_settings(&bvh) },
+        shaiya_toolkit::import_gltf::Settings { map: Some(d.path().join("m.txt")), ..import_settings(&bvh) },
+    ] {
+        with_cx(&mut w.h, |app, cx| app.archive.import_gltf_with(ANI_PATH, s, cx));
+        assert!(import_done(&mut w));
+        let c = w.h.app.app.archive.gltf_import().unwrap();
+        assert!(matches!(&c.result, Some(Err(r)) if r.lines[0].contains("for a glTF file only")), "{:?}", c.result.as_ref().map(|r| r.as_ref().err()));
+    }
+    // a file that is not an OBJ: the reasons are shown, nothing can be saved
+    let junk = d.path().join("junk.obj");
+    std::fs::write(&junk, b"hello\nworld\n").unwrap();
+    with_cx(&mut w.h, |app, cx| app.archive.import_gltf_with(BOX_PATH, import_settings(&junk), cx));
+    assert!(import_done(&mut w));
+    w.h.frames(3);
+    assert!(matches!(&w.h.app.app.archive.gltf_import().unwrap().result, Some(Err(r)) if r.lines.iter().any(|l| l.contains("no faces"))));
+    assert!(w.h.text().contains("Not imported") && w.h.app.app.archive.gltf_import().unwrap().made().is_none());
+    assert_eq!(tree(w.client.path()), before, "nothing was written to the client");
 }
