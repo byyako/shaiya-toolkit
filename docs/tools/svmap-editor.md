@@ -714,7 +714,7 @@ Edited client files go to a staging folder, for example `<folder>/data/world/2.w
 
 ![The status bar of a map whose client file was staged: the staged chip at the right](../assets/screenshots/svmap-editor/c1-staged.png)
 
-When the editor reads a client file, it looks in the staging folder first. A map that reads its `.wld` from there shows **staged** in the status bar. Clear the folder in Preferences to bring back the client's own copy. The game does not read the staging folder. The game reads `data.sah` first, so a loose file never replaces a file that the archive holds.
+When the editor reads a client file, it looks in the staging folder first. A map that reads its `.wld` from there shows **staged** in the status bar. Clear the folder in Preferences to bring back the client's own copy. The game does not read the staging folder. A loose file is expected never to replace a file that the archive holds (inferred, not checked in the game).
 
 ### Stage client map
 
@@ -1003,7 +1003,7 @@ Uninstall refuses when `data.sah` changed after the last install, or when the ol
 
 ### Copy loose
 
-**Copy loose** is for new maps. It copies a staged file to `data/` in the test client only when the archive has no entry with that path. The game reads the archive first (checked for US EP4.5 patch 108), so a loose copy of an existing path would be ignored. The window refuses those files and says why. It never replaces a file that is already there.
+**Copy loose** is for new maps. It copies a staged file to `data/` in the test client only when the archive has no entry with that path. The game is expected to read the archive first (inferred, not checked in the game), so a loose copy of an existing path would probably be ignored. The window refuses those files and says why. It never replaces a file that is already there.
 
 ### Bring your own client
 

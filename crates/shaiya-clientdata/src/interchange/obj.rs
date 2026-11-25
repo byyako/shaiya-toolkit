@@ -425,7 +425,7 @@ pub fn import_obj(bytes: &[u8], kind: ImportKind, cancel: Option<&shaiya_core::j
     if faces.is_empty() {
         return Err(ImportError::one(RefusalKind::Empty, "OBJ", "the file has no faces"));
     }
-    // one material for the whole mesh: a game mesh has one texture name
+    // one material for the whole mesh: the .3DO and .3DE files read here hold one texture name (read from file contents, not tried in the game)
     let mut used: Vec<Option<u32>> = Vec::new();
     for f in &faces {
         if !used.contains(&f.material) {
@@ -503,7 +503,7 @@ pub fn import_obj(bytes: &[u8], kind: ImportKind, cancel: Option<&shaiya_core::j
         let from_name = |n: &str| -> Result<Vec<u8>, ImportError> {
             let (b, _, bad) = encoding_rs::EUC_KR.encode(n);
             if bad {
-                return Err(ImportError::one(RefusalKind::Format, "material", format!("the material name {n:?} has characters the game's text encoding (cp949) cannot hold")));
+                return Err(ImportError::one(RefusalKind::Format, "material", format!("the material name {n:?} has characters that cp949 cannot hold (the code page the toolkit assumes for names, validated on file contents of us-108)")));
             }
             if b.len() + 1 > MAX_TEXTURE {
                 return Err(ImportError::one(RefusalKind::Limit, "material", format!("the texture name is {} bytes (at most {MAX_TEXTURE})", b.len() + 1)));

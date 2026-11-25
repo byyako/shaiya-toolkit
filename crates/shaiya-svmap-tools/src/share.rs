@@ -712,7 +712,7 @@ fn uninstall_inner(target: &Path, g: &Guard, recovered: &mut Vec<String>) -> Res
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum LooseVerdict {
     Copy,
-    /// The archive has this path: the game reads the archive first and ignores a loose copy.
+    /// The archive has this path: a loose copy is expected to be ignored (inferred, not checked in the game), so it is refused.
     InArchive,
     /// The same bytes are already there.
     AlreadyThere,
@@ -1133,7 +1133,7 @@ mod tests {
         let before = sums(&test);
         let plan = loose_plan(&out, &test, &g).unwrap();
         let by = |rel: &str| plan.iter().find(|(s, _)| s.rel == rel).unwrap().1.clone();
-        assert_eq!(by("world/2.wld"), LooseVerdict::InArchive, "the archive wins, so a loose copy would be ignored");
+        assert_eq!(by("world/2.wld"), LooseVerdict::InArchive, "the archive has the path, so the copy is refused (expected to be ignored, inferred)");
         assert_eq!(by("world/10.wld"), LooseVerdict::Copy);
         assert_eq!(by("world/10.txt"), LooseVerdict::Exists);
         copy_loose(&out, &test, &g).unwrap();

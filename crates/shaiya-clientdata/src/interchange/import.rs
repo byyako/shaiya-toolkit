@@ -443,7 +443,7 @@ fn texture_of(g: &Gltf, material: Option<usize>, what: &str, col: &mut Col) -> V
     let Some(name) = m.get("name").and_then(Value::as_str).filter(|n| !n.is_empty()) else { return Vec::new() };
     let (bytes, _, bad) = encoding_rs::EUC_KR.encode(name);
     if bad {
-        col.add(RefusalKind::Format, what, format!("the material name {name:?} has characters the game's text encoding (cp949) cannot hold"));
+        col.add(RefusalKind::Format, what, format!("the material name {name:?} has characters that cp949 cannot hold (the code page the toolkit assumes for names, validated on file contents of us-108)"));
         return Vec::new();
     }
     if bytes.len() + 1 > MAX_TEXTURE {
@@ -478,7 +478,7 @@ fn read_prim(g: &Gltf, mesh: usize, what: &str, col: &mut Col) -> Option<Prim> {
     let m = &g.array("meshes")[mesh];
     let prims = m.get("primitives").and_then(Value::as_array).map_or(&[][..], Vec::as_slice);
     if prims.len() != 1 {
-        col.add(RefusalKind::Unsupported, what, format!("mesh {mesh} has {} primitives (a game mesh has one texture and one primitive)", prims.len()));
+        col.add(RefusalKind::Unsupported, what, format!("mesh {mesh} has {} primitives (the .3DO and .3DE files read here hold one texture and one primitive)", prims.len()));
         return None;
     }
     let p = &prims[0];

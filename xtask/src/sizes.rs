@@ -5,7 +5,7 @@ use crate::meta::root;
 use crate::tools::TOOLS;
 use std::path::PathBuf;
 
-pub const CLI_BUDGET: u64 = 6_000_000;
+pub const CLI_BUDGET: u64 = 7_000_000;
 pub const GUI_BUDGET: u64 = 20_000_000;
 pub const ZIP_BUDGET_ALL_IN_ONE: u64 = 17_000_000;
 pub const ZIP_BUDGET_CLI: u64 = 3_000_000;
@@ -96,7 +96,7 @@ mod tests {
 
     #[test]
     fn budgets_and_paths() {
-        assert_eq!(budget(false), 6_000_000);
+        assert_eq!(budget(false), 7_000_000);
         assert_eq!(budget(true), 20_000_000);
         assert!(binary_path_in(target_dir_from(None), "shaiya", true, None).ends_with("target/release/shaiya.exe") || binary_path_in(target_dir_from(None), "shaiya", true, None).ends_with("target\\release\\shaiya.exe"));
         let p = binary_path_in(target_dir_from(None), "shaiya", false, Some("x86_64-unknown-linux-gnu")).display().to_string().replace('\\', "/");

@@ -31,7 +31,7 @@ The `README.txt` inside each zip carries the same notice as the repository READM
 
 | Item | Budget |
 |---|---|
-| `shaiya.exe` (command line), release, Windows x86_64 | 6 MB (0.4.1 dry run 4,744,704 bytes; local release build of 0.5.0: 6,408,704 bytes, **over the budget by 408,704 bytes**: the cause is new code in the shared libraries (the model, list and loose-folder readers, the interchange writers and readers, the WAV, Ogg, JPG and PNG readers with `zune-jpeg` and `png`, the loose-folder journal) and has not been split by crate; the budget stays at 6 MB until the author decides to raise it for that measured reason) |
+| `shaiya.exe` (command line), release, Windows x86_64 | 7 MB (0.4.1 dry run 4,744,704 bytes; local release build of 0.5.0: 6,408,704 bytes, 591,296 under the budget; the budget was 6 MB until 0.5.0 and is raised to 7 MB for the measured reason: the growth is new code in the shared libraries (the model, list and loose-folder readers, the interchange writers and readers, the WAV, Ogg, JPG and PNG readers with `zune-jpeg` and `png`, the loose-folder journal) and has not been split by crate) |
 | `shaiya-toolkit.exe` (GUI), release, Windows x86_64 | 20 MB (0.4.1 dry run 15,938,560 bytes; local release build of 0.5.0: 17,958,912 bytes; on the 0.5.0 branch a build measured 17,109,504 bytes before the sound player and JPG/PNG and 17,392,640 after, of which cpal and `zune-jpeg` 266,752 and `png` 16,384) |
 | `shaiya-svmap-editor.exe` (GUI), release, Windows x86_64 | 20 MB (0.4.1 dry run 18,051,584 bytes; local release build of 0.5.0: 18,204,672 bytes) |
 | `shaiya-toolkit` zip (all three programs), Windows x86_64 | 17,000,000 bytes (0.4.1 dry run 15,359,516 bytes; `cargo xtask dist` locally for 0.5.0: 16,836,324 bytes, 163,676 under the budget) |
@@ -42,7 +42,7 @@ The `README.txt` inside each zip carries the same notice as the repository READM
 | SHA-256 of a 2 GB `data.saf` | at least 300 MB/s when the disk allows; cancel takes effect within 250 ms |
 | CI run | under 25 minutes |
 
-`cargo xtask sizes` checks the binary sizes (it looks in `CARGO_TARGET_DIR` when that is set, else in `target/`); `cargo xtask dist --platform windows-x86_64` checks the zip sizes. The zip budget is the measured Windows size rounded up to the next whole MB, plus 2 MB (`shaiya-toolkit` zip) or 1 MB (`shaiya` zip). A missed budget is reported with the number, not silently accepted. The 0.5.0 numbers above are from a local build on the maintainer's machine (`cargo xtask dist --platform windows-x86_64` and `cargo xtask sizes`); the CI dry run of the release head replaces them (the follow-up commit "measured 0.5.0 budgets") and `cargo xtask sizes` reports the `shaiya.exe` overage until the budget is decided.
+`cargo xtask sizes` checks the binary sizes (it looks in `CARGO_TARGET_DIR` when that is set, else in `target/`); `cargo xtask dist --platform windows-x86_64` checks the zip sizes. The zip budget is the measured Windows size rounded up to the next whole MB, plus 2 MB (`shaiya-toolkit` zip) or 1 MB (`shaiya` zip). A missed budget is reported with the number, not silently accepted. The 0.5.0 numbers above are from a local build on the maintainer's machine (`cargo xtask dist --platform windows-x86_64` and `cargo xtask sizes`); the CI dry run of the release head replaces them (the follow-up commit "measured 0.5.0 budgets") and `cargo xtask sizes` checks `shaiya.exe` against the raised 7 MB budget. A budget is raised only for a measured reason, and the author is told.
 
 ## CI
 

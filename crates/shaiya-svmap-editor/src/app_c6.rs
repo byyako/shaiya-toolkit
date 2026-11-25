@@ -254,7 +254,7 @@ impl App {
                                         let (bad, text) = match v {
                                             LooseVerdict::Copy => (false, format!("copied {} to data/{}", s.rel, s.rel)),
                                             LooseVerdict::AlreadyThere => (false, format!("{} is already there with the same bytes", s.rel)),
-                                            LooseVerdict::InArchive => (true, format!("refused {}: the archive has this path, and the game reads the archive first, so a loose copy is ignored. Use Install or Export patch", s.rel)),
+                                            LooseVerdict::InArchive => (true, format!("refused {}: the archive has this path, and a loose copy is expected to be ignored (inferred, not checked in the game). Use Install or Export patch", s.rel)),
                                             LooseVerdict::Exists => (true, format!("refused {}: a different file is already there; it is not replaced", s.rel)),
                                         };
                                         msg.push((bad, text));
