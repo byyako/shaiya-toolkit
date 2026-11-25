@@ -291,7 +291,7 @@ fn obj_import_never_opens_mtllib() {
         assert!(!source.contains(word), "obj.rs mentions {word}");
     }
     // a path that would reach out of the folder, a name no file has: the import still works and says it did not open it
-    for lib in ["mtllib ../../outside/secret.mtl", "mtllib C:\\Windows\\system.mtl", "mtllib ..\\..\\x.mtl", "mtllib missing.mtl other.mtl"] {
+    for lib in ["mtllib ../../outside/secret.mtl", "mtllib C:/Windows/system.mtl", "mtllib ..\\..\\x.mtl", "mtllib missing.mtl other.mtl"] {
         let t = format!("{lib}\nv 0 0 0\nv 1 0 0\nv 0 1 0\nvt 0 0\nusemtl wood.tga\nf 1/1 2/1 3/1\n");
         let (imp, report) = import_obj(t.as_bytes(), ImportKind::Mesh3de, None).unwrap();
         let Imported::Mesh3de(m) = imp else { panic!() };
