@@ -4463,3 +4463,89 @@ fn importing_an_obj_makes_a_new_3do_or_3de_and_refuses_the_wrong_rows_and_settin
     assert!(w.h.text().contains("Not imported") && w.h.app.app.archive.gltf_import().unwrap().made().is_none());
     assert_eq!(tree(w.client.path()), before, "nothing was written to the client");
 }
+
+// ------------------------------------------------------------------------------------------------ T12 W15: sounds
+
+/// An output that opens nothing: a stream is "alive" until its guard is dropped.
+struct FakeOut(std::sync::Arc<std::sync::atomic::AtomicBool>);
+
+struct Alive(std::sync::Arc<std::sync::atomic::AtomicBool>);
+impl Drop for Alive {
+    fn drop(&mut self) {
+        self.0.store(false, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
+impl shaiya_toolkit::audio::Backend for FakeOut {
+    fn output(&mut self) -> Result<shaiya_toolkit::audio::Format, shaiya_toolkit::audio::Unavailable> {
+        Ok(shaiya_toolkit::audio::Format { rate: 48000, channels: 2 })
+    }
+    fn start(&mut self, _fill: shaiya_toolkit::audio::Fill, _failed: std::sync::Arc<std::sync::atomic::AtomicBool>) -> Result<Box<dyn std::any::Any>, shaiya_toolkit::audio::Unavailable> {
+        self.0.store(true, std::sync::atomic::Ordering::SeqCst);
+        Ok(Box::new(Alive(self.0.clone())))
+    }
+}
+
+fn wav_file(samples: usize) -> Vec<u8> {
+    let data: Vec<u8> = (0..samples).flat_map(|i| (((i % 50) as i16 - 25) * 200).to_le_bytes()).collect();
+    let mut fmt = Vec::new();
+    fmt.extend(1u16.to_le_bytes());
+    fmt.extend(1u16.to_le_bytes());
+    fmt.extend(22050u32.to_le_bytes());
+    fmt.extend(44100u32.to_le_bytes());
+    fmt.extend(2u16.to_le_bytes());
+    fmt.extend(16u16.to_le_bytes());
+    let mut body = b"WAVEfmt ".to_vec();
+    body.extend((fmt.len() as u32).to_le_bytes());
+    body.extend(&fmt);
+    body.extend(b"data");
+    body.extend((data.len() as u32).to_le_bytes());
+    body.extend(&data);
+    let mut out = b"RIFF".to_vec();
+    out.extend((body.len() as u32).to_le_bytes());
+    out.extend(body);
+    out
+}
+
+#[test]
+fn a_sound_never_plays_by_itself_and_stops_when_another_row_is_selected() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
+    let mut w = world("t12-w15-sound");
+    SahBuilder::new(0).file(b"Sound/a.wav", &wav_file(4000)).file(b"Sound/b.wav", &wav_file(2000)).write_to(w.client.path());
+    w.h.frames(2);
+    let dir = w.client_dir();
+    with_cx(&mut w.h, |app, cx| app.add_client("US test", &dir, true, cx)).unwrap();
+    assert!(w.h.wait_until(WAIT, |h| h.app.app.archive.is_open()));
+    let alive = Arc::new(AtomicBool::new(false));
+    w.h.app.app.archive.preview.audio.set_backend(Box::new(FakeOut(alive.clone())));
+    with_cx(&mut w.h, |app, cx| app.archive.select_path("Sound/a.wav", cx));
+    assert!(preview_ready(&mut w.h));
+    w.h.frames(3);
+    assert_eq!(w.h.app.app.archive.preview_kind(), Some("audio"));
+    let t = w.h.text();
+    assert!(t.contains("WAV, PCM 16 bit, 1 channel, 22050 Hz"), "{t}");
+    assert!(t.contains("Play"), "{t}");
+    assert!(!alive.load(Ordering::SeqCst), "selecting a sound does not start it");
+    assert_eq!(w.h.app.app.archive.preview.audio.track_key(), Some("Sound/a.wav"));
+    w.h.app.app.archive.preview.audio.play();
+    assert!(alive.load(Ordering::SeqCst));
+    with_cx(&mut w.h, |app, cx| app.archive.select_path("Sound/b.wav", cx));
+    assert!(!alive.load(Ordering::SeqCst), "the first sound stopped when the other row was selected");
+    assert!(preview_ready(&mut w.h));
+    w.h.frames(2);
+    assert_eq!(w.h.app.app.archive.preview.audio.track_key(), Some("Sound/b.wav"));
+    assert!(!alive.load(Ordering::SeqCst));
+}
+
+#[test]
+fn the_volume_setting_is_stored_and_sanitized() {
+    let s = ToolkitSettings::default();
+    assert_eq!(s.audio_volume, 0.8);
+    let old = r#"{"tab":"archive","keys":{}}"#;
+    assert_eq!(serde_json::from_str::<ToolkitSettings>(old).unwrap().audio_volume, 0.8, "an old file loads");
+    let back: ToolkitSettings = serde_json::from_str(&serde_json::to_string(&ToolkitSettings { audio_volume: 0.25, ..Default::default() }).unwrap()).unwrap();
+    assert_eq!(back.audio_volume, 0.25);
+    assert_eq!(ToolkitSettings { audio_volume: 7.0, ..Default::default() }.sanitized().audio_volume, 0.8);
+    assert_eq!(ToolkitSettings { audio_volume: f32::NAN, ..Default::default() }.sanitized().audio_volume, 0.8);
+}

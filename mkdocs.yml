@@ -103,6 +103,8 @@ nav:
       - Monster part lists (.MON): formats/mon.md
       - Item model lists (.ITM): formats/itm.md
       - Textures: formats/textures.md
+      - Sounds (.wav): formats/wav.md
+      - JPG, PNG and OGG: formats/jpg-png-ogg.md
       - sysmsg and map names: formats/sysmsg.md
       - TacticsZone.zon: formats/tacticszone-zon.md
       - Afterglow mobs.psv: formats/mobs-psv.md

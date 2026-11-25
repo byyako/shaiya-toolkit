@@ -16,6 +16,7 @@ pub mod mesh3do;
 pub mod meshpick;
 pub mod modellist;
 pub mod modeljson;
+pub mod ogg;
 pub mod render;
 pub mod sdata;
 pub mod seed;
@@ -25,6 +26,7 @@ pub mod texindex;
 pub mod text;
 pub mod texture;
 pub mod vani;
+pub mod wav;
 pub mod wld;
 pub mod wld_raw;
 

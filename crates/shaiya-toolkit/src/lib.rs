@@ -6,6 +6,7 @@ pub mod anim_compare;
 pub mod anim_edit;
 pub mod anim_view;
 pub mod apply_tab;
+pub mod audio;
 pub mod archive_view;
 pub mod clients;
 pub mod explain;
@@ -82,6 +83,8 @@ pub struct ToolkitSettings {
     pub preview_alpha: bool,
     /// Models are drawn with their textures (off: plain grey, as before).
     pub preview_textured: bool,
+    /// The volume of the sound player of the Archive tab (0 to 1).
+    pub audio_volume: f32,
     /// The speed of the animation player (0.25 to 4), how the models are turned and zoomed (yaw, pitch, zoom), the folder of the last
     /// "Save frame as PNG...", and the Archive list's sort key ("name", "size", "packed", "type") and direction.
     pub preview_speed: f32,
@@ -109,6 +112,7 @@ impl Default for ToolkitSettings {
             preview_fit: true,
             preview_alpha: true,
             preview_textured: true,
+            audio_volume: 0.8,
             preview_speed: 1.0,
             preview_view: [35.0, 25.0, 1.0],
             last_export_dir: String::new(),
@@ -126,6 +130,9 @@ impl ToolkitSettings {
         let d = ToolkitSettings::default();
         if !(self.preview_speed.is_finite() && (0.25..=4.0).contains(&self.preview_speed)) {
             self.preview_speed = d.preview_speed;
+        }
+        if !(self.audio_volume.is_finite() && (0.0..=1.0).contains(&self.audio_volume)) {
+            self.audio_volume = d.audio_volume;
         }
         let v = self.preview_view;
         if !(v.iter().all(|x| x.is_finite()) && v[2] > 0.0) {

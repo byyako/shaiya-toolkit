@@ -63,6 +63,9 @@ Client ids: `us-108` (US patch level 108), and the eight test clients `ru-ep3`, 
 | `.ITM` files the index lists (index only: the number is the visible `.ITM` files of the index; no contents were read on the eight test clients) | OK 17 | OK 17 | OK 17 | OK 17 | OK 17 | OK 17 | OK 17 | OK 17 | OK 17 |
 | `Itm::parse` reads every `.ITM` to the last byte and `to_bytes` gives it back byte for byte | OK 17 | n/a | n/a | n/a | n/a | n/a | n/a | n/a | n/a |
 | Texture index: `.3DC` and `.3DO` meshes that the `.MLT`, `.MON` and `.ITM` lists pair with at least one texture that exists (the number is the meshes) | OK 2,237 | n/a | n/a | n/a | n/a | n/a | n/a | n/a | n/a |
+| `.wav` files the index lists (index only: the number is the visible `.wav` files of the index; no contents were read on the eight test clients) | OK 1,019 | OK 1,024 | OK 1,024 | OK 1,076 | OK 1,679 | OK 1,207 | OK 1,153 | OK 1,257 | OK 1,587 |
+| `wav::parse_header` reads the header of every `.wav` (the number is the files) | OK 1,019 | n/a | n/a | n/a | n/a | n/a | n/a | n/a | n/a |
+| `texture::decode` decodes every `.jpg` to RGBA (the number is the files) | OK 22 | n/a | n/a | n/a | n/a | n/a | n/a | n/a | n/a |
 
 Reading the table:
 

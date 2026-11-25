@@ -506,6 +506,8 @@ pub struct PreviewState {
     pub textured: bool,
     pub texture_pick: usize,
     pub player: AnimPlayer,
+    /// The sound of a `.wav` preview: one track, never started by itself, stopped when another file is previewed.
+    pub audio: crate::audio::Player,
     /// Drag, wheel, reset and "Save frame as PNG...".
     pub controls: crate::preview_controls::PreviewControls,
     /// The one texture of the `.ANI` frame on screen, with the frame it shows.
@@ -681,6 +683,7 @@ impl ArchiveView {
                 textured: true,
                 texture_pick: 0,
                 player: AnimPlayer::default(),
+                audio: crate::audio::Player::default(),
                 controls: Default::default(),
                 anim_tex: None,
             },
@@ -741,6 +744,7 @@ impl ArchiveView {
         self.selected_folder = None;
         self.preview.row = None;
         self.preview.data = None;
+        self.preview.audio.unload();
         self.view.clear();
         self.view_stamp.clear();
         self.folder.clear();
@@ -985,6 +989,11 @@ impl ArchiveView {
                         }
                         self.preview.texture_name = Some(name);
                     }
+                }
+                if let PreviewData::Audio { pcm: Some(pcm), .. } = &d {
+                    let key = self.preview.row.and_then(|i| self.loaded.as_ref().map(|l| l.rows[i].path.clone())).unwrap_or_default();
+                    self.preview.audio.set_volume(cx.settings.audio_volume);
+                    self.preview.audio.load(&key, pcm.clone());
                 }
                 self.preview.data = Some(d);
             }
@@ -1599,6 +1608,8 @@ impl ArchiveView {
             h.cancel();
         }
         self.preview.handle = None;
+        // the sound of the file that was open stops with the preview that held it
+        self.preview.audio.unload();
         if self.preview.row != Some(row) {
             self.preview.anim_mesh = MeshChoice::Default;
             self.preview.texture_pick = 0;
@@ -3105,6 +3116,15 @@ impl ArchiveView {
                 });
                 hex_view(ui, bytes, *base);
             }
+            Some(PreviewData::Audio { header, notes, pcm }) => {
+                ui.label(header);
+                for n in notes {
+                    ui.label(RichText::new(n).color(pal.weak));
+                }
+                if pcm.is_some() {
+                    audio_controls(ui, &pal, &mut self.preview.audio, cx);
+                }
+            }
             Some(PreviewData::Failed { message, bytes, total }) => {
                 ui.label(RichText::new(message).color(pal.warning));
                 ui.label(RichText::new(format!("showing the first {} of {} as hex", human_size(bytes.len() as u64), human_size(*total))).color(pal.weak));
@@ -3725,6 +3745,50 @@ fn draw_tree(ui: &mut egui::Ui, l: &Loaded, node: usize, current: &str, acts: &m
 }
 
 /// A decoded picture over a checkerboard: Fit or 1:1 (and the alpha box when `alpha` is given). Used by the image and the map preview.
+/// Play / Pause, Stop, the position and the volume of a sound; the line that says why there is no sound when there is none.
+fn audio_controls(ui: &mut egui::Ui, pal: &shaiya_ui::theme::Pal, player: &mut crate::audio::Player, cx: &mut ToolkitCx<'_>) {
+    use crate::audio::{clock, PlayState};
+    player.poll();
+    if let Some(why) = player.unavailable() {
+        ui.label(RichText::new(why.message()).color(pal.weak));
+        return;
+    }
+    if let Some(e) = player.error() {
+        ui.label(RichText::new(e).color(pal.warning));
+    }
+    let state = player.state();
+    ui.horizontal(|ui| {
+        let label = if state == PlayState::Playing { "Pause" } else { "Play" };
+        if ui.button(label).clicked() {
+            if state == PlayState::Playing {
+                player.pause();
+            } else {
+                player.play();
+            }
+        }
+        if ui.add_enabled(state != PlayState::Stopped, egui::Button::new("Stop")).clicked() {
+            player.stop();
+        }
+        ui.label(format!("{} / {}", clock(player.position_s()), clock(player.duration_s())));
+    });
+    let dur = player.duration_s().max(0.001);
+    let mut pos = player.position_s();
+    if ui.add(egui::Slider::new(&mut pos, 0.0..=dur).show_value(false)).changed() {
+        player.seek(pos);
+    }
+    ui.horizontal(|ui| {
+        ui.label("Volume");
+        let mut v = player.volume();
+        if ui.add(egui::Slider::new(&mut v, 0.0..=1.0).show_value(false)).changed() {
+            player.set_volume(v);
+            cx.settings.audio_volume = v;
+        }
+    });
+    if player.state() == PlayState::Playing {
+        ui.ctx().request_repaint_after(std::time::Duration::from_millis(100));
+    }
+}
+
 fn picture_view(ui: &mut egui::Ui, fit: &mut bool, alpha: Option<&mut bool>, tex: Option<&egui::TextureHandle>, orbit: Option<&mut crate::preview_controls::PreviewControls>) {
     ui.horizontal(|ui| {
         ui.selectable_value(fit, true, "Fit");

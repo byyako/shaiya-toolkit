@@ -63,6 +63,9 @@ pub enum PreviewData {
     Sdata { summary: SdataSummary, plain: Vec<u8>, raw: Vec<u8> },
     /// `bytes` start at entry offset `base`.
     Hex { bytes: Vec<u8>, base: u64, total: u64 },
+    /// A sound: `.wav` (header facts; `pcm` is the decoded sound when the format is one this build plays, else `notes` says why not) or
+    /// `.ogg` (its header line only: never decoded, never played).
+    Audio { header: String, notes: Vec<String>, pcm: Option<Arc<shaiya_clientdata::wav::Pcm>> },
     /// A decoder said no: the message and the beginning of the bytes (hex fallback).
     Failed { message: String, bytes: Vec<u8>, total: u64 },
 }
@@ -80,6 +83,7 @@ impl PreviewData {
             PreviewData::Text { .. } => "text",
             PreviewData::Sdata { .. } => "sdata",
             PreviewData::Hex { .. } => "hex",
+            PreviewData::Audio { .. } => "audio",
             PreviewData::Failed { .. } => "failed",
         }
     }
@@ -176,7 +180,9 @@ pub fn encoding_name(e: Encoding) -> &'static str {
 }
 
 fn image_header(data: &[u8], w: u32, h: u32) -> String {
-    let what = if data.starts_with(b"DDS ") && data.len() >= 88 {
+    let what = if let Some(p) = shaiya_clientdata::texture::picture_info(data) {
+        p.what
+    } else if data.starts_with(b"DDS ") && data.len() >= 88 {
         let fourcc = &data[84..88];
         if fourcc.iter().all(|&b| b == 0) { "DDS uncompressed".to_string() } else { format!("DDS {}", String::from_utf8_lossy(fourcc).trim_end_matches('\0')) }
     } else if data.starts_with(b"BM") && data.len() >= 30 {
@@ -569,7 +575,17 @@ pub fn make_preview_look(src: &dyn FileSource, path: &str, text_all: bool, hex_f
     }
     let ext = ext_of(path);
     let head = src.read_range(path, 0, total.min(64 << 10) as usize)?;
-    let is_image = matches!(ext.as_str(), "dds" | "tga" | "bmp") || head.starts_with(b"DDS ") || (head.starts_with(b"BM") && ext == "dds");
+    if ext == "wav" || (head.starts_with(b"RIFF") && head.get(8..12) == Some(b"WAVE")) {
+        return audio_preview(src, path, total, &head, true, job);
+    }
+    if ext == "ogg" || head.starts_with(b"OggS") {
+        return audio_preview(src, path, total, &head, false, job);
+    }
+    let is_image = matches!(ext.as_str(), "dds" | "tga" | "bmp" | "jpg" | "jpeg" | "png")
+        || head.starts_with(b"DDS ")
+        || (head.starts_with(b"BM") && ext == "dds")
+        || head.starts_with(&[0xFF, 0xD8, 0xFF])
+        || head.starts_with(&shaiya_clientdata::texture::PNG_MAGIC);
     if is_image {
         let data = src.read(path, 128 << 20, job)?;
         return Ok(match shaiya_clientdata::texture::decode(&data, path) {
@@ -652,6 +668,43 @@ pub fn make_preview_look(src: &dyn FileSource, path: &str, text_all: bool, hex_f
     Ok(PreviewData::Hex { bytes, base, total })
 }
 
+fn channels_text(n: u32) -> String {
+    format!("{n} channel{}", if n == 1 { "" } else { "s" })
+}
+
+/// The preview of a `.wav` (`wav` true) or an `.ogg`: the header line, and for a WAV of a format this build plays the decoded sound. A file
+/// that does not read is Failed with its first bytes. Reading and decoding happen on the worker.
+fn audio_preview(src: &dyn FileSource, path: &str, total: u64, head: &[u8], wav: bool, job: &Job) -> Result<PreviewData> {
+    let failed = |message: String| Ok(PreviewData::Failed { message, bytes: head.to_vec(), total });
+    if total > shaiya_clientdata::wav::WAV_CAP as u64 {
+        return failed(format!("{path}: the file is {total} bytes, over the {} MiB limit of the sound preview", shaiya_clientdata::wav::WAV_CAP >> 20));
+    }
+    let data = src.read(path, shaiya_clientdata::wav::WAV_CAP as u64, job)?;
+    if !wav {
+        return Ok(match shaiya_clientdata::ogg::ogg_info(&data) {
+            Ok(i) => PreviewData::Audio {
+                header: format!("Ogg Vorbis, {}, {} Hz, {:.1} s (not played)", channels_text(i.channels as u32), i.rate, i.duration_s),
+                notes: Vec::new(),
+                pcm: None,
+            },
+            Err(e) => PreviewData::Failed { message: e.to_string(), bytes: head.to_vec(), total },
+        });
+    }
+    let info = match shaiya_clientdata::wav::parse_header(&data) {
+        Ok(i) => i,
+        Err(e) => return failed(e.to_string()),
+    };
+    let header = format!("WAV, {}, {}, {} Hz, {:.1} s", info.format_name(), channels_text(info.channels as u32), info.rate, info.duration_s);
+    job.check()?;
+    let (pcm, notes) = match shaiya_clientdata::wav::decode(&data) {
+        Ok(p) => (Some(Arc::new(p)), Vec::new()),
+        Err(shaiya_clientdata::Error::Format { what, .. }) => (None, vec![format!("{what}; not played")]),
+        Err(e) => (None, vec![e.to_string()]),
+    };
+    job.check()?;
+    Ok(PreviewData::Audio { header, notes, pcm })
+}
+
 /// One hex row: `00000010  64 00 00 00 ...  d...`.
 pub fn hex_row(bytes: &[u8], base: u64, row: usize) -> String {
     let start = row * 16;
@@ -697,6 +750,92 @@ mod tests {
 
     fn pv(a: &Archive, path: &str) -> PreviewData {
         make_preview(a, path, false, 0, &Job::silent()).unwrap()
+    }
+
+    fn tone_wav(tag: u16, bits: u16, rate: u32, data: &[u8]) -> Vec<u8> {
+        let mut fmt = Vec::new();
+        fmt.extend(tag.to_le_bytes());
+        fmt.extend(1u16.to_le_bytes());
+        fmt.extend(rate.to_le_bytes());
+        fmt.extend((rate * bits as u32 / 8).to_le_bytes());
+        fmt.extend((bits / 8).to_le_bytes());
+        fmt.extend(bits.to_le_bytes());
+        let mut body = b"WAVEfmt ".to_vec();
+        body.extend((fmt.len() as u32).to_le_bytes());
+        body.extend(&fmt);
+        body.extend(b"data");
+        body.extend((data.len() as u32).to_le_bytes());
+        body.extend(data);
+        let mut out = b"RIFF".to_vec();
+        out.extend((body.len() as u32).to_le_bytes());
+        out.extend(body);
+        out
+    }
+
+    #[test]
+    fn sounds_and_pictures_are_previewed() {
+        let d = TempDir::new("preview-media");
+        let pcm: Vec<u8> = (0..22050i32).flat_map(|i| ((i % 100 - 50) as i16 * 100).to_le_bytes()).collect();
+        let mut ident = vec![1u8];
+        ident.extend(b"vorbis");
+        ident.extend(0u32.to_le_bytes());
+        ident.push(2);
+        ident.extend(44100u32.to_le_bytes());
+        ident.extend([0u8; 14]);
+        let mut ogg = b"OggS\0\x02".to_vec();
+        ogg.extend(0i64.to_le_bytes());
+        ogg.extend([0u8; 12]);
+        ogg.extend([1, ident.len() as u8]);
+        ogg.extend(&ident);
+        ogg.extend(b"OggS\0\x04");
+        ogg.extend(88200i64.to_le_bytes());
+        ogg.extend([0u8; 12]);
+        ogg.extend([1, 2, 9, 9]);
+        let png: Vec<u8> = vec![
+            0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00, 0x00, 0x1f, 0x15, 0xc4, 0x89, 0x00,
+            0x00, 0x00, 0x0d, 0x49, 0x44, 0x41, 0x54, 0x78, 0xda, 0x63, 0x64, 0x60, 0xf8, 0x5f, 0x0f, 0x00, 0x02, 0x87, 0x01, 0x80, 0xeb, 0x47, 0xba, 0x92, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4e, 0x44, 0xae,
+            0x42, 0x60, 0x82,
+        ];
+        let a = open(
+            &d,
+            &[
+                ("s/tone.wav", tone_wav(1, 16, 22050, &pcm)),
+                ("s/float.wav", tone_wav(3, 32, 44100, &[0; 16])),
+                ("s/cut.wav", tone_wav(1, 16, 22050, &pcm)[..100].to_vec()),
+                ("s/song.ogg", ogg),
+                ("i/p.png", png),
+                ("i/bad.jpg", vec![0xFF, 0xD8, 0xFF, 0xD9]),
+            ],
+        );
+        match pv(&a, "s/tone.wav") {
+            PreviewData::Audio { header, notes, pcm } => {
+                assert_eq!(header, "WAV, PCM 16 bit, 1 channel, 22050 Hz, 1.0 s");
+                assert!(notes.is_empty());
+                assert_eq!(pcm.unwrap().frames(), 22050);
+            }
+            other => panic!("{other:?}"),
+        }
+        match pv(&a, "s/float.wav") {
+            PreviewData::Audio { header, notes, pcm } => {
+                assert!(header.starts_with("WAV, format tag 3, 32 bits"), "{header}");
+                assert_eq!(notes, vec!["unsupported format (tag 3, 32 bits); not played".to_string()]);
+                assert!(pcm.is_none());
+            }
+            other => panic!("{other:?}"),
+        }
+        assert!(matches!(pv(&a, "s/cut.wav"), PreviewData::Failed { .. }), "a damaged sound falls back to hex");
+        match pv(&a, "s/song.ogg") {
+            PreviewData::Audio { header, pcm, .. } => {
+                assert_eq!(header, "Ogg Vorbis, 2 channels, 44100 Hz, 2.0 s (not played)");
+                assert!(pcm.is_none());
+            }
+            other => panic!("{other:?}"),
+        }
+        match pv(&a, "i/p.png") {
+            PreviewData::Image { width, height, header, .. } => assert_eq!((width, height, header.as_str()), (1, 1, "PNG RGBA 8 bit, 1 x 1")),
+            other => panic!("{other:?}"),
+        }
+        assert!(matches!(pv(&a, "i/bad.jpg"), PreviewData::Failed { .. }));
     }
 
     #[test]

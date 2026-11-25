@@ -62,6 +62,7 @@ core + seed + archive + patch  <-  shaiya-inspect
 libraries (now including svmap, svmap-tools and sdata)  <-  shaiya-cli
 shaiya-core + eframe / egui / rfd / serde  <-  shaiya-ui  <-  the GUI programs
 shaiya-ui (Paths/Env, theme) + svmap-tools + eframe / egui / egui-wgpu / wgpu / bytemuck / rfd  <-  shaiya-svmap-editor
+shaiya-clientdata also uses zune-jpeg (JPG) and png (PNG); shaiya-toolkit uses cpal only through its default `audio` feature (the sound player; `shaiya` never links it)
 shaiya-testkit: dev-dependency only (std only, depends on no toolkit crate)
 shaiya-build: build-dependency only
 ```

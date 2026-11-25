@@ -20,7 +20,7 @@ jobs:
           components: clippy
       - uses: Swatinem/rust-cache@v2
       - name: System libraries
-        run: sudo apt-get update && sudo apt-get install -y libxkbcommon-dev libwayland-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libx11-dev pkg-config
+        run: sudo apt-get update && sudo apt-get install -y libxkbcommon-dev libwayland-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libx11-dev libasound2-dev pkg-config
       - name: No game files
         run: cargo xtask guard
       - name: Third-party notices are up to date
@@ -44,7 +44,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: System libraries
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libxkbcommon-dev libwayland-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libx11-dev pkg-config
+        run: sudo apt-get update && sudo apt-get install -y libxkbcommon-dev libwayland-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libx11-dev libasound2-dev pkg-config
       - name: Build
         run: cargo build --workspace --locked
       - name: Test
@@ -82,5 +82,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Build
         run: cargo build --workspace --locked
+      - name: Build without audio (Linux)
+        if: runner.os == 'Linux'
+        run: cargo build -p shaiya-toolkit --no-default-features --locked
       - name: Test
         run: cargo test --workspace --locked

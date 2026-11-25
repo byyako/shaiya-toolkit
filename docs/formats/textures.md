@@ -1,5 +1,7 @@
 # Textures (DDS and TGA)
 
+JPG and PNG pictures are read too: see [JPG, PNG and OGG](jpg-png-ogg.md).
+
 The toolkit reads the client's pictures and writes two kinds of its own for new maps.
 
 ## What is read

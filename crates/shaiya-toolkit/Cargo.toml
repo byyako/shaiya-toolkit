@@ -28,6 +28,13 @@ shaiya-ui = { workspace = true }
 egui = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+cpal = { workspace = true, optional = true }
+
+[features]
+default = ["audio"]
+# Playing the sounds of the Archive tab (cpal: WASAPI, CoreAudio, ALSA). Without it the Toolkit builds without an audio library and the
+# preview says so.
+audio = ["dep:cpal"]
 
 [build-dependencies]
 shaiya-build = { workspace = true }

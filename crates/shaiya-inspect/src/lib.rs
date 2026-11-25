@@ -35,6 +35,14 @@ pub enum Kind {
     Mon,
     /// An `.ITM` item list.
     Itm,
+    /// A RIFF/WAVE sound.
+    Wav,
+    /// An Ogg file (Vorbis header facts only).
+    Ogg,
+    /// A JPEG picture.
+    Jpg,
+    /// A PNG picture.
+    Png,
     Unknown,
 }
 
@@ -52,6 +60,11 @@ pub enum Details {
     /// A model list file: records, and the mesh and texture names it lists (`.MLT`, `.ITM`) or the parts of its records (`.MON`); zeros
     /// when the file did not read (a problem line says why).
     List { records: usize, meshes: usize, textures: usize, parts: usize },
+    /// A sound: the format as the preview names it, channels, sample rate and playing time (zeros when the header did not read; a problem
+    /// line says why).
+    Sound { format: String, channels: u32, rate: u32, duration_s: f64 },
+    /// A picture: what its header says ("JPEG baseline, 3 components") and its size (zeros when the header did not read).
+    Picture { what: String, width: u32, height: u32 },
     /// First 16 bytes.
     Unknown { magic_hex: String },
 }
@@ -219,6 +232,11 @@ pub fn describe(i: &Info) -> String {
                 counted(*textures as u64, "texture name", "texture names")
             ),
         },
+        Details::Sound { format, channels, rate, duration_s } => {
+            let ch = counted(*channels as u64, "channel", "channels");
+            format!("{format}, {ch}, {rate} Hz, {duration_s:.1} s, {size} bytes")
+        }
+        Details::Picture { what, width, height } => format!("{what}, {width} x {height}, {size} bytes"),
         Details::Unknown { magic_hex } => format!("Unknown file type, starts with {magic_hex}, {size} bytes"),
     }
 }
@@ -251,6 +269,12 @@ pub fn inspect(path: &Path, opts: &Options, job: &Job) -> Result<Info> {
     } else if let Some((machine, timestamp)) = pe_header(&head) {
         let details = Details::Pe { machine, machine_name: machine_name(machine), timestamp, timestamp_utc: utc_iso_unix(timestamp as i64) };
         (Kind::Pe, details)
+    } else if head.starts_with(b"RIFF") && head.get(8..12) == Some(b"WAVE") {
+        sound_details(path, size, &name, true, &mut problems)
+    } else if head.starts_with(b"OggS") {
+        sound_details(path, size, &name, false, &mut problems)
+    } else if head.starts_with(&[0xFF, 0xD8, 0xFF]) || head.starts_with(&shaiya_clientdata::texture::PNG_MAGIC) {
+        picture_details(&head, &name, &mut problems)
     } else if let Some(kind) = ["mlt", "mon", "itm"].into_iter().find(|e| has_ext(path, e)) {
         list_details(path, size, &head, &name, kind, &mut problems)
     } else if has_ext(path, "saf") {
@@ -273,6 +297,57 @@ pub fn inspect(path: &Path, opts: &Options, job: &Job) -> Result<Info> {
 
     let sha256 = if opts.hash { Some(to_hex(&sha256_file(path, job)?)) } else { None };
     Ok(Info { path: path.display().to_string(), size, kind, details, sha256, problems })
+}
+
+/// A WAV or an Ogg file: its header facts (the file is read whole up to the sound preview's limit).
+fn sound_details(path: &Path, size: u64, name: &str, wav: bool, problems: &mut Vec<String>) -> (Kind, Details) {
+    let kind = if wav { Kind::Wav } else { Kind::Ogg };
+    let zero = Details::Sound { format: if wav { "WAV".into() } else { "Ogg".into() }, channels: 0, rate: 0, duration_s: 0.0 };
+    if size > shaiya_clientdata::wav::WAV_CAP as u64 {
+        problems.push(format!("{name} is over {} MiB: its header is not read", shaiya_clientdata::wav::WAV_CAP >> 20));
+        return (kind, zero);
+    }
+    let bytes = match std::fs::read(path) {
+        Ok(b) => b,
+        Err(e) => {
+            problems.push(Error::io(path, e).to_string());
+            return (kind, zero);
+        }
+    };
+    if wav {
+        match shaiya_clientdata::wav::parse_header(&bytes) {
+            Ok(i) => {
+                if !i.is_supported() {
+                    problems.push(format!("{name}: unsupported format (tag {}, {} bits); the preview does not play it", i.tag, i.bits));
+                }
+                (kind, Details::Sound { format: format!("WAV, {}", i.format_name()), channels: i.channels as u32, rate: i.rate, duration_s: i.duration_s })
+            }
+            Err(e) => {
+                problems.push(e.to_string());
+                (kind, zero)
+            }
+        }
+    } else {
+        match shaiya_clientdata::ogg::ogg_info(&bytes) {
+            Ok(i) => (kind, Details::Sound { format: "Ogg Vorbis".into(), channels: i.channels as u32, rate: i.rate, duration_s: i.duration_s }),
+            Err(e) => {
+                problems.push(e.to_string());
+                (kind, zero)
+            }
+        }
+    }
+}
+
+/// A JPEG or a PNG: the header facts from the first bytes (nothing is decoded).
+fn picture_details(head: &[u8], name: &str, problems: &mut Vec<String>) -> (Kind, Details) {
+    let kind = if head.starts_with(&[0xFF, 0xD8]) { Kind::Jpg } else { Kind::Png };
+    match shaiya_clientdata::texture::picture_info(head) {
+        Some(p) => (kind, Details::Picture { what: p.what, width: p.width, height: p.height }),
+        None => {
+            problems.push(format!("{name}: the {} header did not read", if kind == Kind::Jpg { "JPEG" } else { "PNG" }));
+            (kind, Details::Picture { what: if kind == Kind::Jpg { "JPEG".into() } else { "PNG".into() }, width: 0, height: 0 })
+        }
+    }
 }
 
 /// Lists are read whole; real ones are well under a megabyte.

@@ -45,6 +45,9 @@ rfd = { version = "=0.18.0", default-features = false }
 egui-wgpu = { version = "=0.37.0", default-features = false }
 wgpu = { version = "=30.0.2", default-features = false, features = ["std", "wgsl"] }
 bytemuck = { version = "=1.25.2", features = ["derive"] }
+cpal = { version = "=0.18.2", default-features = false }
+zune-jpeg = { version = "=0.5.15", default-features = false, features = ["std"] }
+png = "=0.18.1"
 
 [profile.release]
 opt-level = "z"

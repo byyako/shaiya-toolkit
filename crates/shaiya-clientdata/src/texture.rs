@@ -1,8 +1,8 @@
 //! Texture decoding to RGBA8: DDS (DXT1 to DXT5, DXT2/DXT4 with the colour un-premultiplied, and uncompressed bit-mask formats, first mip
-//! level), TGA (uncompressed and RLE true-colour, 24/32 bit) and BMP (24/32 bit, some "dds" files of the client are really bitmaps). No
-//! dependencies.
+//! level), TGA (uncompressed and RLE true-colour, 24/32 bit), BMP (24/32 bit, some "dds" files of the client are really bitmaps), JPG
+//! (baseline and progressive, through `zune-jpeg`, grey replicated to RGB) and PNG (through `png`). The other formats have no dependencies.
 
-use crate::error::{Cur, Result};
+use crate::error::{Cur, Error, Result};
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Image {
@@ -50,15 +50,143 @@ fn limits(r: &Cur, w: u32, h: u32) -> Result<()> {
     Ok(())
 }
 
-/// Decode by magic number: `DDS `, `BM`, otherwise TGA.
+/// The most pixels a JPG or PNG may hold (256 MiB of RGBA).
+pub const PICTURE_PIXELS_MAX: u64 = 64 << 20;
+
+fn picture_error(file: &str, what: impl Into<String>) -> Error {
+    Error::Format { file: file.to_string(), what: what.into(), offset: 0 }
+}
+
+/// Decode by magic number: `DDS `, `BM`, JPG (`FF D8`), PNG, otherwise TGA.
 pub fn decode(data: &[u8], file: &str) -> Result<Image> {
     if data.starts_with(b"DDS ") {
         decode_dds(data, file)
     } else if data.starts_with(b"BM") {
         decode_bmp(data, file)
+    } else if data.starts_with(&[0xFF, 0xD8]) {
+        decode_jpg(data, file)
+    } else if data.starts_with(&PNG_MAGIC) {
+        decode_png(data, file)
     } else {
         decode_tga(data, file)
     }
+}
+
+/// The eight bytes every PNG file starts with.
+pub const PNG_MAGIC: [u8; 8] = [0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A];
+
+// ---------------------------------------------------------------- JPG and PNG
+
+/// A JPG (baseline or progressive; one, three or four components) as RGBA, a grey image with its grey in all three colour channels.
+pub fn decode_jpg(data: &[u8], file: &str) -> Result<Image> {
+    use zune_jpeg::zune_core::{bytestream::ZCursor, colorspace::ColorSpace, options::DecoderOptions};
+    let bad = |e: zune_jpeg::errors::DecodeErrors| picture_error(file, format!("JPG: {e:?}"));
+    let opts = DecoderOptions::default().jpeg_set_out_colorspace(ColorSpace::RGBA).set_max_width(16_384).set_max_height(16_384);
+    let mut d = zune_jpeg::JpegDecoder::new_with_options(ZCursor::new(data), opts);
+    d.decode_headers().map_err(bad)?;
+    let info = d.info().ok_or_else(|| picture_error(file, "JPG: no header"))?;
+    let (w, h) = (info.width as u32, info.height as u32);
+    if w == 0 || h == 0 || w as u64 * h as u64 > PICTURE_PIXELS_MAX {
+        return Err(picture_error(file, format!("image size {w}x{h} is out of range")));
+    }
+    let rgba = d.decode().map_err(bad)?;
+    if rgba.len() != (w * h * 4) as usize {
+        return Err(picture_error(file, format!("JPG: decoded {} bytes for {w}x{h}", rgba.len())));
+    }
+    Ok(Image { width: w, height: h, rgba })
+}
+
+/// A PNG of any colour type and depth as RGBA (indexed colour expanded, 16 bit reduced to 8; interlaced files are read whole).
+pub fn decode_png(data: &[u8], file: &str) -> Result<Image> {
+    let bad = |e: png::DecodingError| picture_error(file, format!("PNG: {e}"));
+    let mut dec = png::Decoder::new(std::io::Cursor::new(data));
+    dec.set_transformations(png::Transformations::normalize_to_color8());
+    let mut reader = dec.read_info().map_err(bad)?;
+    let (w, h) = (reader.info().width, reader.info().height);
+    if w == 0 || h == 0 || w as u64 * h as u64 > PICTURE_PIXELS_MAX {
+        return Err(picture_error(file, format!("image size {w}x{h} is out of range")));
+    }
+    let size = reader.output_buffer_size().ok_or_else(|| picture_error(file, "PNG: size overflow"))?;
+    let mut buf = vec![0u8; size];
+    let frame = reader.next_frame(&mut buf).map_err(bad)?;
+    let px = &buf[..frame.buffer_size()];
+    let mut rgba = Vec::with_capacity(w as usize * h as usize * 4);
+    match frame.color_type {
+        png::ColorType::Rgba => rgba.extend_from_slice(px),
+        png::ColorType::Rgb => px.as_chunks::<3>().0.iter().for_each(|p| rgba.extend_from_slice(&[p[0], p[1], p[2], 255])),
+        png::ColorType::Grayscale => px.iter().for_each(|&g| rgba.extend_from_slice(&[g, g, g, 255])),
+        png::ColorType::GrayscaleAlpha => px.as_chunks::<2>().0.iter().for_each(|p| rgba.extend_from_slice(&[p[0], p[0], p[0], p[1]])),
+        png::ColorType::Indexed => return Err(picture_error(file, "PNG: indexed colour was not expanded")),
+    }
+    if rgba.len() != (w as usize * h as usize * 4) {
+        return Err(picture_error(file, format!("PNG: decoded {} bytes for {w}x{h}", rgba.len())));
+    }
+    Ok(Image { width: w, height: h, rgba })
+}
+
+/// What the header of a JPG or PNG says (no pixels are decoded).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PictureInfo {
+    pub width: u32,
+    pub height: u32,
+    /// "JPEG baseline, 3 components" or "PNG RGBA 8 bit".
+    pub what: String,
+}
+
+/// The header facts of a JPG (the first frame header) or a PNG (`IHDR`); `None` for any other bytes or a header that does not read.
+pub fn picture_info(data: &[u8]) -> Option<PictureInfo> {
+    if data.starts_with(&PNG_MAGIC) {
+        let h = data.get(8..33)?;
+        if &h[4..8] != b"IHDR" || u32::from_be_bytes(h[..4].try_into().ok()?) != 13 {
+            return None;
+        }
+        let (w, ht) = (u32::from_be_bytes(h[8..12].try_into().ok()?), u32::from_be_bytes(h[12..16].try_into().ok()?));
+        let colour = match h[17] {
+            0 => "grey",
+            2 => "RGB",
+            3 => "indexed",
+            4 => "grey+alpha",
+            6 => "RGBA",
+            _ => return None,
+        };
+        let interlace = if h[20] == 1 { ", interlaced" } else { "" };
+        return Some(PictureInfo { width: w, height: ht, what: format!("PNG {colour} {} bit{interlace}", h[16]) });
+    }
+    if !data.starts_with(&[0xFF, 0xD8]) {
+        return None;
+    }
+    let mut i = 2usize;
+    while i + 4 <= data.len() {
+        if data[i] != 0xFF {
+            return None;
+        }
+        let m = data[i + 1];
+        if m == 0xFF {
+            i += 1;
+            continue;
+        }
+        if m == 0x01 || (0xD0..=0xD9).contains(&m) {
+            i += 2;
+            continue;
+        }
+        let len = u16::from_be_bytes([data[i + 2], data[i + 3]]) as usize;
+        if matches!(m, 0xC0..=0xCF) && !matches!(m, 0xC4 | 0xC8 | 0xCC) {
+            let f = data.get(i + 4..i + 4 + 6)?;
+            let kind = match m {
+                0xC0 => "baseline",
+                0xC1 => "extended sequential",
+                0xC2 => "progressive",
+                _ => "unsupported coding",
+            };
+            let (ht, w) = (u16::from_be_bytes([f[1], f[2]]) as u32, u16::from_be_bytes([f[3], f[4]]) as u32);
+            return Some(PictureInfo { width: w, height: ht, what: format!("JPEG {kind}, {} component{}", f[5], if f[5] == 1 { "" } else { "s" }) });
+        }
+        if m == 0xDA {
+            return None; // the scan starts before any frame header
+        }
+        i += 2 + len;
+    }
+    None
 }
 
 // ---------------------------------------------------------------- DDS

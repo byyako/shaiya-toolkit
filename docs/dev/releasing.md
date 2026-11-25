@@ -32,7 +32,7 @@ The `README.txt` inside each zip carries the same notice as the repository READM
 | Item | Budget |
 |---|---|
 | `shaiya.exe` (command line), release, Windows x86_64 | 6 MB (measured (0.4.1 dry run) 4,744,704 bytes) |
-| `shaiya-toolkit.exe` (GUI), release, Windows x86_64 | 20 MB (measured (0.4.1 dry run) 15,938,560 bytes) |
+| `shaiya-toolkit.exe` (GUI), release, Windows x86_64 | 20 MB (measured (0.4.1 dry run) 15,938,560 bytes; local builds on the 0.5.0 branch: 17,109,504 bytes before the sound player and JPG/PNG, 17,392,640 after, of which cpal and `zune-jpeg` 266,752 and `png` 16,384) |
 | `shaiya-svmap-editor.exe` (GUI), release, Windows x86_64 | 20 MB (measured (0.4.1 dry run) 18,051,584 bytes) |
 | `shaiya-toolkit` zip (all three programs), Windows x86_64 | 17,000,000 bytes (measured (0.4.1 dry run) 15,359,516 bytes) |
 | `shaiya` zip (command line only), Windows x86_64 | 3,000,000 bytes (measured (0.4.1 dry run) 2,016,966 bytes) |

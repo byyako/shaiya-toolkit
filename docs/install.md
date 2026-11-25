@@ -48,8 +48,10 @@ with stock Rust (`rustup`, stable). The programs are in `target/release`.
 On Linux the GUI needs development packages (the names are those CI installs on Ubuntu):
 
 ```
-sudo apt-get install -y libxkbcommon-dev libwayland-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libx11-dev pkg-config
+sudo apt-get install -y libxkbcommon-dev libwayland-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libx11-dev libasound2-dev pkg-config
 ```
+
+`libasound2-dev` is for the sound player of Shaiya Toolkit (ALSA). A Linux build of that program needs `libasound2` (ALSA) at run time, because the program links it (not tested on a machine without it). To build it without audio, use `cargo build --release -p shaiya-toolkit --no-default-features`; that build shows "Built without audio" in place of the player.
 
 Windows and macOS need nothing besides Rust.
 

@@ -358,3 +358,18 @@ fn itm_round_trip() {
 fn texture_index_found() {
     check(Cap::TextureIndexFound);
 }
+
+#[test]
+fn wav_index_count() {
+    check(Cap::WavIndexCount);
+}
+
+#[test]
+fn wav_headers_read() {
+    check(Cap::WavHeaders);
+}
+
+#[test]
+fn jpg_decodes() {
+    check(Cap::JpgDecode);
+}

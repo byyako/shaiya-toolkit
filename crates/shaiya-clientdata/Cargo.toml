@@ -18,6 +18,8 @@ shaiya-archive = { workspace = true }
 encoding_rs = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true, features = ["float_roundtrip"] }
+zune-jpeg = { workspace = true }
+png = { workspace = true }
 
 [dev-dependencies]
 shaiya-testkit = { workspace = true }

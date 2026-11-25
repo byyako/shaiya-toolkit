@@ -52,6 +52,50 @@ pub(crate) fn list_caps(o: &mut Observed, dir: &Path, idx: &Index) {
     kind_caps(o, dir, idx, ".itm", Cap::ItmIndexCount, Cap::ItmRoundTrip, &|b, p| Itm::parse(b, p).map(|m| m.to_bytes() == b).map_err(|e| e.to_string()));
 }
 
+/// Sets `WavIndexCount` (every client, index only), `WavHeaders` and `JpgDecode` (where `data.saf` is present: every `.wav` header reads, every
+/// `.jpg` decodes).
+pub(crate) fn media_caps(o: &mut Observed, dir: &Path, idx: &Index) {
+    let visible = idx.visible();
+    let with_ext = |ext: &str| -> Vec<_> { visible.iter().filter(|f| f.path.to_ascii_lowercase().ends_with(ext)).collect() };
+    let (wavs, jpgs) = (with_ext(".wav"), with_ext(".jpg"));
+    o.set(Cap::WavIndexCount, O);
+    o.numbers.push((Cap::WavIndexCount, wavs.len() as u64));
+    if !has_data_file(dir) {
+        o.set(Cap::WavHeaders, NA);
+        o.set(Cap::JpgDecode, NA);
+        return;
+    }
+    let archive = match Archive::open(dir) {
+        Ok(a) => a,
+        Err(e) => {
+            o.notes.push(format!("media: {e}"));
+            o.set(Cap::WavHeaders, F);
+            o.set(Cap::JpgDecode, F);
+            return;
+        }
+    };
+    let mut good = 0u64;
+    for f in &wavs {
+        match archive.read_entry(f.entry).map_err(|e| e.to_string()).and_then(|b| shaiya_clientdata::wav::parse_header(&b).map_err(|e| e.to_string())) {
+            Ok(_) => good += 1,
+            Err(e) => o.notes.push(format!("wav {}: {e}", f.path)),
+        }
+    }
+    o.set(Cap::WavHeaders, if good == wavs.len() as u64 && good > 0 { O } else { F });
+    o.numbers.push((Cap::WavHeaders, good));
+    o.facts.push(format!("sounds: {} .wav listed, {good} headers read", wavs.len()));
+    let mut decoded = 0u64;
+    for f in &jpgs {
+        match archive.read_entry(f.entry).map_err(|e| e.to_string()).and_then(|b| shaiya_clientdata::texture::decode(&b, &f.path).map_err(|e| e.to_string())) {
+            Ok(_) => decoded += 1,
+            Err(e) => o.notes.push(format!("jpg {}: {e}", f.path)),
+        }
+    }
+    o.set(Cap::JpgDecode, if decoded == jpgs.len() as u64 && decoded > 0 { O } else { F });
+    o.numbers.push((Cap::JpgDecode, decoded));
+    o.facts.push(format!("pictures: {} .jpg listed, {decoded} decoded", jpgs.len()));
+}
+
 /// Sets `TextureIndexFound`: the meshes the list files pair with a texture that exists (needs the file contents).
 pub(crate) fn texture_caps(o: &mut Observed, dir: &Path, idx: &Index) {
     let cap = Cap::TextureIndexFound;

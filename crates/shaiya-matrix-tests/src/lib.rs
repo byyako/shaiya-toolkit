@@ -106,9 +106,13 @@ pub enum Cap {
     ItmRoundTrip,
     // texture index
     TextureIndexFound,
+    // sounds and pictures
+    WavIndexCount,
+    WavHeaders,
+    JpgDecode,
 }
 
-pub const CAPS: [Cap; 56] = [
+pub const CAPS: [Cap; 59] = [
     Cap::IndexParse,
     Cap::ToBytesIdentical,
     Cap::InspectSah,
@@ -165,6 +169,9 @@ pub const CAPS: [Cap; 56] = [
     Cap::ItmIndexCount,
     Cap::ItmRoundTrip,
     Cap::TextureIndexFound,
+    Cap::WavIndexCount,
+    Cap::WavHeaders,
+    Cap::JpgDecode,
 ];
 
 /// The archive and patch capabilities, which need a readable `data.sah` (they all fail with it).
@@ -237,6 +244,9 @@ impl Cap {
             Cap::ItmIndexCount => "`.ITM` files the index lists (index only)",
             Cap::ItmRoundTrip => "`Itm::parse` reads every `.ITM` to the last byte and `to_bytes` gives it back byte for byte",
             Cap::TextureIndexFound => "texture index: `.3DC` and `.3DO` meshes that the `.MLT`, `.MON` and `.ITM` lists pair with at least one texture that exists (validated offline)",
+            Cap::WavIndexCount => "`.wav` files the index lists (index only)",
+            Cap::WavHeaders => "`wav::parse_header` reads the header of every `.wav` (validated offline)",
+            Cap::JpgDecode => "`texture::decode` decodes every `.jpg` to RGBA (validated offline)",
         }
     }
 }
@@ -252,7 +262,7 @@ use Cell::{Fails as F, FitOnly as FO, NotAvailable as NA, Ok as O, Plain as P};
 ///
 /// Note: the 9 EP8 `DB*Data` binary-header files of kr-ep8 and fawkes-v68 do not survive `seed::unwrap` + CRC
 /// (the SEED rows of those two clients may need `Fails` once a run shows it); a run that disagrees must be reported, not forced to pass.
-pub const EXPECTED: [[Cell; 9]; 56] = [
+pub const EXPECTED: [[Cell; 9]; 59] = [
     /* IndexParse       */ [O, O, O, O, O, O, O, O, O],
     /* ToBytesIdentical */ [O, O, O, O, O, O, O, O, O],
     /* InspectSah       */ [O, O, O, O, O, O, O, O, O],
@@ -309,6 +319,9 @@ pub const EXPECTED: [[Cell; 9]; 56] = [
     /* ItmIndexCount          */ [O, O, O, O, O, O, O, O, O],
     /* ItmRoundTrip           */ [O, NA, NA, NA, NA, NA, NA, NA, NA],
     /* TextureIndexFound      */ [O, NA, NA, NA, NA, NA, NA, NA, NA],
+    /* WavIndexCount          */ [O, O, O, O, O, O, O, O, O],
+    /* WavHeaders             */ [O, NA, NA, NA, NA, NA, NA, NA, NA],
+    /* JpgDecode              */ [O, NA, NA, NA, NA, NA, NA, NA, NA],
 ];
 
 /// The numbers the T1 rows assert (the "OK 19,939" style cells of docs/version-matrix.md), in `CLIENTS` order; `None` = a plain "OK" cell.
@@ -324,10 +337,11 @@ pub const EXPECTED: [[Cell; 9]; 56] = [
 /// `C3dcIndexCount`: `.3DC` files the index lists (every client; index only). `C3dcRoundTrip`: `.3DC` files that read to the last byte with exactly one layout and write back byte for byte (only where `data.saf` is present).
 /// `AniPreview`: `.ANI` files of the US client that have at least one compatible `.3DC` (by name and bone count); `n/a` without a `data.saf`.
 /// `VaniIndexCount`/`ManiIndexCount`: `.VANI`/`.MANI` files the index lists (every client; index only). `ManiIndexSize`: `.MANI` files the index lists with a length of 108 bytes (index only; the cell is `OK` only when it is every one). `VaniRoundTrip`/`ManiRoundTrip`: files that read to the last byte and write back byte for byte (only where `data.saf` is present).
+/// `WavIndexCount`: `.wav` files the index lists (every client; index only). `WavHeaders`: `.wav` files whose header reads (only where `data.saf` is present). `JpgDecode`: `.jpg` files that decode to RGBA (only where `data.saf` is present).
 /// `TextureIndexFound`: `.3DC`/`.3DO` meshes with at least one texture pair whose texture exists in the archive (only where `data.saf` is present; the number is measured).
 /// `MltIndexCount`/`MonIndexCount`/`ItmIndexCount`: `.MLT`/`.MON`/`.ITM` files the index lists (every client; index only). `MltRoundTrip`/`MonRoundTrip`/`ItmRoundTrip`: files that read to the last byte and write back byte for byte (only where `data.saf` is present).
 /// `C3doIndexCount`/`C3deIndexCount`: `.3DO`/`.3DE` files the index lists (every client; index only). `C3doRoundTrip`: `.3DO` files that read to the last byte and write back byte for byte. `C3deRead`: `.3DE` files that read with exactly one of the two layouts and write back byte for byte (only where `data.saf` is present); the cell is `OK` when every other file is refused with the reason, so on `us-108` 467 of the 469 listed files are counted and the 2 refused are named in the facts.
-pub const NUMBERS: [(Cap, [Option<u64>; 9]); 43] = [
+pub const NUMBERS: [(Cap, [Option<u64>; 9]); 46] = [
     (Cap::ArchiveVisibleCount, [Some(19_939), Some(21_523), Some(23_533), Some(24_745), Some(24_599), Some(30_340), Some(34_418), Some(48_118), Some(20_418)]),
     (Cap::ArchiveCheckIndex, [Some(0), Some(0), Some(0), Some(0), Some(0), Some(0), Some(1), Some(1), Some(0)]),
     (Cap::ArchiveFreeList, [Some(0), Some(0), Some(507), Some(500), Some(500), Some(0), Some(0), Some(630), Some(500)]),
@@ -371,6 +385,9 @@ pub const NUMBERS: [(Cap, [Option<u64>; 9]); 43] = [
     (Cap::ItmIndexCount, [Some(17), Some(17), Some(17), Some(17), Some(17), Some(17), Some(17), Some(17), Some(17)]),
     (Cap::ItmRoundTrip, [Some(17), None, None, None, None, None, None, None, None]),
     (Cap::TextureIndexFound, [Some(2_237), None, None, None, None, None, None, None, None]),
+    (Cap::WavIndexCount, [Some(1_019), Some(1_024), Some(1_024), Some(1_076), Some(1_679), Some(1_207), Some(1_153), Some(1_257), Some(1_587)]),
+    (Cap::WavHeaders, [Some(1_019), None, None, None, None, None, None, None, None]),
+    (Cap::JpgDecode, [Some(22), None, None, None, None, None, None, None, None]),
 ];
 
 pub fn expected_number(client: &str, cap: Cap) -> Option<u64> {
@@ -388,7 +405,7 @@ pub fn expected(client: &str, cap: Cap) -> Option<Cell> {
 #[derive(Clone, Debug)]
 pub struct Observed {
     pub client: String,
-    pub cells: [Cell; 56],
+    pub cells: [Cell; 59],
     /// Measured numbers of the T1 rows (see [`NUMBERS`]).
     pub numbers: Vec<(Cap, u64)>,
     /// Counts and other facts printed with the table (not asserted).
@@ -454,7 +471,7 @@ fn by_name<'a>(files: &'a [(String, Vec<u8>)], tail: &str) -> Option<&'a (String
 
 /// Measures one client folder.
 pub fn observe(client: &str, dir: &Path) -> Observed {
-    let mut o = Observed { client: client.to_string(), cells: [NA; 56], numbers: Vec::new(), facts: Vec::new(), sah_files: None, sah_millis: None, sdata_files: 0, sdata_bytes: 0, notes: Vec::new(), unlisted: Vec::new() };
+    let mut o = Observed { client: client.to_string(), cells: [NA; 59], numbers: Vec::new(), facts: Vec::new(), sah_files: None, sah_millis: None, sdata_files: 0, sdata_bytes: 0, notes: Vec::new(), unlisted: Vec::new() };
     let set = |o: &mut Observed, cap: Cap, c: Cell| o.cells[CAPS.iter().position(|x| *x == cap).expect("cap")] = c;
 
     // the index
@@ -477,6 +494,7 @@ pub fn observe(client: &str, dir: &Path) -> Observed {
                     t10::c3de_caps(&mut o, dir, &idx);
                     t12::list_caps(&mut o, dir, &idx);
                     t12::texture_caps(&mut o, dir, &idx);
+                    t12::media_caps(&mut o, dir, &idx);
                 }
                 Err(e) => {
                     o.notes.push(format!("Index::parse: {e}"));
