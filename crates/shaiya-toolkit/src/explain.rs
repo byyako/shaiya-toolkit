@@ -467,7 +467,7 @@ mod tests {
 pub fn loose_game_text(busy: &shaiya_archive::loose_edit::Busy) -> String {
     use shaiya_archive::loose_edit::{Busy, UNKNOWN_BUSY_TEXT};
     match busy {
-        Busy::Free => "not running (checked); restart the game to see the change".to_string(),
+        Busy::Free => "game.exe / Shaiya GX.exe in the install folder is not open (checked; a game started from another folder or program is not seen); restart the game to see the change".to_string(),
         Busy::Busy(why) => format!("{why}; close it first"),
         Busy::Unknown => format!("{UNKNOWN_BUSY_TEXT}; the button below says that it is stopped. Restart the game to see the change"),
     }

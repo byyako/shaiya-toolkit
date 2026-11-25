@@ -40,6 +40,9 @@ pub struct Client {
     /// A loose client's confirmed backup folder.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub backups: Option<String>,
+    /// Keys of the entry that this version does not know (a newer version wrote them): kept and written back as they were.
+    #[serde(flatten, skip_serializing_if = "BTreeMap::is_empty")]
+    pub extra: BTreeMap<String, Value>,
 }
 
 /// `shared.json`: what every toolkit program shares.

@@ -199,3 +199,88 @@ fn loose_commands_refuse_an_archive_client() {
     assert_eq!(code(&o), 2, "{}", err(&o));
     assert_eq!(snapshot(&w.client), before, "nothing was written");
 }
+
+#[test]
+fn a_backup_folder_that_another_client_uses_is_refused_and_an_ambiguous_id_is_never_guessed() {
+    let (w, root) = loose_world();
+    let mine = w.tmp.path().join("shared-backups");
+    assert_eq!(code(&sh(&w.data, &["clients", "add", "gx", p(&root), "--backups", p(&mine)])), 0);
+    // a second loose client with the same backup folder is refused (exit 4), and so is one inside the first client's data folder
+    let other = w.tmp.path().join("other");
+    put(&other.join("data"), "Item/3DO/b.txt", b"b");
+    put(&other.join("data"), "Character/x.txt", b"c");
+    let o = sh(&w.data, &["clients", "add", "second", p(&other), "--backups", p(&mine)]);
+    assert_eq!(code(&o), 4, "{}", err(&o));
+    assert!(err(&o).contains("already the backup folder of the client gx"), "{}", err(&o));
+    let o = sh(&w.data, &["clients", "add", "second", p(&other), "--backups", p(&root.join("data").join("b"))]);
+    assert_eq!(code(&o), 4, "{}", err(&o));
+    assert_eq!(code(&sh(&w.data, &["clients", "add", "second", p(&other), "--backups", p(&w.tmp.path().join("own"))])), 0);
+    // `--backups` for a saved client that has none cannot borrow the folder of another client either: the write is refused at the door
+    let third = w.tmp.path().join("third");
+    put(&third.join("data"), "Item/3DO/c.txt", b"c");
+    put(&third.join("data"), "Character/y.txt", b"y");
+    assert_eq!(code(&sh(&w.data, &["clients", "add", "nob", p(&third)])), 0);
+    let o = sh(&w.data, &["loose", "remove", "@nob", "Item/3DO/c.txt", "--backups", p(&mine), "--dry-run"]);
+    assert_eq!(code(&o), 4, "{}", err(&o));
+    assert!(err(&o).contains("already the backup folder of the client gx"), "{}", err(&o));
+    assert!(third.join("data/Item/3DO/c.txt").exists());
+    // two replaces give two journals whose ids end the same way: the ending alone is not enough
+    let src = w.tmp.path().join("new.txt");
+    for body in [b"one".as_slice(), b"two".as_slice()] {
+        write(&src, body);
+        let o = sh(&w.data, &["loose", "replace", "@gx", p(&src), "--as", "Item/3DO/a.txt", "--yes-game-stopped"]);
+        assert_eq!(code(&o), 0, "{}", err(&o));
+    }
+    let o = sh(&w.data, &["loose", "rollback", "@gx", "--id", "loose-replace", "--yes-game-stopped"]);
+    assert_eq!(code(&o), 4, "{}", err(&o));
+    assert!(err(&o).contains("fits 2 journals"), "{}", err(&o));
+    assert_eq!(std::fs::read(root.join("data/Item/3DO/a.txt")).unwrap(), b"two", "nothing was rolled back");
+    let v = json(&sh(&w.data, &["loose", "history", "@gx", "--json"]));
+    let newest = v["journals"][1]["id"].as_str().unwrap().to_string();
+    let o = sh(&w.data, &["loose", "rollback", "@gx", "--id", &newest, "--yes-game-stopped"]);
+    assert_eq!(code(&o), 0, "{}", err(&o));
+    assert_eq!(std::fs::read(root.join("data/Item/3DO/a.txt")).unwrap(), b"one");
+}
+
+#[test]
+fn a_saved_client_of_an_unknown_kind_is_listed_unsupported_and_refused_by_every_command() {
+    let (w, root) = loose_world();
+    let shared = serde_json::json!({"format": 1, "clients": [{"name": "future", "path": p(&root), "kind": "server", "extra": 1}]});
+    std::fs::write(w.data.join("shared.json"), serde_json::to_vec(&shared).unwrap()).unwrap();
+    let t = out(&sh(&w.data, &["clients", "list"]));
+    assert!(t.contains("[unsupported: kind \"server\"") && t.contains("not opened"), "{t}");
+    for args in [vec!["loose", "list", "@future"], vec!["archive", "list", "@future"], vec!["clients", "show", "future"], vec!["clients", "health", "future"]] {
+        let o = sh(&w.data, &args);
+        assert_eq!(code(&o), 4, "{args:?}: {}", err(&o));
+        assert!(err(&o).contains("does not know"), "{args:?}: {}", err(&o));
+    }
+    // an unrelated change of the list keeps the entry as it was written
+    assert_eq!(code(&sh(&w.data, &["clients", "add", "gx", p(&root)])), 0);
+    let v: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(w.data.join("shared.json")).unwrap()).unwrap();
+    let kept = v["clients"].as_array().unwrap().iter().find(|c| c["name"] == "future").expect("kept").clone();
+    assert_eq!((kept["kind"].as_str(), kept["extra"].as_i64()), (Some("server"), Some(1)), "{v}");
+}
+
+#[test]
+fn a_loose_patch_with_a_required_signature_is_checked_before_anything_is_written() {
+    let (w, root) = loose_world();
+    let backups = w.tmp.path().join("bk");
+    assert_eq!(code(&sh(&w.data, &["clients", "add", "gx", p(&root), "--backups", p(&backups)])), 0);
+    let files = w.tmp.path().join("pfiles");
+    put(&files, "Item/3DO/a.txt", b"patched");
+    let patch = w.tmp.path().join("ps0001.patch");
+    shaiya_patch::build(Some(files.as_path()), None, None, &patch).unwrap();
+    let (secret, public) = shaiya_patch::sign::keygen();
+    let a_txt = root.join("data/Item/3DO/a.txt");
+    // no signature: refused, nothing written (not even a backup folder)
+    let o = sh(&w.data, &["loose", "apply", "@gx", p(&patch), "--public-hex", &public, "--check-version", "3", "--yes-game-stopped"]);
+    assert_eq!(code(&o), 4, "{}", err(&o));
+    assert_eq!(std::fs::read(&a_txt).unwrap(), b"hello");
+    assert!(!backups.exists());
+    // a key without --check-version is refused as for shaiya patch
+    assert_eq!(code(&sh(&w.data, &["loose", "apply", "@gx", p(&patch), "--public-hex", &public, "--yes-game-stopped"])), 4);
+    shaiya_patch::sign::sign_file(&secret, 3, &patch, None, shaiya_core::fs::Existing::Overwrite, &shaiya_core::Job::silent()).unwrap();
+    let o = sh(&w.data, &["loose", "apply", "@gx", p(&patch), "--public-hex", &public, "--check-version", "3", "--yes-game-stopped"]);
+    assert_eq!(code(&o), 0, "{}", err(&o));
+    assert_eq!(std::fs::read(&a_txt).unwrap(), b"patched");
+}

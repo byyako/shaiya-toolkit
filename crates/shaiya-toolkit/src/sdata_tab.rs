@@ -64,7 +64,13 @@ impl ByteSource for ClientBytes<'_> {
         self.src.len(name)
     }
     fn read(&self, name: &str) -> Result<Vec<u8>> {
-        self.src.read(name, u64::MAX, &Job::silent())
+        // read the size the file has now and no more: a file that grew in between is refused, never read whole
+        let want = self.src.len(name).ok_or_else(|| shaiya_core::Error::Refused(format!("{name}: not in the client")))?;
+        let bytes = self.src.read(name, want, &Job::silent())?;
+        if bytes.len() as u64 != want {
+            return Err(shaiya_core::Error::Refused(format!("{name}: changed while it was read")));
+        }
+        Ok(bytes)
     }
 }
 

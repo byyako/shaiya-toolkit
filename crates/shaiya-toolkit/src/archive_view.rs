@@ -1399,7 +1399,10 @@ impl ArchiveView {
                 }
                 Some(TaskOutcome::Failed(e)) => {
                     let msg = e.to_string();
-                    if msg.contains("open in another program") || msg.contains("is running") {
+                    // on a loose folder only the busy-game refusal opens the Retry dialog; "cannot tell whether the game is running" and "another
+                    // change is running now" are shown as they are (Retry would repeat them unchanged)
+                    let in_use = if matches!(ex, Excl::ApplyLoose(..)) { msg.contains(shaiya_archive::loose_edit::BUSY_MARK) } else { msg.contains("open in another program") || msg.contains("is running") };
+                    if in_use {
                         self.apply = ApplyFlow::InUse(ex);
                     } else {
                         cx.shell.error("The change was not made", &e);
@@ -1696,8 +1699,10 @@ impl ArchiveView {
         self.apply = ApplyFlow::Confirm(Excl::Apply(plan, n));
     }
 
-    /// "Apply to client..." on a loose folder: the checks that need no file content run now (names, links, converted media, files changed
-    /// since they were queued); a refusal is shown and nothing is asked. Else the confirmation, then the exclusive apply.
+    /// "Apply to client..." on a loose folder: the checks that need no file content run now (names, links, converted media); a refusal is
+    /// shown and nothing is asked. Else the confirmation, then the exclusive apply, which reads the queued files and runs the readers' check on
+    /// them. A queued source file is read when the change is applied: one that was edited since it was queued is applied as it is then (the
+    /// journal records what was written).
     fn request_apply_loose(&mut self, cx: &mut ToolkitCx<'_>) {
         use shaiya_archive::loose_edit::{self, Busy};
         if !self.loose_write_ok() {

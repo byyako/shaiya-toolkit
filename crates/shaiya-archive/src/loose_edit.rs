@@ -15,6 +15,11 @@
 //!    them (`force` restores anyway and saves what was there first, inside the journal folder).
 //! 4. [`recover`] finishes what an interrupted change or rollback left: an unfinished apply is undone, an unfinished rollback is finished.
 //!
+//! One change at a time: [`apply`], [`rollback`], [`prune`] and [`recover`] each hold an exclusive lock on `loose.toolkit-lock` in the
+//! backup folder for their whole run (released by the system when the program ends, however it ends). A marker whose lock is free was
+//! left by a program that stopped; a marker whose lock is held belongs to a change that is running now, which nothing else touches
+//! ([`change_running`], [`unfinished`]).
+//!
 //! Nothing is written in any folder other than the data folder (the change itself) and the backup folder (journal, copies, marker).
 //! Nothing is deleted from the data folder without a copy in the journal.
 
@@ -25,17 +30,25 @@ use shaiya_core::hash::{sha256, sha256_file, to_hex, Hasher};
 use shaiya_core::time::utc_iso;
 use shaiya_core::{Error, Job, Result, Unit};
 use std::collections::{BTreeMap, HashMap, HashSet};
+use std::fs::TryLockError;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
 /// Says whether the bytes of the file `rel` (below the data folder) are acceptable: `Ok` for a type it does not know, an error that names
-/// the problem for a known model, effect or SData file that does not read to the last byte. Built by the caller from the readers.
+/// the problem for a known model or texture file that does not read to the last byte, or an SData file whose SEED wrapper fails (the table
+/// inside an SData file is not read). Built by the caller from the readers.
 pub type FormatCheck<'a> = &'a dyn Fn(&str, &[u8]) -> Result<()>;
 
 /// The marker that exists in the backup folder only while a change or a rollback is running or was interrupted.
 pub const MARKER: &str = "loose.toolkit-pending";
+/// The file whose exclusive lock says "a change to this backup folder is running"; it stays in the backup folder, empty.
+pub const LOCK_FILE: &str = "loose.toolkit-lock";
 const JOURNAL_FILE: &str = "journal.txt";
+/// The refusal when the lock is held (another change, rollback, prune or recovery of this backup folder is running).
+pub const RUNNING_TEXT: &str = "another change to this folder is running now (in the Toolkit or another program); wait until it has finished";
+/// What the refusal of a busy game says (so a caller can tell it from the other refusals).
+pub const BUSY_MARK: &str = "is running or open in another program";
 const TOOL: &str = concat!("shaiya ", env!("CARGO_PKG_VERSION"));
 
 /// Most files (puts and removes together) one change may hold.
@@ -52,7 +65,8 @@ const MAX_RECORDS: usize = 100_000;
 const MAX_JOURNAL_BYTES: u64 = 64 << 20;
 
 /// The top-level folders of a Shaiya-GX data folder that hold converted media (`interface/` and `Cursor/` PNG, `Sound/` OGG), which this
-/// toolkit never writes. Read from Shaiya-GX's data-format document.
+/// toolkit never writes. Read from the data-format document of the Shaiya-GX repository (docs/data-formats.md, lines 18, 79 and 89 of the
+/// copy read for this release; cited, not copied).
 const GX_MEDIA_FOLDERS: [&str; 3] = ["interface", "sound", "cursor"];
 
 /// One file to write: its path below the data folder (`/` or `\`) and its whole content.
@@ -410,11 +424,22 @@ pub fn name_problem(rel: &str) -> Option<String> {
     if parts.iter().any(|p| p.chars().any(char::is_control)) {
         return Some(format!("{rel:?} has a control character in it"));
     }
+    // Windows reaches a long name through its short alias (`CHARAC~1` is `Character`): a new name of that shape could land in a folder the
+    // plan did not look at, so it is refused there
+    if cfg!(windows) && parts.iter().any(|p| short_name_like(p)) {
+        return Some(format!("{rel:?} has a part that looks like a Windows short (8.3) name (NAME~1): use the long name"));
+    }
     None
 }
 
+/// `NAME~1`, `CHARAC~1.3DC`: at most 8 characters before the dot, ending in `~` and digits.
+fn short_name_like(part: &str) -> bool {
+    let base = part.split('.').next().unwrap_or(part);
+    base.len() <= 8 && base.rsplit_once('~').is_some_and(|(head, tail)| !head.is_empty() && !tail.is_empty() && tail.bytes().all(|b| b.is_ascii_digit()))
+}
+
 /// The converted-media rule of a Shaiya-GX layout: why `rel` is never written or removed there, or `None`.
-fn gx_problem(rel: &str) -> Option<String> {
+pub fn gx_problem(rel: &str) -> Option<String> {
     let n = lower(&rel.replace('\\', "/"));
     let first = n.split('/').next().unwrap_or("");
     let name = n.rsplit('/').next().unwrap_or("");
@@ -621,16 +646,21 @@ fn sorted_dirs(mut v: Vec<String>) -> Vec<String> {
     v
 }
 
-/// On a Shaiya-GX layout: the folder of `rel` holds `<stem>_<ext>.png` for `<stem>.<ext>` (the converted form of the file).
+/// On a Shaiya-GX layout: the folder of `rel` holds `<stem>_<ext>.png` for `<stem>.<ext>` (the converted form of the file), or, for a
+/// `.tga` with a number as its name (`NN.tga`), `NN.png` (docs/data-formats.md line 79 of the Shaiya-GX repository names `NN.png` for the TGA
+/// atlas; what exactly `NN` stands for was not checked, so only the narrow reading is refused).
 fn gx_sibling_png(layout: &LooseLayout, rel: &str) -> bool {
     let (dir, name) = match rel.rsplit_once('/') {
         Some((d, n)) => (Some(d), n),
         None => (None, rel),
     };
     let Some((stem, ext)) = name.rsplit_once('.') else { return false };
-    let want = lower(&format!("{stem}_{ext}.png"));
+    let mut wants = vec![lower(&format!("{stem}_{ext}.png"))];
+    if lower(ext) == "tga" && !stem.is_empty() && stem.bytes().all(|b| b.is_ascii_digit()) {
+        wants.push(lower(&format!("{stem}.png")));
+    }
     let folder = dir.map_or_else(|| layout.data.clone(), |d| join_rel(&layout.data, d));
-    std::fs::read_dir(folder).is_ok_and(|rd| rd.flatten().any(|e| lower(&e.file_name().to_string_lossy()) == want))
+    std::fs::read_dir(folder).is_ok_and(|rd| rd.flatten().any(|e| wants.contains(&lower(&e.file_name().to_string_lossy()))))
 }
 
 /// A file read in full after its size was checked against `cap`; for callers that build a [`LooseChange`] from files on disk.
@@ -679,7 +709,7 @@ fn probe_exes(exes: &[PathBuf]) -> Busy {
             Ok(_) => {}
             Err(e) if e.raw_os_error() == Some(32) => {
                 let name = p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-                return Busy::Busy(format!("{name} is running or open in another program"));
+                return Busy::Busy(format!("{name} {BUSY_MARK}"));
             }
             Err(_) => unknown = true,
         }
@@ -727,8 +757,39 @@ fn marker_text(op: &str, label: &str, journal: &Path, data: &Path) -> String {
     format!("format=2\nop={op}\nlabel={}\njournal={}\ndata={}\n", one_line(label), one_line(&journal.display().to_string()), one_line(&data.display().to_string()))
 }
 
-/// Claims the folder: creates the marker, failing when one is there.
-fn claim_marker(backups: &Path, text: &str) -> Result<()> {
+/// The exclusive lock of one running change (see the module text). Dropping it (or the program ending) releases it.
+struct ChangeLock {
+    _file: std::fs::File,
+}
+
+/// Takes the lock of the backup folder, or `Ok(None)` when another change, rollback, prune or recovery holds it.
+fn try_take(backups: &Path) -> Result<Option<ChangeLock>> {
+    let p = backups.join(LOCK_FILE);
+    let file = std::fs::OpenOptions::new().read(true).write(true).create(true).truncate(false).open(&p).map_err(|e| Error::io(&p, e))?;
+    match file.try_lock() {
+        Ok(()) => Ok(Some(ChangeLock { _file: file })),
+        Err(TryLockError::WouldBlock) => Ok(None),
+        Err(TryLockError::Error(e)) => Err(Error::Refused(format!("this system cannot lock {} ({e}); nothing was changed", p.display()))),
+    }
+}
+
+fn take(backups: &Path) -> Result<ChangeLock> {
+    try_take(backups)?.ok_or_else(|| Error::Refused(RUNNING_TEXT.to_string()))
+}
+
+/// Whether a change, rollback, prune or recovery of the backup folder of `layout` is running now (its lock is held). A folder with no lock
+/// file has never had one.
+pub fn change_running(layout: &LooseLayout) -> bool {
+    layout.backups.as_deref().is_some_and(running_in)
+}
+
+fn running_in(backups: &Path) -> bool {
+    let Ok(f) = std::fs::File::open(backups.join(LOCK_FILE)) else { return false };
+    matches!(f.try_lock_shared(), Err(TryLockError::WouldBlock))
+}
+
+/// Claims the folder: creates the marker, failing when one is there. Only the holder of the lock does this, so the marker is its own.
+fn claim_marker(backups: &Path, text: &str, _lock: &ChangeLock) -> Result<()> {
     let p = marker_path(backups);
     let mut f = match std::fs::OpenOptions::new().write(true).create_new(true).open(&p) {
         Ok(f) => f,
@@ -746,7 +807,8 @@ fn claim_marker(backups: &Path, text: &str) -> Result<()> {
     Ok(())
 }
 
-fn drop_marker(backups: &Path) {
+/// Removes the marker; needs the lock, so a change can only remove the marker it made itself.
+fn drop_marker(backups: &Path, _lock: &ChangeLock) {
     let _ = std::fs::remove_file(marker_path(backups));
 }
 
@@ -778,13 +840,17 @@ fn read_marker(backups: &Path) -> Result<Option<MarkerData>> {
     }
 }
 
-/// Whether a change or rollback of this folder was interrupted: the sentence for the person, or `None`.
+/// Whether a change or rollback of this folder was interrupted: the sentence for the person, or `None`. A change that is running now
+/// (its lock is held, see [`change_running`]) is not an interrupted one and gives `None`.
 pub fn unfinished(layout: &LooseLayout) -> Option<String> {
     let backups = layout.backups.as_ref()?;
+    if running_in(backups) {
+        return None;
+    }
     if marker_path(backups).exists() {
         return Some("an earlier change to this folder was interrupted; it will be put right before the next change (Health or shaiya loose recover does it now)".to_string());
     }
-    read_journals(backups).iter().any(|j| j.state == State::Pending).then(|| "a change was prepared but did not finish; recovery marks it so".to_string())
+    own_journals(layout, backups).0.iter().any(|j| j.state == State::Pending).then(|| "a change was prepared but did not finish; recovery marks it so".to_string())
 }
 
 /// Makes `<backups>/<UTC stamp>-<NNNN>-<slug>/`: NNNN counts up within one stamp (one second), so the folder names sort in the order the changes
@@ -872,21 +938,45 @@ fn clean_temps_of(target: &Path) {
 pub fn apply(layout: &LooseLayout, plan: LoosePlan, opts: &LooseOptions, check: FormatCheck<'_>, job: &Job) -> Result<LooseReport> {
     let backups = backups_of(layout)?;
     ensure_not_busy(layout, opts)?;
-    // a leftover of an earlier change is put right first; the folder is only made once everything else is known to be fine
-    let recovered = if backups.is_dir() { recover_unchecked(layout, &backups)? } else { Vec::new() };
+    let fresh = !backups.exists();
+    std::fs::create_dir_all(&backups).map_err(|e| Error::io(&backups, e))?;
+    let r = apply_in(layout, plan, opts, check, job, &backups);
+    if r.is_err() && fresh {
+        forget_fresh(&backups);
+    }
+    r
+}
+
+/// A backup folder this call made and nothing came of (the change was refused): its lock file and the folder go again, when nobody else
+/// is using it (the folder is only removed when empty, so a journal is never lost).
+fn forget_fresh(backups: &Path) {
+    if let Ok(Some(lock)) = try_take(backups) {
+        let only_the_lock = std::fs::read_dir(backups).is_ok_and(|rd| rd.flatten().all(|e| e.file_name() == LOCK_FILE));
+        if only_the_lock {
+            let _ = std::fs::remove_file(backups.join(LOCK_FILE));
+        }
+        drop(lock);
+    }
+    let _ = std::fs::remove_dir(backups);
+}
+
+fn apply_in(layout: &LooseLayout, plan: LoosePlan, opts: &LooseOptions, check: FormatCheck<'_>, job: &Job, backups: &Path) -> Result<LooseReport> {
+    // the folder may be a junction into the data folder that only exists now
+    if let Some(why) = backup_folder_problem(layout, backups) {
+        return Err(Error::Refused(why));
+    }
+    // one change at a time: the lock is held until this function returns, whatever way it returns
+    let lock = take(backups)?;
+    // a leftover of an earlier change is put right first (it is a leftover: nobody holds the lock but this change)
+    let recovered = recover_unchecked(layout, backups, &lock)?;
     job.check()?;
     // everything is as planned: the same names, the same files, no link
     revalidate(layout, &plan)?;
-    std::fs::create_dir_all(&backups).map_err(|e| Error::io(&backups, e))?;
-    // the folder may be a junction into the data folder that only exists now
-    if let Some(why) = backup_folder_problem(layout, &backups) {
-        return Err(Error::Refused(why));
-    }
     let label = if opts.label.trim().is_empty() { "loose edit".to_string() } else { opts.label.clone() };
     let kind = if opts.patch { "loose-patch" } else { "loose-edit" };
     job.stage("saving the originals");
     job.total(Some(plan.puts.iter().filter(|p| p.existed).map(|p| p.stamp.len).sum::<u64>() + plan.removes.iter().map(|r| r.len).sum::<u64>() + plan.bytes_written()), Unit::Bytes);
-    let jdir = create_journal_dir(&backups, &label)?;
+    let jdir = create_journal_dir(backups, &label)?;
     let made = (|| -> Result<LooseJournal> {
         let mut j = LooseJournal {
             dir: jdir.clone(),
@@ -917,7 +1007,7 @@ pub fn apply(layout: &LooseLayout, plan: LoosePlan, opts: &LooseOptions, check: 
             j.records.push(LooseRec { rel: r.rel.clone(), existed: true, sha256_before: Some(sum), sha256_after: None, backup: Some(rel) });
         }
         j.write()?;
-        claim_marker(&backups, &marker_text("apply", &label, &jdir, &layout.data))?;
+        claim_marker(backups, &marker_text("apply", &label, &jdir, &layout.data), &lock)?;
         Ok(j)
     })();
     let mut journal = match made {
@@ -934,7 +1024,7 @@ pub fn apply(layout: &LooseLayout, plan: LoosePlan, opts: &LooseOptions, check: 
         Ok(()) => {
             journal.state = State::Applied;
             journal.write()?;
-            drop_marker(&backups);
+            drop_marker(backups, &lock);
             Ok(LooseReport {
                 journal: jdir,
                 added: plan.puts.iter().filter(|p| !p.existed).map(|p| p.rel.clone()).collect(),
@@ -948,7 +1038,7 @@ pub fn apply(layout: &LooseLayout, plan: LoosePlan, opts: &LooseOptions, check: 
             Ok(_) => {
                 journal.state = State::RolledBack { at_utc: utc_iso(SystemTime::now()) };
                 let _ = journal.write();
-                drop_marker(&backups);
+                drop_marker(backups, &lock);
                 Err(e)
             }
             Err(undo) => Err(Error::Refused(format!("{e}; and the files could not be put back ({undo}); open the folder again so the toolkit can recover it"))),
@@ -968,9 +1058,41 @@ impl From<Error> for Failure {
     }
 }
 
-/// Everything in the plan is as it was when the plan was made.
+/// Everything in the plan is as it was when the plan was made, and its fields are still what `plan` made of them (they are public: a caller
+/// that changed a name or a folder list after `plan` is refused here, with the same name rules and the same folders `plan` would make).
 fn revalidate(layout: &LooseLayout, plan: &LoosePlan) -> Result<()> {
     let mut problems = Vec::new();
+    if plan.bytes.len() != plan.puts.len() {
+        return Err(Error::Refused("the plan was changed after it was made (plan it again)".to_string()));
+    }
+    let mut folders: BTreeMap<String, String> = BTreeMap::new();
+    for rel in plan.puts.iter().map(|p| p.rel.as_str()).chain(plan.removes.iter().map(|r| r.rel.as_str())) {
+        if let Some(why) = name_problem(rel) {
+            problems.push(why);
+        } else if layout.gx {
+            if let Some(why) = gx_problem(rel) {
+                problems.push(why);
+            }
+        }
+    }
+    if !problems.is_empty() {
+        return Err(refusal(problems));
+    }
+    let mut seen_puts: HashSet<String> = HashSet::new();
+    for p in &plan.puts {
+        if !seen_puts.insert(lower(&p.rel)) {
+            problems.push(format!("{}: listed twice in the plan", p.rel));
+        }
+        let mut scratch = Vec::new();
+        if let Some(r) = resolve(layout, &p.rel, &mut scratch) {
+            for d in r.new_dirs {
+                folders.entry(lower(&d)).or_insert(d);
+            }
+        }
+    }
+    if sorted_dirs(folders.into_values().collect()) != plan.new_dirs {
+        problems.push("the folders the plan makes are not the folders its files need (plan it again)".to_string());
+    }
     let now = |rel: &str, want: &Stamp, existed: bool, problems: &mut Vec<String>| match resolve(layout, rel, problems) {
         None => {}
         Some(r) if r.rel != rel || r.existed != existed || (existed && r.stamp != *want) => problems.push(format!("{rel}: changed since the change was planned (plan it again)")),
@@ -1044,6 +1166,9 @@ fn execute(layout: &LooseLayout, plan: &LoosePlan, j: &LooseJournal, opts: &Loos
 fn restore(layout: &LooseLayout, j: &LooseJournal, save_changed: bool) -> Result<(Vec<String>, Vec<String>, Vec<String>)> {
     if let Some(bad) = j.unsafe_path() {
         return Err(Error::Refused(format!("the journal {} names an unsafe path ({bad:?}); no file was touched", j.id)));
+    }
+    if !same_file(Path::new(&j.data), &layout.data) {
+        return Err(Error::Refused(format!("the journal {} was made in another data folder ({}); no file was touched", j.id, j.data)));
     }
     for r in &j.records {
         if let (Some(b), Some(want)) = (&r.backup, &r.sha256_before) {
@@ -1119,11 +1244,34 @@ fn unique_path(p: PathBuf) -> PathBuf {
 
 // ---------------------------------------------------------------------------------------------- recovery
 
-fn read_journals(backups: &Path) -> Vec<LooseJournal> {
-    let Ok(rd) = std::fs::read_dir(backups) else { return Vec::new() };
-    let mut v: Vec<LooseJournal> = rd.flatten().map(|e| e.path()).filter(|p| p.join(JOURNAL_FILE).is_file()).filter_map(|p| LooseJournal::read(&p).ok()).collect();
-    v.sort_by(|a, b| a.id.cmp(&b.id));
-    v
+/// Every journal folder of the backup folder: the journals that read, oldest first, and the names of the folders whose `journal.txt` does
+/// not read (damaged).
+fn read_journals(backups: &Path) -> (Vec<LooseJournal>, Vec<String>) {
+    let Ok(rd) = std::fs::read_dir(backups) else { return (Vec::new(), Vec::new()) };
+    let (mut good, mut bad) = (Vec::new(), Vec::new());
+    for p in rd.flatten().map(|e| e.path()).filter(|p| p.join(JOURNAL_FILE).is_file()) {
+        match LooseJournal::read(&p) {
+            Ok(j) => good.push(j),
+            Err(_) => bad.push(p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()),
+        }
+    }
+    good.sort_by(|a, b| a.id.cmp(&b.id));
+    bad.sort();
+    (good, bad)
+}
+
+/// [`read_journals`] limited to the journals made in the data folder of `layout`: a backup folder that two clients share (the toolkit refuses
+/// that when it is chosen, but a command line can still name one) never shows, rolls back, prunes or recovers the other client's changes.
+/// A damaged journal cannot say whose it is and is listed for everyone.
+fn own_journals(layout: &LooseLayout, backups: &Path) -> (Vec<LooseJournal>, Vec<String>) {
+    let (all, bad) = read_journals(backups);
+    (all.into_iter().filter(|j| same_file(Path::new(&j.data), &layout.data)).collect(), bad)
+}
+
+/// The names of the journal folders in the backup folder of `layout` whose `journal.txt` does not read: they cannot be rolled back and they
+/// block the rollback of every older change (a damaged newer journal may be the newest change).
+pub fn damaged_journals(layout: &LooseLayout) -> Vec<String> {
+    layout.backups.as_deref().map(|b| read_journals(b).1).unwrap_or_default()
 }
 
 fn inside_backups(backups: &Path, journal: &Path) -> bool {
@@ -1134,14 +1282,19 @@ fn inside_backups(backups: &Path, journal: &Path) -> bool {
 /// was nothing). Refuses (and changes nothing) when the marker belongs to another folder or is damaged.
 pub fn recover(layout: &LooseLayout, opts: &LooseOptions) -> Result<Vec<String>> {
     let backups = backups_of(layout)?;
-    if !marker_path(&backups).exists() && !read_journals(&backups).iter().any(|j| j.state == State::Pending) {
+    if !backups.is_dir() {
         return Ok(Vec::new());
     }
+    if !running_in(&backups) && !marker_path(&backups).exists() && !own_journals(layout, &backups).0.iter().any(|j| j.state == State::Pending) {
+        return Ok(Vec::new());
+    }
+    // a change that is running now is not an interrupted one: it is refused here, and nothing of it is touched
+    let lock = take(&backups)?;
     ensure_not_busy(layout, opts)?;
-    recover_unchecked(layout, &backups)
+    recover_unchecked(layout, &backups, &lock)
 }
 
-fn recover_unchecked(layout: &LooseLayout, backups: &Path) -> Result<Vec<String>> {
+fn recover_unchecked(layout: &LooseLayout, backups: &Path, lock: &ChangeLock) -> Result<Vec<String>> {
     let mut notes = Vec::new();
     let mut handled: Option<PathBuf> = None;
     match read_marker(backups) {
@@ -1170,12 +1323,12 @@ fn recover_unchecked(layout: &LooseLayout, backups: &Path) -> Result<Vec<String>
                 _ => notes.push(format!("the marker of {} was left over; it was removed", j.label)),
             }
             handled = Some(m.journal);
-            drop_marker(backups);
+            drop_marker(backups, lock);
         }
         Ok(None) => {}
         Err(e) => {
             // a marker that was cut short: when exactly one change is pending it is the one to undo
-            let pending: Vec<LooseJournal> = read_journals(backups).into_iter().filter(|j| j.state == State::Pending).collect();
+            let pending: Vec<LooseJournal> = own_journals(layout, backups).0.into_iter().filter(|j| j.state == State::Pending).collect();
             if pending.len() != 1 {
                 return Err(e);
             }
@@ -1185,11 +1338,11 @@ fn recover_unchecked(layout: &LooseLayout, backups: &Path) -> Result<Vec<String>
             j.write()?;
             notes.push(format!("undid the unfinished change {} ({})", j.label, j.id));
             handled = Some(j.dir.clone());
-            drop_marker(backups);
+            drop_marker(backups, lock);
         }
     }
     // prepared but never started: no marker means no file of the data folder was touched
-    for mut j in read_journals(backups) {
+    for mut j in own_journals(layout, backups).0 {
         if j.state == State::Pending && handled.as_ref().is_none_or(|h| !same_file(h, &j.dir)) {
             j.state = State::RolledBack { at_utc: utc_iso(SystemTime::now()) };
             j.write()?;
@@ -1201,7 +1354,7 @@ fn recover_unchecked(layout: &LooseLayout, backups: &Path) -> Result<Vec<String>
 
 // ---------------------------------------------------------------------------------------------- history and rollback
 
-fn status(layout: &LooseLayout, j: &LooseJournal, all: &[LooseJournal], force: bool) -> journal::Rollback {
+fn status(layout: &LooseLayout, j: &LooseJournal, all: &[LooseJournal], damaged: &[String], force: bool) -> journal::Rollback {
     let blocked = |s: String| journal::Rollback::Blocked(s);
     match &j.state {
         State::RolledBack { .. } => return blocked("already rolled back".to_string()),
@@ -1213,6 +1366,9 @@ fn status(layout: &LooseLayout, j: &LooseJournal, all: &[LooseJournal], force: b
     }
     if let Some(newer) = all.iter().filter(|o| o.id > j.id && o.state == State::Applied).map(|o| o.id.clone()).next_back() {
         return blocked(format!("roll back {newer} first"));
+    }
+    if let Some(bad) = damaged.iter().find(|d| d.as_str() > j.id.as_str()) {
+        return blocked(format!("a newer journal ({bad}) cannot be read, and it may be a newer change: deal with it first (docs/guides/undo-and-recovery.md)"));
     }
     if !same_file(Path::new(&j.data), &layout.data) {
         return blocked(format!("this change was made in another data folder ({})", j.data));
@@ -1252,8 +1408,8 @@ fn status(layout: &LooseLayout, j: &LooseJournal, all: &[LooseJournal], force: b
 /// The journals of this client's backup folder, oldest first, each with whether it can be rolled back now.
 pub fn list(layout: &LooseLayout) -> Result<Vec<(LooseJournal, journal::Rollback)>> {
     let backups = backups_of(layout)?;
-    let all = read_journals(&backups);
-    Ok(all.iter().map(|j| (j.clone(), status(layout, j, &all, false))).collect())
+    let (all, damaged) = own_journals(layout, &backups);
+    Ok(all.iter().map(|j| (j.clone(), status(layout, j, &all, &damaged, false))).collect())
 }
 
 /// Undoes one journal (the newest applied one): needs the same confirmed backup folder and a stopped game as [`apply`]. Without `force`
@@ -1261,24 +1417,25 @@ pub fn list(layout: &LooseLayout) -> Result<Vec<(LooseJournal, journal::Rollback
 pub fn rollback(layout: &LooseLayout, journal_dir: &Path, force: bool, opts: &LooseOptions, job: &Job) -> Result<RollbackReport> {
     let backups = backups_of(layout)?;
     ensure_not_busy(layout, opts)?;
-    recover_unchecked(layout, &backups)?;
-    if !inside_backups(&backups, journal_dir) {
+    if !backups.is_dir() || !inside_backups(&backups, journal_dir) {
         return Err(Error::Refused(format!("{} is not a journal of this client's backup folder", journal_dir.display())));
     }
+    let lock = take(&backups)?;
+    recover_unchecked(layout, &backups, &lock)?;
     let mut j = LooseJournal::read(journal_dir)?;
-    let all = read_journals(&backups);
-    if let journal::Rollback::Blocked(why) = status(layout, &j, &all, force) {
+    let (all, damaged) = own_journals(layout, &backups);
+    if let journal::Rollback::Blocked(why) = status(layout, &j, &all, &damaged, force) {
         return Err(Error::Refused(format!("cannot roll back {}: {why}", j.id)));
     }
     job.stage("restoring");
     job.check()?;
-    claim_marker(&backups, &marker_text("rollback", &j.label, &j.dir, &layout.data))?;
+    claim_marker(&backups, &marker_text("rollback", &j.label, &j.dir, &layout.data), &lock)?;
     let r = restore(layout, &j, force);
     match r {
         Ok((restored, deleted, saved)) => {
             j.state = State::RolledBack { at_utc: utc_iso(SystemTime::now()) };
             j.write()?;
-            drop_marker(&backups);
+            drop_marker(&backups, &lock);
             Ok(RollbackReport { journal: j.dir.clone(), restored, deleted, saved })
         }
         // the marker stays: the files may be half way back, and recovery finishes the rollback from the journal
@@ -1286,10 +1443,19 @@ pub fn rollback(layout: &LooseLayout, journal_dir: &Path, force: bool, opts: &Lo
     }
 }
 
-/// Deletes the oldest journal folders beyond `keep` (never one that did not finish); returns the deleted ids.
+/// Deletes the oldest journal folders beyond `keep` (never one that did not finish, and none of another client); returns the deleted ids.
+/// Refused while a change is running, and while an earlier change or rollback of the folder did not finish: its journal is what the
+/// recovery needs, so [`recover`] comes first.
 pub fn prune(layout: &LooseLayout, keep: usize) -> Result<Vec<String>> {
     let backups = backups_of(layout)?;
-    let all: Vec<LooseJournal> = read_journals(&backups).into_iter().filter(|j| j.state != State::Pending).collect();
+    if !backups.is_dir() {
+        return Ok(Vec::new());
+    }
+    let _lock = take(&backups)?;
+    if marker_path(&backups).exists() {
+        return Err(Error::Refused("an earlier change or rollback of this folder did not finish; put it right first (shaiya loose recover, or Health in the Toolkit): its journal is needed. Nothing was deleted".to_string()));
+    }
+    let all: Vec<LooseJournal> = own_journals(layout, &backups).0.into_iter().filter(|j| j.state != State::Pending).collect();
     let mut gone = Vec::new();
     if all.len() > keep {
         for j in &all[..all.len() - keep] {

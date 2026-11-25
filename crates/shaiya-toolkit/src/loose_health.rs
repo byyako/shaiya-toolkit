@@ -1,5 +1,5 @@
-//! The health window of a loose data folder: what `shaiya loose health` reports (files that cannot be read, model and SData files that fail
-//! their reader, model textures found nowhere, leftover temporary files, journals) and the recovery of an interrupted change. The look is
+//! The health window of a loose data folder: what `shaiya loose health` reports (files that cannot be read, model files that fail their reader, SData files whose SEED wrapper fails,
+//! model textures found nowhere, leftover temporary files, journals) and the recovery of an interrupted change. The look is
 //! read only; recovery is a write and goes through a confirmation with the Changes / Writes / Undo / Game rows.
 
 use crate::explain::{self, Rows};
@@ -89,7 +89,7 @@ impl LooseHealthView {
     /// The recovery question (tests press it through `confirm_recover`).
     pub fn ask_recover(&mut self) {
         let Some((_, layout)) = &self.client else { return };
-        if self.is_busy() || self.multi_running || loose_edit::unfinished(layout).is_none() {
+        if self.is_busy() || self.multi_running || loose_edit::change_running(layout) || loose_edit::unfinished(layout).is_none() {
             return;
         }
         let busy = loose_edit::busy_state(layout);
@@ -197,7 +197,7 @@ impl LooseHealthView {
                     for p in &h.unreadable_list {
                         ui.label(format!("    {p}"));
                     }
-                    line(ui, h.failing, "model or SData files fail their reader");
+                    line(ui, h.failing, "model files fail their reader or SData files fail their SEED wrapper");
                     for (p, why) in &h.failing_list {
                         ui.label(format!("    {p}: {why}"));
                     }
@@ -214,6 +214,13 @@ impl LooseHealthView {
                     }
                     for n in &h.notes {
                         ui.label(RichText::new(n).color(pal.weak));
+                    }
+                    for d in &h.damaged_journals {
+                        ui.label(RichText::new(format!("The journal folder {d} cannot be read: it is not listed, and it blocks the rollback of older changes.")).color(pal.warning));
+                    }
+                    if h.running {
+                        ui.separator();
+                        ui.label(RichText::new(format!("A change to this folder is {}", loose_edit::RUNNING_TEXT.trim_start_matches("another change to this folder is "))).color(pal.warning));
                     }
                     if let Some(u) = &h.unfinished {
                         ui.separator();

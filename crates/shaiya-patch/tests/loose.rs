@@ -4,7 +4,8 @@ use shaiya_archive::journal::State;
 use shaiya_archive::loose::{self, LooseLayout};
 use shaiya_archive::loose_edit::{self as le, LooseJournal, LooseOptions};
 use shaiya_core::{Error, Job, Result};
-use shaiya_patch::loose::{apply_loose, plan_loose};
+use shaiya_patch::loose::{apply_loose, apply_loose_signed, plan_loose};
+use shaiya_patch::VerifyKey;
 use shaiya_patch::build;
 use shaiya_testkit::TempDir;
 use std::collections::BTreeMap;
@@ -116,6 +117,51 @@ fn a_patch_with_interface_entries_is_refused_on_a_gx_layout() {
     assert!(!l.backups.as_ref().unwrap().exists(), "not even a backup folder was made");
     apply_loose(&patch, &plain, &opts(), &ok, &Job::silent()).unwrap();
     assert_eq!(fs::read(plain.data.join("Item/Item.SData")).unwrap(), b"new");
+}
+
+#[test]
+fn a_remove_of_converted_media_refuses_the_patch_on_a_gx_layout_but_a_missing_file_is_only_left_out() {
+    let t = TempDir::new("w17fix-patch-gx-remove");
+    let mut l = world(&t);
+    put_file(&l.data, "Sound/Music/a.ogg", b"ogg");
+    let before = snap(&l.data);
+    let patch = make_patch(&t.path().join("p"), &[("Item/Item.SData", b"new")], &[], "Sound/Music/a.wav\nnot/there.txt\n");
+    let plain = l.clone();
+    l.gx = true;
+    // Shaiya-GX holds Sound/Music/a.wav as a.ogg: the removal is refused (not dropped as "not in the folder")
+    let e = plan_loose(&patch, &l, &ok, &Job::silent()).expect_err("refused").to_string();
+    assert!(e.contains("Sound/Music/a.wav") && e.contains("Shaiya-GX stores this as"), "{e}");
+    assert!(!e.contains("not/there.txt"), "{e}");
+    assert_eq!(snap(&l.data), before);
+    // a plain layout leaves out both removals that are not there
+    let (_, missing) = plan_loose(&patch, &plain, &ok, &Job::silent()).unwrap();
+    assert_eq!(missing, vec!["Sound/Music/a.wav".to_string(), "not/there.txt".to_string()]);
+}
+
+#[test]
+fn a_required_signature_is_checked_again_when_the_patch_is_applied_to_a_loose_folder() {
+    let t = TempDir::new("w17fix-patch-sig");
+    let l = world(&t);
+    let before = snap(&l.data);
+    let patch = make_patch(&t.path().join("p"), &[("Item/Item.SData", b"new item data!")], &[], "");
+    let (secret, public) = shaiya_patch::sign::keygen();
+    let key = VerifyKey { public_hex: public, check_version: 3 };
+    // unsigned: refused before anything is read from, or written to, the folder
+    let e = apply_loose_signed(&patch, &l, &opts(), &ok, Some(&key), &Job::silent()).unwrap_err();
+    assert!(matches!(e, Error::Refused(_)), "{e}");
+    assert_eq!(snap(&l.data), before);
+    assert!(!l.backups.as_ref().unwrap().exists(), "not even a backup folder was made");
+    // signed with the key: applied
+    shaiya_patch::sign::sign_file(&secret, 3, &patch, None, shaiya_core::fs::Existing::Overwrite, &Job::silent()).unwrap();
+    // the patch file is swapped after it was signed (and verified earlier): refused at apply time
+    let swapped = t.path().join("p2");
+    let other = make_patch(&swapped, &[("Item/Item.SData", b"swapped in!")], &[], "");
+    let sig = shaiya_patch::sign::signature_path(&patch);
+    fs::copy(&sig, shaiya_patch::sign::signature_path(&other)).unwrap();
+    assert!(apply_loose_signed(&other, &l, &opts(), &ok, Some(&key), &Job::silent()).is_err(), "the signature belongs to the other file");
+    assert_eq!(snap(&l.data), before);
+    apply_loose_signed(&patch, &l, &opts(), &ok, Some(&key), &Job::silent()).unwrap();
+    assert_eq!(fs::read(l.data.join("Item/Item.SData")).unwrap(), b"new item data!");
 }
 
 #[test]

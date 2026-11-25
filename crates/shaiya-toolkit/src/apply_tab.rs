@@ -75,13 +75,14 @@ pub(crate) fn apply_patches_to(patches: &[PathBuf], dir: &std::path::Path, key: 
 
 /// Applies `patches` to a loose folder, one `apply_loose` call each, in order, stopping at the first error; each patch has its own journal. The
 /// reports are shaped like the archive ones so the flow that follows is the same.
-pub(crate) fn apply_patches_loose(patches: &[PathBuf], layout: &LooseLayout, unknown_busy_confirmed: bool, job: &shaiya_core::Job<'_>) -> Applied {
+pub(crate) fn apply_patches_loose(patches: &[PathBuf], layout: &LooseLayout, unknown_busy_confirmed: bool, key: Option<VerifyKey>, job: &shaiya_core::Job<'_>) -> Applied {
     let mut reports = Vec::new();
     let mut error = None;
     for p in patches {
         job.stage(&format!("applying {}", p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()));
         let opts = LooseOptions { label: String::new(), patch: true, confirmed_unknown_busy: unknown_busy_confirmed, crash_after_puts: None };
-        match patch::loose::apply_loose(p, layout, &opts, &shaiya_inspect::loose::format_check, job) {
+        // the signature is checked again here, as the archive path does inside `apply_with`: a patch file swapped after the verify step is refused
+        match patch::loose::apply_loose_signed(p, layout, &opts, &shaiya_inspect::loose::format_check, key.as_ref(), job) {
             Ok(r) => reports.push(Report { added: r.added, replaced: r.replaced, removed: r.removed, missing: Vec::new(), loose: Vec::new(), bytes: 0, journal: Some(r.journal) }),
             Err(e) => {
                 error = Some(e);
@@ -90,6 +91,18 @@ pub(crate) fn apply_patches_loose(patches: &[PathBuf], layout: &LooseLayout, unk
         }
     }
     Applied { reports, error }
+}
+
+/// Whether a failed apply is "the game or another program has the files open" (the dialog with Retry). On a loose folder only the busy-game
+/// refusal counts: the refusals "cannot tell whether the game is running", "another change is running now" and the like are shown as they
+/// are, because Retry would repeat them unchanged.
+fn is_in_use(e: &Error, loose: bool) -> bool {
+    let text = e.to_string();
+    if loose {
+        text.contains(loose_edit::BUSY_MARK)
+    } else {
+        text.contains("open in another program") || text.contains("is running")
+    }
 }
 
 struct ApplyReq {
@@ -120,6 +133,7 @@ enum Flow {
     LooseRollConfirm(String, PathBuf, Box<LooseLayout>, bool),
     LooseRollRunning(PathBuf, TaskHandle<loose_edit::RollbackReport>),
     LoosePruneConfirm(Box<LooseLayout>, usize),
+    LoosePruneRunning(TaskHandle<Vec<String>>),
 }
 
 /// What one patch would do to a loose folder (planned against the folder as it is now).
@@ -539,7 +553,7 @@ impl ApplyTab {
         let n = remaining.len();
         if let Some(layout) = req.loose.clone() {
             let unknown = req.unknown_busy;
-            let handle = cx.shell.tasks().spawn(TaskSpec { title: format!("Applying {n} patch{}", if n == 1 { "" } else { "es" }), cancellable: true, exclusive: Some(req.dir.display().to_string()) }, move |job| Ok(apply_patches_loose(&remaining, &layout, unknown, job)));
+            let handle = cx.shell.tasks().spawn(TaskSpec { title: format!("Applying {n} patch{}", if n == 1 { "" } else { "es" }), cancellable: true, exclusive: Some(req.dir.display().to_string()) }, move |job| Ok(apply_patches_loose(&remaining, &layout, unknown, key.clone(), job)));
             self.flow = Flow::Running(req, handle);
             return;
         }
@@ -718,7 +732,7 @@ impl ApplyTab {
                     let Applied { reports, error } = done;
                     req.done.extend(reports);
                     match error {
-                        Some(e) if req.done.is_empty() && (e.to_string().contains("open in another program") || e.to_string().contains("is running")) => self.flow = Flow::InUse(req),
+                        Some(e) if req.done.is_empty() && is_in_use(&e, req.loose.is_some()) => self.flow = Flow::InUse(req),
                         Some(e) => {
                             self.finish_apply(&req);
                             if matches!(e, Error::Cancelled) {
@@ -850,14 +864,29 @@ impl ApplyTab {
                 match cx.shell.confirm("toolkit-prune", &c) {
                     None => self.flow = Flow::LoosePruneConfirm(layout, keep),
                     Some(0) => {
-                        match loose_edit::prune(&layout, keep) {
-                            Ok(gone) => cx.shell.status(format!("Pruned {}", shaiya_inspect::counted(gone.len() as u64, "entry", "entries"))),
-                            Err(e) => cx.shell.error("Cannot prune the history", &e),
-                        }
-                        self.changed_counter += 1;
+                        // deleting many journal folders is slow on a big history: it runs on a worker, not in the window
+                        let key = layout.root.display().to_string();
+                        let l2 = (*layout).clone();
+                        let h = cx.shell.tasks().spawn(TaskSpec { title: "Pruning the history".into(), cancellable: false, exclusive: Some(key) }, move |_job| loose_edit::prune(&l2, keep));
+                        self.flow = Flow::LoosePruneRunning(h);
                     }
                     Some(_) => {}
                 }
+            }
+            Flow::LoosePruneRunning(mut h) => match h.poll() {
+                None => self.flow = Flow::LoosePruneRunning(h),
+                Some(TaskOutcome::Done(gone)) => {
+                    cx.shell.status(format!("Pruned {}", shaiya_inspect::counted(gone.len() as u64, "entry", "entries")));
+                    self.changed_counter += 1;
+                    archive.changed_counter += 1;
+                    archive.reopen(cx);
+                }
+                Some(TaskOutcome::Failed(e)) => {
+                    cx.shell.error("Cannot prune the history", &e);
+                    self.changed_counter += 1;
+                    archive.reopen(cx);
+                }
+                Some(_) => archive.reopen(cx),
             }
             Flow::PruneConfirm(dir, keep) => {
                 let c = Confirm { title: "Prune history".into(), text: format!("Delete the backups of all but the newest {}? Those changes can then no longer be rolled back.", shaiya_inspect::counted((keep) as u64, "change", "changes")), buttons: vec!["Prune".into(), "Cancel".into()], danger: Some(0), details: self.confirm_rows.clone() };
@@ -1221,5 +1250,25 @@ impl ApplyTab {
         if prune {
             self.request_prune(client);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use shaiya_archive::loose_edit::{BUSY_MARK, RUNNING_TEXT, UNKNOWN_BUSY_TEXT};
+
+    #[test]
+    fn only_a_busy_game_opens_the_retry_dialog_on_a_loose_folder() {
+        let busy = Error::Refused(format!("Shaiya GX.exe {BUSY_MARK}; close the game and try again"));
+        let unknown = Error::Refused(format!("{UNKNOWN_BUSY_TEXT} (confirm that it is stopped to go on)"));
+        let running = Error::Refused(RUNNING_TEXT.to_string());
+        assert!(is_in_use(&busy, true));
+        assert!(!is_in_use(&unknown, true), "Retry would repeat this unchanged: it is shown as an error");
+        assert!(!is_in_use(&running, true), "another change is running: shown as it is");
+        // an archive client keeps its own rule
+        assert!(is_in_use(&Error::Refused("data.saf is open in another program".to_string()), false));
+        assert!(is_in_use(&Error::Refused("the game is running".to_string()), false));
+        assert!(!is_in_use(&Error::Refused("something else".to_string()), false));
     }
 }

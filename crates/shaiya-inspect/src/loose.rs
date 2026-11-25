@@ -25,8 +25,9 @@ pub fn is_known_type(rel: &str) -> bool {
 }
 
 /// The check of one file about to be written: `Ok` for a type the toolkit does not read; for a model it must read to the last byte (the
-/// JSON export's own read-back), a texture must decode, an SEED-wrapped SData file must have a good checksum and no second wrapper. An empty
-/// file of a known type is refused.
+/// JSON export's own read-back), a texture must decode. For an SData file only the SEED wrapper is checked: a wrapped file must have a good
+/// checksum and no second wrapper; the table inside (a plain file, or the body of a wrapped one) is NOT read, because which table it is
+/// depends on the client version and the toolkit does not guess. An empty file of a known type is refused.
 pub fn format_check(rel: &str, bytes: &[u8]) -> Result<()> {
     let known = is_known_type(rel);
     if known && bytes.is_empty() {
@@ -59,7 +60,8 @@ pub struct LooseHealth {
     /// Files that are listed but cannot be opened or read now (gone, a link now, no permission).
     pub unreadable: usize,
     pub unreadable_list: Vec<String>,
-    /// Model and SData files that do not read to their last byte, with the reader's reason.
+    /// Model files that do not read to their last byte and SData files whose SEED wrapper fails (checksum, a second wrapper), with the
+    /// reader's reason. The table inside an SData file is not read.
     pub failing: usize,
     pub failing_list: Vec<(String, String)>,
     /// Model textures named by a list file that are not in the folder under the name, nor as `.dds`, `.tga`, `.png` or `_dds.png`.
@@ -69,8 +71,12 @@ pub struct LooseHealth {
     pub lists_refused: usize,
     /// `*.shaiya-tmp` files of the toolkit in the folder (the listing leaves them out).
     pub temps: usize,
-    /// An interrupted change or rollback (see `loose_edit::recover`).
+    /// An interrupted change or rollback (see `loose_edit::recover`). `None` while a change is running.
     pub unfinished: Option<String>,
+    /// A change, rollback, prune or recovery of this client is running now (its lock is held): nothing here is to be recovered.
+    pub running: bool,
+    /// Journal folders whose `journal.txt` does not read (they cannot be rolled back and block the rollback of older changes).
+    pub damaged_journals: Vec<String>,
     /// What the tree's listing left out (links, case twins, ...).
     pub notes: Vec<String>,
     /// Journals in the backup folder, and how many can still be rolled back (`None` without a confirmed backup folder).
@@ -80,7 +86,7 @@ pub struct LooseHealth {
 impl LooseHealth {
     /// True when nothing needs the person's attention.
     pub fn is_clean(&self) -> bool {
-        self.unreadable == 0 && self.failing == 0 && self.unresolved == 0 && self.lists_refused == 0 && self.unfinished.is_none() && self.temps == 0
+        self.unreadable == 0 && self.failing == 0 && self.unresolved == 0 && self.lists_refused == 0 && self.unfinished.is_none() && !self.running && self.damaged_journals.is_empty() && self.temps == 0
     }
 }
 
@@ -100,11 +106,11 @@ fn is_mesh(rel: &str) -> bool {
     l.ends_with(".3dc") || l.ends_with(".3do")
 }
 
-/// Reads a loose folder and reports: files that cannot be read, model and SData files that fail their reader, and model textures that
+/// Reads a loose folder and reports: files that cannot be read, model files that fail their reader and SData files whose SEED wrapper fails, and model textures that
 /// resolve nowhere. It writes nothing. Reading all model files takes a while on a real client: the job is checked per file and a cancel
 /// ends the report with `Error::Cancelled`.
 pub fn health(layout: &LooseLayout, tree: &LooseTree, job: &Job) -> Result<LooseHealth> {
-    let mut h = LooseHealth { files: tree.files().len(), notes: tree.notes(), temps: tree.skipped().temps, unfinished: loose_edit::unfinished(layout), ..LooseHealth::default() };
+    let mut h = LooseHealth { files: tree.files().len(), notes: tree.notes(), temps: tree.skipped().temps, unfinished: loose_edit::unfinished(layout), running: loose_edit::change_running(layout), damaged_journals: loose_edit::damaged_journals(layout), ..LooseHealth::default() };
     if layout.backups.is_some() {
         if let Ok(list) = loose_edit::list(layout) {
             let possible = list.iter().filter(|(_, r)| matches!(r, shaiya_archive::journal::Rollback::Possible)).count();
@@ -126,7 +132,9 @@ pub fn health(layout: &LooseLayout, tree: &LooseTree, job: &Job) -> Result<Loose
         let model = ModelFormat::from_file_name(&f.rel).is_some();
         let sdata = is_sdata_name(&f.rel);
         if (model && f.len <= modeljson::MAX_MODEL_BYTES) || (sdata && f.len <= SDATA_CAP) {
-            match tree.read(&f.rel, u64::MAX, &quiet).and_then(|b| format_check(&f.rel, &b)) {
+            // read no more than the size was checked against (a file that grew since the listing is cut there, and then fails its reader)
+            let cap = if model { modeljson::MAX_MODEL_BYTES } else { SDATA_CAP };
+            match tree.read(&f.rel, cap, &quiet).and_then(|b| format_check(&f.rel, &b)) {
                 Ok(()) => {}
                 Err(Error::Cancelled) => return Err(Error::Cancelled),
                 Err(e) => {

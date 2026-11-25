@@ -5,9 +5,10 @@
 //! What differs from an archive client: nothing is appended to `data.saf` (there is none); a loose file of the patch has to go into a
 //! top-level folder the data folder already has (the patch's loose files are meant for the install folder, which the toolkit never writes
 //! for a loose client); a remove of a file that is not there is left out and listed; on a Shaiya-GX layout any entry that would write or
-//! remove converted media refuses the whole patch with the list (the check of `loose_edit::plan`).
+//! remove converted media (a `remove.txt` line for `Sound/x.wav` included) refuses the whole patch with the list (the check of
+//! `loose_edit::plan`).
 
-use super::{checked_loose, loose_entries, open_zip, read_files, read_index, read_removals};
+use super::{checked_loose, loose_entries, open_zip, read_files, read_index, read_removals, VerifyKey};
 use shaiya_archive::loose::LooseLayout;
 use shaiya_archive::loose_edit::{self, FormatCheck, LooseChange, LooseOptions, LooseReport, LoosePlan, LoosePut, MAX_CHANGE_BYTES, MAX_CHANGE_FILES, MAX_PUT_BYTES};
 use shaiya_core::{Error, Job, Result};
@@ -77,7 +78,9 @@ pub fn change_of(patch: &Path, layout: &LooseLayout, job: &Job) -> Result<LooseP
     let mut removes = Vec::new();
     let mut missing = Vec::new();
     for r in removals {
-        if loose_edit::file_exists(layout, &r) {
+        // a removal of converted media on a Shaiya-GX layout is kept in the change, so that `plan` refuses the whole patch with the list (it is
+        // not "a file that is not there": Shaiya-GX holds that file under another name)
+        if loose_edit::file_exists(layout, &r) || (layout.gx && loose_edit::gx_problem(&r).is_some()) {
             removes.push(r);
         } else {
             missing.push(r);
@@ -95,6 +98,19 @@ pub fn plan_loose(patch: &Path, layout: &LooseLayout, check: FormatCheck<'_>, jo
 /// Applies a patch to a loose folder through the loose journal (`kind = loose-patch`, the label is the patch's file name). A refused
 /// name or a failed format check refuses the whole patch before a byte is written.
 pub fn apply_loose(patch: &Path, layout: &LooseLayout, opts: &LooseOptions, check: FormatCheck<'_>, job: &Job) -> Result<LooseReport> {
+    apply_loose_signed(patch, layout, opts, check, None, job)
+}
+
+/// [`apply_loose`] that first requires the patch's `<patch>.sig` to verify with `key` (nothing is read from the folder when it does not): the
+/// same check `apply_with` makes for an archive client, made again at apply time so a patch file swapped after a verify step is refused.
+pub fn apply_loose_signed(patch: &Path, layout: &LooseLayout, opts: &LooseOptions, check: FormatCheck<'_>, key: Option<&VerifyKey>, job: &Job) -> Result<LooseReport> {
+    if let Some(k) = key {
+        crate::sign::verify_file(&k.public_hex, k.check_version, patch, None, job).map_err(|e| match e {
+            Error::Cancelled => Error::Cancelled,
+            Error::Refused(m) => Error::Refused(m),
+            other => Error::Refused(format!("signature check failed for {}: {other}", patch.display())),
+        })?;
+    }
     let (plan, _) = plan_loose(patch, layout, check, job)?;
     let mut o = opts.clone();
     o.patch = true;

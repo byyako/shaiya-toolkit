@@ -28,7 +28,7 @@ pub struct LooseLayout {
     pub root: PathBuf,
     /// The folder with `Character/`, `Item/`, ... in it.
     pub data: PathBuf,
-    /// Shaiya-GX layout: converted media (`Sound/*.ogg`, `*_dds.png`) was found. Read from Shaiya-GX (their data-format document).
+    /// Shaiya-GX layout: converted media (`Sound/*.ogg`, `*_dds.png`) was found. Read from the Shaiya-GX repository, docs/data-formats.md lines 18, 79 and 89 of the copy read for this release (cited, not copied).
     pub gx: bool,
     /// The backup folder the person confirmed (never inside `data`); `None` until one is chosen.
     pub backups: Option<PathBuf>,
@@ -126,7 +126,7 @@ pub fn detect_hint() -> String {
 }
 
 /// Whether `data` holds a `*.ogg` file under `Sound/` or a `*_dds.png` file anywhere: the files Shaiya-GX converts (read from Shaiya-GX's
-/// data-format document). The probe lists at most [`GX_PROBE_LIMIT`] entries, enters no folder deeper than [`GX_PROBE_DEPTH`] and follows
+/// docs/data-formats.md of the Shaiya-GX repository, lines 18, 79 and 89 of the copy read for this release; cited, not copied). The probe lists at most [`GX_PROBE_LIMIT`] entries, enters no folder deeper than [`GX_PROBE_DEPTH`] and follows
 /// no link; `Sound/` and `interface/` are looked at first. Running out of entries is "not found".
 pub fn probe_gx(data: &Path) -> bool {
     struct St {
@@ -240,10 +240,53 @@ pub fn backup_folder_problem(layout: &LooseLayout, folder: &Path) -> Option<Stri
     None
 }
 
+/// Another saved loose client, as far as the backup folder rule needs it: its name, its data folder and its backup folder (if it has one).
+#[derive(Clone, Debug)]
+pub struct OtherClient {
+    pub name: String,
+    pub data: PathBuf,
+    pub backups: Option<PathBuf>,
+}
+
+/// Why `folder` may not be the backup folder of a client when the saved clients `others` exist (`None` when it is fine): it is another
+/// client's backup folder (two clients would share one journal folder and one marker) or it is inside another client's data folder.
+pub fn backup_folder_shared_problem(folder: &Path, others: &[OtherClient]) -> Option<String> {
+    let same = |a: &Path, b: &Path| is_inside(a, b) && is_inside(b, a);
+    for o in others {
+        if o.backups.as_deref().is_some_and(|b| same(folder, b)) {
+            return Some(format!("the backup folder {} is already the backup folder of the client {}: every client needs a folder of its own", folder.display(), o.name));
+        }
+        if is_inside(folder, &o.data) {
+            return Some(format!("the backup folder {} is inside the data folder of the client {}: choose a backup folder outside every client's data folder", folder.display(), o.name));
+        }
+    }
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use shaiya_testkit::TempDir;
+
+    #[test]
+    fn a_backup_folder_of_another_client_or_inside_its_data_is_refused() {
+        let t = TempDir::new("loose-shared-backups");
+        let (a, b) = (t.path().join("a").join("data"), t.path().join("b").join("data"));
+        let others = [
+            OtherClient { name: "A".into(), data: a.clone(), backups: Some(t.path().join("a-backups")) },
+            OtherClient { name: "B".into(), data: b.clone(), backups: None },
+        ];
+        for bad in [t.path().join("a-backups"), t.path().join("A-BACKUPS").join("."), a.join("x"), b.clone()] {
+            let why = backup_folder_shared_problem(&bad, &others);
+            // letter case counts only where the disk ignores it
+            if cfg!(windows) || !bad.to_string_lossy().contains("A-BACKUPS") {
+                assert!(why.is_some(), "{bad:?}");
+            }
+        }
+        for ok in [t.path().join("b-backups"), t.path().join("a-backups2"), t.path().join("a")] {
+            assert!(backup_folder_shared_problem(&ok, &others).is_none(), "{ok:?}");
+        }
+    }
 
     fn dirs(root: &Path, names: &[&str]) {
         for n in names {

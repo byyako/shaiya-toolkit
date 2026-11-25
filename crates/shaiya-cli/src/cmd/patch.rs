@@ -265,7 +265,7 @@ pub fn run(ctx: &Ctx, cmd: &Cmd, job: &Job) -> i32 {
     }
 }
 
-fn key_of(path: &Option<PathBuf>, hex: &Option<String>, check_version: Option<u32>) -> Result<Option<VerifyKey>> {
+pub(crate) fn key_of(path: &Option<PathBuf>, hex: &Option<String>, check_version: Option<u32>) -> Result<Option<VerifyKey>> {
     let public = match (path, hex) {
         (Some(p), _) => sign::read_key(p)?,
         (None, Some(h)) => {

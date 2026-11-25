@@ -257,6 +257,10 @@ impl ToolkitApp {
             cx.shell.status(format!("No client named {name}"));
             return;
         };
+        if !c.kind.is_supported() {
+            cx.shell.status(format!("{} is {}", c.name, clients::unsupported_text(&c)));
+            return;
+        }
         let dir = PathBuf::from(&c.path);
         if !has_sah(&dir) && !(c.kind == shaiya_core::config::ClientKind::Loose && dir.is_dir()) {
             cx.shell.status(format!("{} was not found at {}", c.name, c.path));
@@ -609,7 +613,7 @@ impl ToolkitApp {
             ui.label("Client");
             egui::ComboBox::from_id_salt("toolkit-client").selected_text(shown).width(220.0).show_ui(ui, |ui| {
                 for c in &clients {
-                    let found = has_sah(Path::new(&c.path)) || (c.kind == shaiya_core::config::ClientKind::Loose && Path::new(&c.path).is_dir());
+                    let found = c.kind.is_supported() && (has_sah(Path::new(&c.path)) || (c.kind == shaiya_core::config::ClientKind::Loose && Path::new(&c.path).is_dir()));
                     let label = self.picker_label_of(c, found, cx);
                     let text = if found { RichText::new(label) } else { RichText::new(label).color(pal.weak) };
                     if multi_lock::lock_hover(ui.add_enabled(found && switch_ok, egui::Button::selectable(current.as_deref() == Some(c.name.as_str()), text)), !switch_ok).clicked() {

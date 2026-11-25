@@ -551,6 +551,9 @@ fn prune_keeps_the_newest_and_never_a_pending_one() {
     // a journal that did not finish is kept
     let plan = le::plan(&l, change(vec![put("Item/b.txt", b"4")], &[]), &ok).unwrap();
     le::apply(&l, plan, &LooseOptions { crash_after_puts: Some(0), ..opts() }, &ok, &Job::silent()).unwrap_err();
+    // with its marker the prune is refused as a whole (see prune_refuses_while_a_change_or_rollback_did_not_finish); a journal that was
+    // prepared and never started (no marker) is kept while the rolled-back one goes
+    std::fs::remove_file(l.backups.as_ref().unwrap().join(le::MARKER)).unwrap();
     assert_eq!(le::prune(&l, 0).unwrap().len(), 1, "only the rolled-back one");
     assert_eq!(journals(&l).len(), 1);
 }
@@ -627,8 +630,8 @@ fn archive_rollback_refuses_a_loose_journal() {
 
 // ---------------------------------------------------------------------------------------------- links
 
-/// A folder on an NTFS volume (`%LOCALAPPDATA%\Temp`) for the junction tests: the scratch drive is exFAT and has no links. `None` (the
-/// test is skipped, with a line on stderr) where there is none.
+/// A folder on an NTFS volume (`%LOCALAPPDATA%\Temp`) for the junction tests: the scratch drive is exFAT and has no links. `None` where
+/// there is none: the test then FAILS (see [`no_links`]), it is never a silent pass.
 #[cfg(windows)]
 fn ntfs_temp(tag: &str) -> Option<TempNtfs> {
     let base = std::env::var_os("LOCALAPPDATA").map(PathBuf::from)?.join("Temp");
@@ -671,6 +674,17 @@ fn make_link(at: &Path, target: &Path) -> bool {
     }
 }
 
+/// Where a link test cannot make its links it fails loudly, with the reason; only a person who knows that this machine cannot hold links
+/// sets `SHAIYA_LINKS_SKIP_OK` (the test then prints that it skipped and passes). A test that passes without having tried the link is
+/// the thing this function exists to prevent.
+fn no_links(why: &str) {
+    if std::env::var_os("SHAIYA_LINKS_SKIP_OK").is_some() {
+        eprintln!("SKIPPED (SHAIYA_LINKS_SKIP_OK is set, the link was NOT tried): {why}");
+    } else {
+        panic!("this test needs a folder that can hold links and could not make one: {why} (set SHAIYA_LINKS_SKIP_OK=1 only on a machine that has none)");
+    }
+}
+
 fn link_base(tag: &str) -> Option<(PathBuf, Box<dyn std::any::Any>)> {
     #[cfg(windows)]
     {
@@ -689,8 +703,7 @@ fn link_base(tag: &str) -> Option<(PathBuf, Box<dyn std::any::Any>)> {
 #[test]
 fn a_junction_or_symlink_in_the_way_refuses_the_change_and_nothing_leaves_the_folder() {
     let Some((base, _guard)) = link_base("link-way") else {
-        eprintln!("skipped: no folder that can hold links");
-        return;
+        return no_links("no folder that can hold links");
     };
     let root = base.join("c");
     put_file(&root, "data/Character/a.bin", b"a");
@@ -698,8 +711,7 @@ fn a_junction_or_symlink_in_the_way_refuses_the_change_and_nothing_leaves_the_fo
     let outside = base.join("outside");
     put_file(&outside, "victim.txt", b"must stay");
     if !make_link(&root.join("data").join("Link"), &outside) {
-        eprintln!("skipped: this folder cannot hold a link");
-        return;
+        return no_links("this folder cannot hold a link");
     }
     let mut l = loose::detect(&root).unwrap().unwrap();
     l.backups = Some(base.join("backups"));
@@ -733,8 +745,7 @@ fn a_junction_or_symlink_in_the_way_refuses_the_change_and_nothing_leaves_the_fo
 #[test]
 fn a_backup_folder_that_is_a_junction_into_the_data_folder_is_refused() {
     let Some((base, _guard)) = link_base("link-backups") else {
-        eprintln!("skipped: no folder that can hold links");
-        return;
+        return no_links("no folder that can hold links");
     };
     let root = base.join("c");
     put_file(&root, "data/Character/a.bin", b"a");
@@ -742,8 +753,7 @@ fn a_backup_folder_that_is_a_junction_into_the_data_folder_is_refused() {
     let mut l = loose::detect(&root).unwrap().unwrap();
     let hidden = base.join("looks-outside");
     if !make_link(&hidden, &l.data) {
-        eprintln!("skipped: this folder cannot hold a link");
-        return;
+        return no_links("this folder cannot hold a link");
     }
     l.backups = Some(hidden.clone());
     let before = snap(&l.data);
@@ -757,8 +767,7 @@ fn a_backup_folder_that_is_a_junction_into_the_data_folder_is_refused() {
 #[test]
 fn a_data_folder_that_is_a_link_is_refused() {
     let Some((base, _guard)) = link_base("link-data") else {
-        eprintln!("skipped: no folder that can hold links");
-        return;
+        return no_links("no folder that can hold links");
     };
     let real = base.join("real");
     put_file(&real, "Character/a.bin", b"a");
@@ -766,8 +775,7 @@ fn a_data_folder_that_is_a_link_is_refused() {
     let root = base.join("c");
     std::fs::create_dir_all(&root).unwrap();
     if !make_link(&root.join("data"), &real) {
-        eprintln!("skipped: this folder cannot hold a link");
-        return;
+        return no_links("this folder cannot hold a link");
     }
     let l = LooseLayout { root: root.clone(), data: root.join("data"), gx: false, backups: Some(base.join("backups")) };
     let e = le::plan(&l, change(vec![put("Item/n.txt", b"n")], &[]), &ok).unwrap_err();
@@ -800,19 +808,284 @@ fn a_temp_file_never_stays_and_the_listing_never_sees_one() {
     assert!(snap(&l.data).keys().all(|k| !k.ends_with(".shaiya-tmp")));
 }
 
+/// The UTC stamp part of a journal folder name (`<stamp>-<NNNN>-<slug>`): everything before the counter.
+fn stamp_of(id: &str) -> String {
+    id.split('-').next().unwrap_or("").to_string()
+}
+
 #[test]
 fn changes_made_in_one_second_keep_their_order_whatever_their_labels() {
-    // "zeta" sorts after "alpha" by name, but alpha was made later: the newest is the one that rolls back
-    let t = TempDir::new("w17-order");
-    let l = world(&t);
-    for (label, bytes) in [("zeta", b"v2"), ("alpha", b"v3"), ("mid", b"v4")] {
-        let plan = le::plan(&l, change(vec![put("Item/b.txt", bytes)], &[]), &ok).unwrap();
-        le::apply(&l, plan, &LooseOptions { label: label.into(), ..opts() }, &ok, &Job::silent()).unwrap();
+    // "zeta" sorts after "alpha" by name, but alpha was made later: the newest is the one that rolls back. The test only tests the NNNN
+    // counter when the three changes share one second, so it tries again (a new folder each time) until they do, and asserts that they did.
+    let mut same_second = false;
+    for attempt in 0..30 {
+        let t = TempDir::new(&format!("w17-order-{attempt}"));
+        let l = world(&t);
+        for (label, bytes) in [("zeta", b"v2"), ("alpha", b"v3"), ("mid", b"v4")] {
+            let plan = le::plan(&l, change(vec![put("Item/b.txt", bytes)], &[]), &ok).unwrap();
+            le::apply(&l, plan, &LooseOptions { label: label.into(), ..opts() }, &ok, &Job::silent()).unwrap();
+        }
+        let all = journals(&l);
+        // the order holds whether or not the second turned over
+        assert_eq!(all.iter().map(|(j, _)| j.label.as_str()).collect::<Vec<_>>(), ["zeta", "alpha", "mid"], "the history is in the order the changes were made");
+        assert_eq!(all[2].1, Rollback::Possible);
+        assert!(matches!(all[1].1, Rollback::Blocked(_)) && matches!(all[0].1, Rollback::Blocked(_)));
+        let stamps: Vec<String> = all.iter().map(|(j, _)| stamp_of(&j.id)).collect();
+        if stamps[0] == stamps[1] && stamps[1] == stamps[2] {
+            same_second = true;
+            let counters: Vec<&str> = all.iter().map(|(j, _)| j.id.split('-').nth(1).unwrap_or("")).collect();
+            assert_eq!(counters, ["0001", "0002", "0003"], "one second: the counter makes the order {:?}", all.iter().map(|(j, _)| &j.id).collect::<Vec<_>>());
+            le::rollback(&l, &all[2].0.dir, false, &opts(), &Job::silent()).unwrap();
+            assert_eq!(std::fs::read(l.data.join("Item/b.txt")).unwrap(), b"v3");
+            break;
+        }
     }
-    let all = journals(&l);
-    assert_eq!(all.iter().map(|(j, _)| j.label.as_str()).collect::<Vec<_>>(), ["zeta", "alpha", "mid"], "the history is in the order the changes were made");
-    assert_eq!(all[2].1, Rollback::Possible);
-    assert!(matches!(all[1].1, Rollback::Blocked(_)) && matches!(all[0].1, Rollback::Blocked(_)));
-    le::rollback(&l, &all[2].0.dir, false, &opts(), &Job::silent()).unwrap();
-    assert_eq!(std::fs::read(l.data.join("Item/b.txt")).unwrap(), b"v3");
+    assert!(same_second, "in 30 tries the three changes never fell into one second: the counter path was not reached");
+}
+
+// ---------------------------------------------------------------------------------------------- one change at a time, prune, shared folders
+
+/// A client of its own folder `name` below `t`, with `backups` as its backup folder.
+fn world_named(t: &TempDir, name: &str, backups: &Path) -> LooseLayout {
+    let root = t.path().join(name);
+    put_file(&root, "data/Character/Human/a.bin", ORIG_A);
+    put_file(&root, "data/Item/b.txt", ORIG_B);
+    put_file(&root, "data/World/w.bin", b"world");
+    let mut l = loose::detect(&root).unwrap().unwrap();
+    l.backups = Some(backups.to_path_buf());
+    l
+}
+
+#[test]
+fn a_running_change_is_never_recovered_pruned_or_rolled_back_by_another() {
+    use std::sync::{mpsc, Mutex};
+    use std::time::Duration;
+    let t = TempDir::new("w17fix-running");
+    let l = world(&t);
+    let first = apply_ok(&l, change(vec![put("Item/b.txt", b"B1")], &[]));
+    let plan = le::plan(&l, change(vec![put("Item/c.txt", b"C"), put("Item/d.txt", b"D")], &[]), &ok).unwrap();
+    let other_plan = le::plan(&l, change(vec![put("Item/e.txt", b"E")], &[]), &ok).unwrap();
+    let (reached_tx, reached_rx) = mpsc::channel::<()>();
+    let (go_tx, go_rx) = mpsc::channel::<()>();
+    let (reached_tx, go_rx) = (Mutex::new(reached_tx), Mutex::new(go_rx));
+    // the change stops inside its first write (the temp file is checked before it replaces the target) until the test lets it go
+    let blocking = |rel: &str, _: &[u8]| -> Result<()> {
+        if rel == "Item/c.txt" {
+            reached_tx.lock().unwrap().send(()).unwrap();
+            go_rx.lock().unwrap().recv_timeout(Duration::from_secs(120)).map_err(|_| Error::Refused("the test did not let the change go".into()))?;
+        }
+        Ok(())
+    };
+    let b = l.backups.clone().unwrap();
+    std::thread::scope(|s| {
+        let running = s.spawn(|| le::apply(&l, plan, &opts(), &blocking, &Job::silent()));
+        reached_rx.recv_timeout(Duration::from_secs(120)).expect("the change reached its first write");
+        assert!(b.join(le::MARKER).exists(), "the running change has its marker");
+        assert!(le::change_running(&l), "its lock is held");
+        assert!(le::unfinished(&l).is_none(), "a running change is not an interrupted one");
+        let snapshot = snap(&l.data);
+        // every other writer is refused with the same sentence, and nothing is put back, deleted or marked
+        let refused = [
+            le::recover(&l, &opts()).unwrap_err().to_string(),
+            le::apply(&l, other_plan, &opts(), &ok, &Job::silent()).unwrap_err().to_string(),
+            le::rollback(&l, &first.journal, false, &opts(), &Job::silent()).unwrap_err().to_string(),
+            le::prune(&l, 0).unwrap_err().to_string(),
+        ];
+        for r in &refused {
+            assert!(r.contains("is running now"), "{r}");
+        }
+        assert_eq!(snap(&l.data), snapshot, "nothing of the running change was touched");
+        assert!(b.join(le::MARKER).exists(), "the marker of the running change is still its own");
+        assert!(first.journal.exists());
+        assert!(matches!(LooseJournal::read(&first.journal).unwrap().state, State::Applied));
+        go_tx.send(()).unwrap();
+        running.join().unwrap().unwrap();
+    });
+    assert!(!b.join(le::MARKER).exists() && !le::change_running(&l));
+    assert_eq!(std::fs::read(l.data.join("Item/c.txt")).unwrap(), b"C");
+    assert_eq!(std::fs::read(l.data.join("Item/d.txt")).unwrap(), b"D");
+    assert_eq!(std::fs::read(l.data.join("Item/b.txt")).unwrap(), b"B1");
+    // once it has finished the others work again
+    assert!(le::recover(&l, &opts()).unwrap().is_empty());
+    assert_eq!(le::prune(&l, 5).unwrap().len(), 0);
+}
+
+#[test]
+fn a_marker_with_a_free_lock_is_an_interrupted_change() {
+    // what a program that stopped leaves: the marker, and no lock held by anybody
+    let t = TempDir::new("w17fix-free-lock");
+    let l = world(&t);
+    let plan = le::plan(&l, change(vec![put("Item/b.txt", b"B2"), put("Item/c.txt", b"C")], &[]), &ok).unwrap();
+    le::apply(&l, plan, &LooseOptions { crash_after_puts: Some(1), ..opts() }, &ok, &Job::silent()).unwrap_err();
+    assert!(l.backups.as_ref().unwrap().join(le::MARKER).exists());
+    assert!(!le::change_running(&l), "the lock went with the call that returned");
+    assert!(le::unfinished(&l).is_some());
+    assert_eq!(le::recover(&l, &opts()).unwrap().len(), 1);
+}
+
+#[test]
+fn prune_refuses_while_a_change_or_rollback_did_not_finish() {
+    let t = TempDir::new("w17fix-prune-marker");
+    let l = world(&t);
+    let j1 = apply_ok(&l, change(vec![put("Item/b.txt", b"B1")], &[]));
+    let j2 = apply_ok(&l, change(vec![put("Item/b.txt", b"B2"), put("Item/c.txt", b"C")], &[]));
+    let b = l.backups.clone().unwrap();
+    // a rollback of j2 that stopped half way: one file put back, the marker and the "applied" state still there
+    std::fs::write(l.data.join("Item/b.txt"), b"B1").unwrap();
+    std::fs::write(b.join(le::MARKER), format!("format=2\nop=rollback\nlabel=test\njournal={}\ndata={}\n", j2.journal.display(), l.data.display())).unwrap();
+    for keep in [0, 1] {
+        let e = le::prune(&l, keep).unwrap_err().to_string();
+        assert!(e.contains("did not finish") && e.contains("Nothing was deleted"), "{e}");
+    }
+    assert!(j1.journal.exists() && j2.journal.exists(), "the journal the recovery needs is still there");
+    // recovery finishes the rollback, and then the prune works
+    let notes = le::recover(&l, &opts()).unwrap();
+    assert!(notes[0].contains("finished the interrupted rollback"), "{notes:?}");
+    assert!(!l.data.join("Item/c.txt").exists());
+    assert_eq!(std::fs::read(l.data.join("Item/b.txt")).unwrap(), b"B1", "the rollback of the second change leaves what the first one made");
+    assert_eq!(le::prune(&l, 1).unwrap().len(), 1);
+    // an interrupted change keeps its journal the same way
+    let plan = le::plan(&l, change(vec![put("Item/b.txt", b"B3")], &[]), &ok).unwrap();
+    le::apply(&l, plan, &LooseOptions { crash_after_puts: Some(0), ..opts() }, &ok, &Job::silent()).unwrap_err();
+    assert!(le::prune(&l, 0).unwrap_err().to_string().contains("did not finish"));
+    assert_eq!(journals(&l).len(), 2);
+}
+
+#[test]
+fn clients_that_share_a_backup_folder_never_see_or_touch_each_others_journals() {
+    let t = TempDir::new("w17fix-shared");
+    let shared = t.path().join("shared-backups");
+    let (a, b) = (world_named(&t, "a", &shared), world_named(&t, "b", &shared));
+    let a1 = apply_ok(&a, change(vec![put("Item/b.txt", b"A1")], &[]));
+    apply_ok(&a, change(vec![put("Item/b.txt", b"A2")], &[]));
+    let b1 = apply_ok(&b, change(vec![put("Item/b.txt", b"B1")], &[]));
+    // each history holds its own changes only, and B's newer change does not block A's rollback
+    assert_eq!(journals(&a).len(), 2);
+    assert_eq!(journals(&b).len(), 1);
+    assert_eq!(journals(&a)[1].1, Rollback::Possible);
+    // A cannot roll back B's journal and cannot restore it into its own folder
+    let e = le::rollback(&a, &b1.journal, false, &opts(), &Job::silent()).unwrap_err().to_string();
+    assert!(e.contains("another data folder"), "{e}");
+    assert_eq!(std::fs::read(a.data.join("Item/b.txt")).unwrap(), b"A2");
+    assert_eq!(std::fs::read(b.data.join("Item/b.txt")).unwrap(), b"B1");
+    // pruning A deletes none of B's
+    assert_eq!(le::prune(&a, 0).unwrap().len(), 2);
+    assert!(b1.journal.exists() && !a1.journal.exists());
+    assert_eq!(journals(&b).len(), 1);
+    // an unfinished change of B in the shared folder: A is refused (the marker is B's) and B's files are not touched
+    let plan = le::plan(&b, change(vec![put("Item/b.txt", b"B2"), put("Item/n.txt", b"N")], &[]), &ok).unwrap();
+    le::apply(&b, plan, &LooseOptions { crash_after_puts: Some(1), ..opts() }, &ok, &Job::silent()).unwrap_err();
+    let (a_before, b_before) = (snap(&a.data), snap(&b.data));
+    let plan_a = le::plan(&a, change(vec![put("Item/z.txt", b"Z")], &[]), &ok).unwrap();
+    let e = le::apply(&a, plan_a, &opts(), &ok, &Job::silent()).unwrap_err().to_string();
+    assert!(e.contains("another data folder"), "{e}");
+    // the marker cut short: the one pending journal is B's, never A's to undo
+    std::fs::write(shared.join(le::MARKER), "format=2\nop=app").unwrap();
+    assert!(le::recover(&a, &opts()).is_err());
+    assert_eq!(snap(&a.data), a_before);
+    assert_eq!(snap(&b.data), b_before, "B's files were not restored into anything");
+    // B recovers its own change (its marker is cut short and its one pending journal is its own)
+    let notes = le::recover(&b, &opts()).unwrap();
+    assert!(notes[0].contains("undid the unfinished change"), "{notes:?}");
+    assert_eq!(std::fs::read(b.data.join("Item/b.txt")).unwrap(), b"B1");
+    assert!(!b.data.join("Item/n.txt").exists());
+}
+
+#[test]
+fn a_damaged_journal_is_listed_and_blocks_the_rollback_of_older_changes() {
+    let t = TempDir::new("w17fix-damaged-listed");
+    let l = world(&t);
+    let j1 = apply_ok(&l, change(vec![put("Item/b.txt", b"B1")], &[]));
+    assert!(le::damaged_journals(&l).is_empty());
+    let newer = l.backups.as_ref().unwrap().join("99991231T235959Z-0001-newer");
+    std::fs::create_dir_all(&newer).unwrap();
+    std::fs::write(newer.join("journal.txt"), "this is not a journal").unwrap();
+    assert_eq!(le::damaged_journals(&l), vec!["99991231T235959Z-0001-newer".to_string()]);
+    let e = le::rollback(&l, &j1.journal, false, &opts(), &Job::silent()).unwrap_err().to_string();
+    assert!(e.contains("cannot be read"), "{e}");
+    assert!(matches!(&journals(&l)[0].1, Rollback::Blocked(w) if w.contains("cannot be read")));
+    assert_eq!(std::fs::read(l.data.join("Item/b.txt")).unwrap(), b"B1");
+}
+
+#[test]
+fn a_plan_whose_public_fields_were_changed_is_refused_at_apply() {
+    let t = TempDir::new("w17fix-tampered");
+    let l = world(&t);
+    let plan = le::plan(&l, change(vec![put("Item/new.txt", b"n"), put("Made/deep/x.bin", b"x")], &[]), &ok).unwrap();
+    let before = snap(&l.data);
+    // a name that leaves the data folder
+    let mut bad = plan.clone();
+    bad.puts[0].rel = "../escape.txt".into();
+    let e = le::apply(&l, bad, &opts(), &ok, &Job::silent()).unwrap_err().to_string();
+    assert!(e.contains("escape.txt"), "{e}");
+    assert!(!t.path().join("c").join("escape.txt").exists() && !t.path().join("c").join("data").join("escape.txt").exists());
+    // a folder list that is not the files' folders
+    let tweaks: [fn(&mut le::LoosePlan); 3] = [|p| p.new_dirs.push("../x".into()), |p| p.new_dirs.clear(), |p| p.new_dirs[0] = "Other".into()];
+    for tweak in tweaks {
+        let mut bad = plan.clone();
+        tweak(&mut bad);
+        let e = le::apply(&l, bad, &opts(), &ok, &Job::silent()).unwrap_err().to_string();
+        assert!(e.contains("folders the plan makes"), "{e}");
+    }
+    // a converted-media name on a GX layout
+    let mut gx = l.clone();
+    gx.gx = true;
+    let mut bad = plan.clone();
+    bad.puts[0].rel = "Sound/new.ogg".into();
+    assert!(le::apply(&gx, bad, &opts(), &ok, &Job::silent()).is_err());
+    assert_eq!(snap(&l.data), before, "nothing was written in the data folder");
+    // the unchanged plan still applies
+    le::apply(&l, plan, &opts(), &ok, &Job::silent()).unwrap();
+    assert_eq!(std::fs::read(l.data.join("Made/deep/x.bin")).unwrap(), b"x");
+}
+
+#[test]
+fn a_windows_short_name_is_not_taken_for_a_new_folder() {
+    // CHARAC~1 is the short alias of Character on an NTFS volume: written as a "new" folder it would land in Character
+    let t = TempDir::new("w17fix-short");
+    let l = world(&t);
+    for rel in ["CHARAC~1/x.3dc", "Item/ITEM~2.txt", "Item/NAME~1"] {
+        let r = le::plan(&l, change(vec![put(rel, b"x")], &[]), &ok);
+        if cfg!(windows) {
+            assert!(r.unwrap_err().to_string().contains("short (8.3) name"), "{rel}");
+        } else {
+            assert!(r.is_ok(), "{rel}: other systems have no such alias");
+        }
+    }
+    // names that merely contain a tilde are fine
+    for rel in ["Item/a~b.txt", "Item/very-long-name~1.txt", "Item/~1.txt", "Item/x~.txt"] {
+        assert!(le::plan(&l, change(vec![put(rel, b"x")], &[]), &ok).is_ok(), "{rel}");
+    }
+}
+
+#[test]
+fn a_tga_atlas_that_gx_holds_as_a_png_is_not_written() {
+    let t = TempDir::new("w17fix-tga");
+    let mut l = world(&t);
+    put_file(&l.data, "Effect/12.png", b"png");
+    put_file(&l.data, "Effect/map_tga.png", b"png");
+    l.gx = true;
+    for rel in ["Effect/12.tga", "Effect/MAP.tga"] {
+        let e = le::plan(&l, change(vec![put(rel, b"x")], &[]), &ok).unwrap_err().to_string();
+        assert!(e.contains("stores this as PNG"), "{rel}: {e}");
+    }
+    for rel in ["Effect/13.tga", "Effect/other.tga"] {
+        assert!(le::plan(&l, change(vec![put(rel, b"x")], &[]), &ok).is_ok(), "{rel}");
+    }
+    l.gx = false;
+    assert!(le::plan(&l, change(vec![put("Effect/12.tga", b"x")], &[]), &ok).is_ok(), "a plain layout writes it");
+}
+
+#[test]
+fn force_restores_a_removed_file_that_was_created_again() {
+    let t = TempDir::new("w17fix-force-removed");
+    let l = world(&t);
+    let r = apply_ok(&l, change(vec![], &["Item/b.txt"]));
+    std::fs::write(l.data.join("Item/b.txt"), b"somebody made it again").unwrap();
+    let e = le::rollback(&l, &r.journal, false, &opts(), &Job::silent()).unwrap_err().to_string();
+    assert!(e.contains("changed or removed since"), "{e}");
+    let rep = le::rollback(&l, &r.journal, true, &opts(), &Job::silent()).unwrap();
+    assert_eq!(rep.saved, vec!["Item/b.txt".to_string()], "what was there is saved first");
+    assert_eq!(std::fs::read(l.data.join("Item/b.txt")).unwrap(), ORIG_B);
+    assert_eq!(std::fs::read(r.journal.join("saved/Item/b.txt")).unwrap(), b"somebody made it again");
 }

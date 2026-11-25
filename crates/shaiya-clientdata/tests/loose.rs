@@ -117,6 +117,22 @@ fn caps_refuse_or_leave_out_and_say_so() {
 }
 
 #[test]
+fn the_number_of_folders_and_the_entries_of_one_folder_are_capped() {
+    let t = TempDir::new("lt-caps-dirs");
+    let l = layout(t.path());
+    let job = Job::silent();
+    for n in 0..6 {
+        put(t.path(), &format!("Many/d{n}/f.txt"), b"x");
+    }
+    let e = match LooseTree::open_with(&l, Limits { max_dirs: 4, ..Limits::default() }, &job) { Err(e) => e.to_string(), Ok(_) => panic!("refused") };
+    assert!(e.contains("more than 4 folders"), "{e}");
+    assert!(LooseTree::open_with(&l, Limits { max_dirs: 500, ..Limits::default() }, &job).is_ok());
+    // one folder with more entries than the file cap is refused while it is being collected
+    let e = match LooseTree::open_with(&l, Limits { max_files: 5, ..Limits::default() }, &job) { Err(e) => e.to_string(), Ok(_) => panic!("refused") };
+    assert!(e.contains("more than 5"), "{e}");
+}
+
+#[test]
 fn a_cancelled_listing_and_read_end_cancelled() {
     let t = TempDir::new("lt-cancel");
     let l = layout(t.path());

@@ -34,11 +34,17 @@ pub fn load_clients(data_dir: Option<&Path>) -> Result<Vec<ClientFolder>> {
     }
 }
 
+/// The sentence for a saved entry whose `kind` this version does not know (it is listed and kept, never opened).
+pub fn unsupported_text(c: &ClientFolder) -> String {
+    format!("the saved client {} has the kind {:?}, which this version does not know (it was made by a newer version): it is kept in the list and not opened or changed", c.name, c.kind.as_str())
+}
+
 /// `@name` -> the saved folder; anything else is a path as given. An unknown name is an input error (exit 3) with a hint.
 pub fn resolve(data_dir: Option<&Path>, arg: &str) -> Result<PathBuf> {
     let Some(name) = arg.strip_prefix('@') else { return Ok(PathBuf::from(arg)) };
     let clients = load_clients(data_dir)?;
     match config::find_client(&clients, name) {
+        Some(c) if !c.kind.is_supported() => Err(Error::Refused(unsupported_text(c))),
         Some(c) => Ok(c.path.clone()),
         None => Err(Error::io(
             PathBuf::from(arg),

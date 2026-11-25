@@ -117,6 +117,13 @@ pub struct ApplyArgs {
     pub patch: PathBuf,
     #[arg(long)]
     pub dry_run: bool,
+    /// Require a valid signature from this public key file on the patch (checked before anything is read, and again right before the write)
+    #[arg(long, value_name = "PUBLIC.key", conflicts_with = "public_hex")]
+    pub key: Option<PathBuf>,
+    #[arg(long, value_name = "HEX")]
+    pub public_hex: Option<String>,
+    #[arg(long, value_name = "N")]
+    pub check_version: Option<u32>,
     #[command(flatten)]
     pub common: Common,
 }
@@ -176,6 +183,9 @@ fn client_layout(ctx: &Ctx, arg: &str, backups: Option<&Path>) -> Result<LooseLa
         let c = config::find_client(&clients, name).ok_or_else(|| {
             Error::io(PathBuf::from(arg), std::io::Error::new(std::io::ErrorKind::NotFound, "no saved client folder with this name (hint: shaiya clients list)"))
         })?;
+        if !c.kind.is_supported() {
+            return Err(Error::Refused(crate::config::unsupported_text(c)));
+        }
         if c.kind != ClientKind::Loose {
             return Err(not_loose(arg));
         }
@@ -198,6 +208,22 @@ fn client_layout(ctx: &Ctx, arg: &str, backups: Option<&Path>) -> Result<LooseLa
         _ => {}
     }
     Ok(layout)
+}
+
+/// Before a write: the backup folder is not the backup folder of another saved loose client and not inside its data folder (their journals
+/// and their marker would be mixed). The library filters every journal by its data folder as well; this stops the mix at the door.
+fn own_backups(ctx: &Ctx, layout: &LooseLayout) -> Result<()> {
+    let Some(b) = &layout.backups else { return Ok(()) };
+    let clients = crate::config::load_clients(ctx.data_dir.as_deref())?;
+    let others: Vec<loose::OtherClient> = clients
+        .iter()
+        .filter(|c| c.kind == ClientKind::Loose && !shaiya_core::fs::same_file(c.data_folder(), &layout.data))
+        .map(|c| loose::OtherClient { name: c.name.clone(), data: c.data_folder().to_path_buf(), backups: c.backups.clone() })
+        .collect();
+    match loose::backup_folder_shared_problem(b, &others) {
+        Some(why) => Err(Error::Refused(why)),
+        None => Ok(()),
+    }
 }
 
 fn not_loose(arg: &str) -> Error {
@@ -329,6 +355,8 @@ struct What<'a> {
     label: &'a str,
     patch: bool,
     dry_run: bool,
+    /// The patch file and the key its signature must verify with, checked again right before the write.
+    signed: Option<(&'a Path, shaiya_patch::VerifyKey)>,
 }
 
 fn finish(ctx: &Ctx, layout: &LooseLayout, plan: LoosePlan, common: &Common, what: What<'_>, client_arg: &str, job: &Job) -> Result<i32> {
@@ -343,6 +371,9 @@ fn finish(ctx: &Ctx, layout: &LooseLayout, plan: LoosePlan, common: &Common, wha
         return Ok(0);
     }
     let confirmed = game_stopped(ctx, layout, common)?;
+    if let Some((file, k)) = &what.signed {
+        verify_signature(file, k, job)?;
+    }
     let r = loose_edit::apply(layout, plan, &options(label, patch, confirmed), &check_fn, job)?;
     for n in &r.recovered {
         note(ctx, &format!("note: {n}"));
@@ -356,27 +387,43 @@ fn finish(ctx: &Ctx, layout: &LooseLayout, plan: LoosePlan, common: &Common, wha
     Ok(0)
 }
 
+/// The patch's `.sig` must verify with `key` (the refusal says why, nothing was read from the folder).
+fn verify_signature(patch: &Path, key: &shaiya_patch::VerifyKey, job: &Job) -> Result<()> {
+    shaiya_patch::sign::verify_file(&key.public_hex, key.check_version, patch, None, job).map_err(|e| match e {
+        Error::Cancelled => Error::Cancelled,
+        Error::Refused(m) => Error::Refused(m),
+        other => Error::Refused(format!("signature check failed for {}: {other}", patch.display())),
+    })
+}
+
 fn put_cmd(ctx: &Ctx, a: &PutArgs, replace: bool, job: &Job) -> Result<i32> {
     let layout = client_layout(ctx, &a.client, a.common.backups.as_deref())?;
+    own_backups(ctx, &layout)?;
     let change = change_of_files(a, replace, &layout)?;
     let plan = loose_edit::plan(&layout, change, &check_fn)?;
-    finish(ctx, &layout, plan, &a.common, What { label: if replace { "loose replace" } else { "loose add" }, patch: false, dry_run: a.dry_run }, &a.client, job)
+    finish(ctx, &layout, plan, &a.common, What { label: if replace { "loose replace" } else { "loose add" }, patch: false, dry_run: a.dry_run, signed: None }, &a.client, job)
 }
 
 fn remove_cmd(ctx: &Ctx, a: &RemoveArgs, job: &Job) -> Result<i32> {
     let layout = client_layout(ctx, &a.client, a.common.backups.as_deref())?;
+    own_backups(ctx, &layout)?;
     let plan = loose_edit::plan(&layout, LooseChange { puts: Vec::new(), removes: a.paths.clone() }, &check_fn)?;
-    finish(ctx, &layout, plan, &a.common, What { label: "loose remove", patch: false, dry_run: a.dry_run }, &a.client, job)
+    finish(ctx, &layout, plan, &a.common, What { label: "loose remove", patch: false, dry_run: a.dry_run, signed: None }, &a.client, job)
 }
 
 fn apply_cmd(ctx: &Ctx, a: &ApplyArgs, job: &Job) -> Result<i32> {
     let layout = client_layout(ctx, &a.client, a.common.backups.as_deref())?;
+    own_backups(ctx, &layout)?;
+    let key = super::patch::key_of(&a.key, &a.public_hex, a.check_version)?;
+    if let Some(k) = &key {
+        verify_signature(&a.patch, k, job)?;
+    }
     let (plan, missing) = shaiya_patch::loose::plan_loose(&a.patch, &layout, &check_fn, job)?;
     for m in &missing {
         note(ctx, &format!("note: remove {m}: not in the data folder, left out"));
     }
     let label = file_name(&a.patch);
-    finish(ctx, &layout, plan, &a.common, What { label: &label, patch: true, dry_run: a.dry_run }, &a.client, job)
+    finish(ctx, &layout, plan, &a.common, What { label: &label, patch: true, dry_run: a.dry_run, signed: key.map(|k| (a.patch.as_path(), k)) }, &a.client, job)
 }
 
 // ------------------------------------------------------------------------------------------------------ history, rollback, prune
@@ -396,7 +443,14 @@ fn history(ctx: &Ctx, a: &ClientArgs) -> Result<i32> {
     if let Some(u) = loose_edit::unfinished(&layout) {
         note(ctx, &format!("note: {u}"));
     }
+    if loose_edit::change_running(&layout) {
+        note(ctx, &format!("note: {}", loose_edit::RUNNING_TEXT));
+    }
     let all = loose_edit::list(&layout)?;
+    let damaged = loose_edit::damaged_journals(&layout);
+    for d in &damaged {
+        note(ctx, &format!("note: the journal folder {d} cannot be read (it is not listed; it blocks the rollback of older changes)"));
+    }
     if ctx.json {
         let items: Vec<Value> = all
             .iter()
@@ -409,7 +463,7 @@ fn history(ctx: &Ctx, a: &ClientArgs) -> Result<i32> {
                 v
             })
             .collect();
-        print_json(&json!({"journals": items}));
+        print_json(&json!({"journals": items, "damaged": damaged, "change_running": loose_edit::change_running(&layout)}));
         return Ok(0);
     }
     let mut w = out();
@@ -434,11 +488,21 @@ fn history(ctx: &Ctx, a: &ClientArgs) -> Result<i32> {
 fn rollback(ctx: &Ctx, a: &RollbackArgs, job: &Job) -> Result<i32> {
     let layout = client_layout(ctx, &a.client, a.common.backups.as_deref())?;
     if !a.dry_run {
+        own_backups(ctx, &layout)?;
         recovered(ctx, &layout, &a.common)?;
     }
     let all = loose_edit::list(&layout)?;
     let target = match &a.id {
-        Some(id) => all.iter().find(|(j, _)| &j.id == id || j.id.ends_with(id.as_str())).ok_or_else(|| Error::io(id, std::io::Error::new(std::io::ErrorKind::NotFound, "no such journal (hint: shaiya loose history)")))?,
+        Some(id) => {
+            // the whole id, or an ending of it that names exactly one journal: an ending that fits two is never guessed
+            let hits: Vec<&(loose_edit::LooseJournal, Rollback)> = all.iter().filter(|(j, _)| &j.id == id).collect();
+            let hits = if hits.is_empty() { all.iter().filter(|(j, _)| j.id.ends_with(id.as_str())).collect() } else { hits };
+            match hits.len() {
+                0 => return Err(Error::io(id, std::io::Error::new(std::io::ErrorKind::NotFound, "no such journal (hint: shaiya loose history)"))),
+                1 => hits[0],
+                n => return Err(Error::Refused(format!("--id {id} fits {n} journals ({}); give more of the id", hits.iter().map(|(j, _)| j.id.as_str()).collect::<Vec<_>>().join(", ")))),
+            }
+        }
         None => all.iter().rev().find(|(j, _)| j.state == State::Applied).ok_or_else(|| Error::Refused("nothing to roll back: the toolkit has made no changes to this client (or all were rolled back)".to_string()))?,
     };
     let (j, status) = target;
@@ -477,6 +541,7 @@ fn rollback(ctx: &Ctx, a: &RollbackArgs, job: &Job) -> Result<i32> {
 
 fn prune(ctx: &Ctx, a: &PruneArgs) -> Result<i32> {
     let layout = client_layout(ctx, &a.client, a.common.backups.as_deref())?;
+    own_backups(ctx, &layout)?;
     let gone = loose_edit::prune(&layout, a.keep)?;
     if ctx.json {
         print_json(&json!({"pruned": gone}));
@@ -491,6 +556,7 @@ fn prune(ctx: &Ctx, a: &PruneArgs) -> Result<i32> {
 
 fn recover(ctx: &Ctx, a: &ClientArgs) -> Result<i32> {
     let layout = client_layout(ctx, &a.client, a.common.backups.as_deref())?;
+    own_backups(ctx, &layout)?;
     let confirmed = game_stopped(ctx, &layout, &a.common)?;
     let notes = loose_edit::recover(&layout, &options("", false, confirmed))?;
     if ctx.json {
@@ -516,7 +582,7 @@ fn health(ctx: &Ctx, a: &ClientArgs, job: &Job) -> Result<i32> {
             "files": h.files, "unreadable": h.unreadable, "unreadable_list": h.unreadable_list,
             "failing": h.failing, "failing_list": h.failing_list.iter().map(|(p, w)| json!({"path": p, "why": w})).collect::<Vec<_>>(),
             "unresolved_textures": h.unresolved, "unresolved_list": h.unresolved_list.iter().map(|(m, t)| json!({"mesh": m, "texture": t})).collect::<Vec<_>>(),
-            "lists_refused": h.lists_refused, "temp_files": h.temps, "unfinished": h.unfinished, "notes": h.notes,
+            "lists_refused": h.lists_refused, "temp_files": h.temps, "unfinished": h.unfinished, "change_running": h.running, "damaged_journals": h.damaged_journals, "notes": h.notes,
             "journals": h.journals.map(|(all, possible)| json!({"all": all, "rollback_possible": possible})), "clean": h.is_clean()
         }));
         return Ok(if h.is_clean() { 0 } else { 1 });
@@ -541,6 +607,12 @@ fn health(ctx: &Ctx, a: &ClientArgs, job: &Job) -> Result<i32> {
     outln!(w, "temporary files:            {}", h.temps);
     if let Some(u) = &h.unfinished {
         outln!(w, "unfinished change:          {u} (shaiya loose recover)");
+    }
+    if h.running {
+        outln!(w, "change running:             {} (nothing is to be recovered)", loose_edit::RUNNING_TEXT);
+    }
+    for d in &h.damaged_journals {
+        outln!(w, "damaged journal folder:     {d} (cannot be read; it blocks the rollback of older changes)");
     }
     if let Some((all, possible)) = h.journals {
         outln!(w, "journals:                   {all}, {possible} can be rolled back");

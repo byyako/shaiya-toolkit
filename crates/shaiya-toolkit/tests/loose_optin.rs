@@ -38,13 +38,18 @@ fn an_extracted_copy_of_us_client_files_reads_as_a_loose_client() {
     let first = |pred: &dyn Fn(&str) -> bool| all.iter().find(|p| pred(&p.to_ascii_lowercase())).unwrap_or_else(|| panic!("no such file in the client")).clone();
     let ani = first(&|p| p.starts_with("character/human/ani/huwm_") && p.ends_with(".ani"));
     let mesh = first(&|p| p.starts_with("character/human/3dc/huwm_torso") && p.ends_with(".3dc"));
-    let mlt = first(&|p| p.starts_with("character/human/") && p.ends_with(".mlt"));
+    // every Human list file and the first 60 Human meshes: one of them is drawn with a texture, which the texture check below needs
+    let mlts: Vec<String> = all.iter().filter(|p| p.to_ascii_lowercase().starts_with("character/human/") && p.to_ascii_lowercase().ends_with(".mlt")).cloned().collect();
+    let meshes: Vec<String> = all.iter().filter(|p| p.to_ascii_lowercase().starts_with("character/human/3dc/") && p.to_ascii_lowercase().ends_with(".3dc")).take(60).cloned().collect();
+    assert!(!mlts.is_empty() && !meshes.is_empty());
     let eft = first(&|p| p.ends_with(".eft"));
     let wav = first(&|p| p.ends_with(".wav"));
     // every texture of the human-woman rig (the names the list files give end in .dds)
     let dds: Vec<String> = all.iter().filter(|p| p.to_ascii_lowercase().starts_with("character/human/") && p.to_ascii_lowercase().contains("/dds/") && p.to_ascii_lowercase().ends_with(".dds")).cloned().collect();
     assert!(!dds.is_empty(), "the client has textures under Character/Human");
-    let mut chosen: Vec<String> = vec![ani.clone(), mesh.clone(), mlt, eft, wav.clone()];
+    let mut chosen: Vec<String> = vec![ani.clone(), mesh.clone(), eft, wav.clone()];
+    chosen.extend(mlts);
+    chosen.extend(meshes.iter().filter(|m| **m != mesh).cloned());
     chosen.extend(dds);
     // two more marker folders so the folder is a client, and the GX sign
     chosen.push(first(&|p| p.starts_with("item/") && p.ends_with(".sdata")));
@@ -83,6 +88,17 @@ fn an_extracted_copy_of_us_client_files_reads_as_a_loose_client() {
     let (arch_on, arch_off) = (rgba_of(&preview(&a, true)), rgba_of(&preview(&a, false)));
     println!("textured differs from plain: loose {}, archive {}", loose_on != loose_off, arch_on != arch_off);
     assert_eq!(loose_on != loose_off, arch_on != arch_off, "the texture outcome of the loose folder is the archive's");
+    // not vacuous: when the archive preview is textured (it differs from the plain one) the loose one is textured too; the two being equally
+    // untextured would pass the line above without a texture having been found
+    // the fixed mesh may be untextured in both; look for one that the archive draws with a texture and require the same of the loose folder
+    let mut textured_seen = arch_on != arch_off;
+    for m in &meshes {
+        let pv = |src: &dyn FileSource, textured: bool| make_preview_look(src, m, false, 0, &MeshChoice::Default, &cache, &textures, &look(textured), &job).map(|p| rgba_of(&p));
+        let (Ok(a_on), Ok(a_off), Ok(l_on), Ok(l_off)) = (pv(&a, true), pv(&a, false), pv(&tree, true), pv(&tree, false)) else { continue };
+        assert_eq!(a_on != a_off, l_on != l_off, "{m}: the texture outcome of the loose folder is the archive's");
+        textured_seen |= a_on != a_off;
+    }
+    assert!(textured_seen, "no Human mesh of the first 60 is drawn with a texture from the archive: this test would pass without testing the textures");
     // the animation previews from the loose folder, and exports to JSON that imports to the file's bytes
     let ani_preview = make_preview_look(&tree, &ani, false, 0, &MeshChoice::Default, &MeshInfoCache::default(), &TextureIndexCache::default(), &Look::default(), &job).unwrap();
     assert_eq!(ani_preview.kind(), "anim");

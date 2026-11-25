@@ -260,7 +260,7 @@ fn an_entry_without_kind_that_detects_as_loose_is_offered_for_redetection() {
     // taking the offer saves kind and data, with no backup folder: read-only
     clients::redetect_client(&mut h.app.shell, "Old").unwrap();
     let c = h.app.shell.shared().clients[0].clone();
-    assert_eq!((c.kind, c.data.as_deref(), c.backups.as_deref()), (shaiya_core::config::ClientKind::Loose, Some(client.path().join("data").to_str().unwrap()), None));
+    assert_eq!((c.kind.clone(), c.data.as_deref(), c.backups.as_deref()), (shaiya_core::config::ClientKind::Loose, Some(client.path().join("data").to_str().unwrap()), None));
     assert!(clients::loose_write_problem(&c).is_some());
     let on_disk: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(data.path().join("shared.json")).unwrap()).unwrap();
     assert_eq!(on_disk["clients"][0]["kind"], "loose");
@@ -288,4 +288,62 @@ fn a_dropped_loose_folder_asks_to_add_it() {
     w.h.drop_files(&[junk.path().to_path_buf()]);
     w.h.frames(2);
     assert!(w.h.app.app.clients.add.is_none());
+}
+
+#[test]
+fn a_backup_folder_that_another_client_uses_is_refused_in_the_client_list() {
+    let mut w = world("w17fix-shared");
+    w.h.frames(2);
+    let one = gx_like("w17fix-shared-one");
+    let two = gx_like("w17fix-shared-two");
+    let mine = TempDir::new("w17fix-shared-backups");
+    let FolderKind::Loose(l1) = clients::detect_folder(one.path()) else { panic!("layout 2") };
+    let FolderKind::Loose(l2) = clients::detect_folder(two.path()) else { panic!("layout 2") };
+    clients::add_loose_client(&mut w.h.app.shell, "One", &l1, Some(mine.path())).unwrap();
+    // the same folder for a second client: refused when it is added, and when it is chosen for a client that has none
+    let e = clients::add_loose_client(&mut w.h.app.shell, "Two", &l2, Some(mine.path())).unwrap_err().to_string();
+    assert!(e.contains("already the backup folder of the client One"), "{e}");
+    clients::add_loose_client(&mut w.h.app.shell, "Two", &l2, None).unwrap();
+    let e = clients::set_backups(&mut w.h.app.shell, "Two", mine.path()).unwrap_err().to_string();
+    assert!(e.contains("already the backup folder of the client One"), "{e}");
+    // inside the other client's data folder
+    let e = clients::set_backups(&mut w.h.app.shell, "Two", &l1.data.join("backups")).unwrap_err().to_string();
+    assert!(e.contains("data folder"), "{e}");
+    // a folder of its own is fine
+    let own = TempDir::new("w17fix-shared-own");
+    clients::set_backups(&mut w.h.app.shell, "Two", own.path()).unwrap();
+    // and a client keeps its own folder when it is chosen again
+    clients::set_backups(&mut w.h.app.shell, "One", mine.path()).unwrap();
+}
+
+#[test]
+fn a_client_of_an_unknown_kind_is_listed_as_unsupported_kept_on_disk_and_never_opened() {
+    let data = TempDir::new("w17fix-kind-appdata");
+    let client = gx_like("w17fix-kind-client");
+    let future = serde_json::json!({"name": "Future", "path": client.path().display().to_string(), "kind": "server", "x": [1]});
+    let shared = serde_json::json!({"format": 1, "clients": [future.clone()]});
+    std::fs::write(data.path().join("shared.json"), serde_json::to_vec_pretty(&shared).unwrap()).unwrap();
+    let mut h = Harness::<ToolkitApp>::new(shaiya_ui::ShellOptions { data_dir: Some(data.path().to_path_buf()), ..Default::default() });
+    h.frames(2);
+    let c = h.app.shell.shared().clients[0].clone();
+    assert_eq!(c.kind, shaiya_core::config::ClientKind::Other("server".into()));
+    let st = clients::status_for(&c);
+    assert!(!st.found && st.unsupported.as_deref().is_some_and(|u| u.contains("newer version")), "{st:?}");
+    assert!(clients::picker_label(&c, "Future", true).contains("unsupported"));
+    // it is not opened
+    with_cx(&mut h, |app, cx| app.select_client("Future", cx));
+    h.frames(3);
+    assert!(!h.app.app.archive.is_open(), "an entry of an unknown kind is never opened");
+    // a change of the list that has nothing to do with it keeps it as it was written
+    let two = gx_like("w17fix-kind-two");
+    let FolderKind::Loose(l2) = clients::detect_folder(two.path()) else { panic!("layout 2") };
+    clients::add_loose_client(&mut h.app.shell, "Two", &l2, None).unwrap();
+    clients::rename_client(&mut h.app.shell, "Two", "Second").unwrap();
+    h.app.flush_settings(true);
+    let v: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(data.path().join("shared.json")).unwrap()).unwrap();
+    let list = v["clients"].as_array().unwrap();
+    assert_eq!(list.len(), 2, "{v}");
+    let kept = list.iter().find(|c| c["name"] == "Future").expect("kept");
+    assert_eq!(kept["kind"], "server");
+    assert_eq!(kept["x"], serde_json::json!([1]), "the keys of the entry that this version does not know are kept");
 }

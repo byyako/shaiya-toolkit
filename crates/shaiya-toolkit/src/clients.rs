@@ -11,6 +11,7 @@ use shaiya_archive::client::{read_version_ini, ClientFiles};
 use shaiya_archive::swap::{swap, SwapReport};
 use shaiya_archive::Archive;
 use shaiya_archive::loose::{self, LooseLayout};
+use shaiya_archive::loose_edit;
 use shaiya_core::config::{self, ClientFolder, ClientKind};
 use shaiya_core::{Error, Result};
 use shaiya_ui::{Client, Confirm, Cx, Shell, TaskHandle, TaskOutcome, TaskSpec};
@@ -41,6 +42,8 @@ pub struct ClientStatus {
     /// A loose client: what was found (`describe`), and why it cannot be written to yet (no confirmed backup folder), if so.
     pub loose: Option<String>,
     pub loose_read_only: Option<String>,
+    /// An entry whose `kind` this version does not know (a newer version saved it): kept in the list as it is, never opened.
+    pub unsupported: Option<String>,
     /// An archive entry with no `data.sah` whose folder is a loose data folder (offered for re-detection).
     pub redetect: Option<String>,
 }
@@ -74,6 +77,9 @@ pub fn status_of(dir: &Path) -> ClientStatus {
 /// whether it can be written to; an archive entry that is really a loose folder is offered for re-detection.
 pub fn status_for(c: &Client) -> ClientStatus {
     let dir = Path::new(&c.path);
+    if !c.kind.is_supported() {
+        return ClientStatus { unsupported: Some(unsupported_text(c)), ..ClientStatus::default() };
+    }
     if c.kind == ClientKind::Loose {
         let mut s = ClientStatus::default();
         match detect_folder(dir) {
@@ -104,15 +110,21 @@ pub fn version_numbers(dir: &Path) -> (Option<u32>, Option<u32>) {
     }
 }
 
+/// The sentence for a saved entry of a kind this version does not know.
+pub fn unsupported_text(c: &Client) -> String {
+    format!("kind {:?}: made by a newer version; it is kept in the list as it is and is not opened or changed", c.kind.as_str())
+}
+
 fn to_ui(c: &ClientFolder) -> Client {
     Client {
         name: c.name.clone(),
         path: c.path.display().to_string(),
         added_utc: c.added_utc.clone(),
         note: c.note.clone(),
-        kind: c.kind,
+        kind: c.kind.clone(),
         data: c.data.as_ref().map(|p| p.display().to_string()),
         backups: c.backups.as_ref().map(|p| p.display().to_string()),
+        extra: c.extra.clone(),
     }
 }
 
@@ -122,9 +134,10 @@ fn from_ui(c: &Client) -> ClientFolder {
         path: PathBuf::from(&c.path),
         added_utc: c.added_utc.clone(),
         note: c.note.clone(),
-        kind: c.kind,
+        kind: c.kind.clone(),
         data: c.data.as_ref().map(PathBuf::from),
         backups: c.backups.as_ref().map(PathBuf::from),
+        extra: c.extra.clone(),
     }
 }
 
@@ -203,8 +216,29 @@ pub fn set_backups(shell: &mut Shell, name: &str, folder: &Path) -> Result<()> {
     if let Some(why) = loose::backup_folder_problem(&layout, folder) {
         return Err(Error::Refused(why));
     }
+    // the folder the client keeps its journals in must not change while a change of it is running or did not finish: the new folder would
+    // not hold the marker, and the next change would take the half-made state for the files as they were
+    if let Some(old) = &layout.backups {
+        if !same_folder(old, folder) {
+            if loose_edit::change_running(&layout) {
+                return Err(Error::Refused(loose_edit::RUNNING_TEXT.to_string()));
+            }
+            if loose_edit::unfinished(&layout).is_some() {
+                return Err(Error::Refused("an earlier change to this folder did not finish and its journal is in the current backup folder: put it right first (Health > Recover), then choose another backup folder".to_string()));
+            }
+        }
+    }
     let abs = std::path::absolute(folder).unwrap_or_else(|_| folder.to_path_buf());
     update(shell, &mut |list| {
+        // not the backup folder of another saved client, and not inside another client's data folder (two clients would share one journal folder)
+        let others: Vec<loose::OtherClient> = list
+            .iter()
+            .filter(|c| c.kind == ClientKind::Loose && !c.name.eq_ignore_ascii_case(name))
+            .map(|c| loose::OtherClient { name: c.name.clone(), data: c.data_folder().to_path_buf(), backups: c.backups.clone() })
+            .collect();
+        if let Some(why) = loose::backup_folder_shared_problem(&abs, &others) {
+            return Err(Error::Refused(why));
+        }
         if let Some(c) = list.iter_mut().find(|c| c.name.eq_ignore_ascii_case(name)) {
             c.backups = Some(abs.clone());
         }
@@ -285,6 +319,16 @@ pub fn add_loose_client(shell: &mut Shell, name: &str, layout: &LooseLayout, bac
         if config::find_client(list, &name).is_some() {
             return Err(Error::Refused(format!("there is already a client named {name:?}")));
         }
+        if let Some(b) = &backups {
+            let others: Vec<loose::OtherClient> = list
+                .iter()
+                .filter(|c| c.kind == ClientKind::Loose)
+                .map(|c| loose::OtherClient { name: c.name.clone(), data: c.data_folder().to_path_buf(), backups: c.backups.clone() })
+                .collect();
+            if let Some(why) = loose::backup_folder_shared_problem(b, &others) {
+                return Err(Error::Refused(why));
+            }
+        }
         list.push(ClientFolder {
             name: name.clone(),
             path: layout.root.clone(),
@@ -293,6 +337,7 @@ pub fn add_loose_client(shell: &mut Shell, name: &str, layout: &LooseLayout, bac
             kind: ClientKind::Loose,
             data: (layout.data != layout.root).then(|| layout.data.clone()),
             backups: backups.clone(),
+            extra: Default::default(),
         });
         Ok(())
     })
@@ -647,7 +692,9 @@ impl ClientsUi {
                         ui.label(&c.name);
                         ui.vertical(|ui| {
                             ui.label(shown_path);
-                            if let Some(l) = &st.loose {
+                            if let Some(u) = &st.unsupported {
+                                ui.label(RichText::new(format!("unsupported: {u}")).color(pal.warning));
+                            } else if let Some(l) = &st.loose {
                                 ui.label(RichText::new(format!("found, loose folder: {l}")).color(pal.weak));
                                 match &st.loose_read_only {
                                     Some(why) => ui.label(RichText::new(format!("read-only: {why}")).color(pal.warning)),
@@ -939,6 +986,9 @@ pub fn queued_label(label: String, queued: usize) -> String {
 /// path, or under `--shot` the name, so that the name is not repeated).
 pub fn picker_label(c: &Client, shown: &str, found: bool) -> String {
     let mut line = if shown == c.name { c.name.clone() } else { format!("{}  ({shown})", c.name) };
+    if !c.kind.is_supported() {
+        return format!("{line} - unsupported (made by a newer version)");
+    }
     if c.kind == ClientKind::Loose {
         line.push_str(" - loose");
         if gx_cached(c.data.as_deref().unwrap_or(&c.path)) {

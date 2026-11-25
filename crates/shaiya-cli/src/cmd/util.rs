@@ -247,7 +247,8 @@ pub fn need_target(in_place: bool, out: &Option<PathBuf>) -> Result<()> {
 }
 
 
-/// Set when a command refused a loose client: the exit code is 2 (usage) then, not the 4 of a safety refusal.
+/// Set when a command refused a loose client: the exit code is 2 (usage) then, not the 4 of a safety refusal. A process runs one command
+/// and exits, so a flag that stays set is enough; a caller that ran several commands in one process would have to clear it.
 static LOOSE_REFUSED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// Whether the last refusal was "this is a loose folder" (exit 2).
@@ -312,7 +313,15 @@ impl Store {
     pub fn read(&self, path: &str) -> Result<Vec<u8>> {
         match self {
             Store::Archive(a) => a.read(path),
-            Store::Loose(t) => t.read(path, u64::MAX, &shaiya_core::Job::silent()),
+            // read the size the file has now and no more: a file that grew in between is refused, never read whole
+            Store::Loose(t) => {
+                let want = t.len(path).ok_or_else(|| Error::io(path, std::io::Error::new(std::io::ErrorKind::NotFound, "not in the folder")))?;
+                let bytes = t.read(path, want, &shaiya_core::Job::silent())?;
+                if bytes.len() as u64 != want {
+                    return Err(Error::Refused(format!("{path}: changed while it was read")));
+                }
+                Ok(bytes)
+            }
         }
     }
 }

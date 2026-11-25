@@ -21,8 +21,11 @@ use std::path::{Path, PathBuf};
 /// The caps of one tree. [`Limits::default`] is what the programs use; tests lower them to reach a cap with a few files.
 #[derive(Clone, Copy, Debug)]
 pub struct Limits {
-    /// More files than this refuses the folder (a real client has about 100,000).
+    /// More files than this refuses the folder (a real client has about 100,000). One folder with more entries than this is refused as soon
+    /// as the listing has counted them, before the rest of it is collected.
     pub max_files: usize,
+    /// More folders than this refuses the folder.
+    pub max_dirs: usize,
     /// Folders nested deeper than this below the data folder are not entered.
     pub max_depth: usize,
     /// A relative path longer than this many bytes is left out.
@@ -33,7 +36,7 @@ pub struct Limits {
 
 impl Default for Limits {
     fn default() -> Limits {
-        Limits { max_files: 1_000_000, max_depth: 16, max_path: 1024, max_read: 4 << 30 }
+        Limits { max_files: 1_000_000, max_dirs: 200_000, max_depth: 16, max_path: 1024, max_read: 4 << 30 }
     }
 }
 
@@ -108,11 +111,19 @@ impl LooseTree {
         let mut skipped = Skipped::default();
         // (folder, its path below data with a trailing `/`, depth of its entries)
         let mut stack: Vec<(PathBuf, String, usize)> = vec![(data.clone(), String::new(), 0)];
+        let mut dirs_seen = 0usize;
         while let Some((dir, prefix, depth)) = stack.pop() {
             job.check()?;
+            dirs_seen += 1;
+            if dirs_seen > limits.max_dirs {
+                return Err(Error::Refused(format!("{} holds more than {} folders; the toolkit lists at most that many", data.display(), limits.max_dirs)));
+            }
             let rd = std::fs::read_dir(&dir).map_err(|e| Error::io(&dir, e))?;
             let mut entries: Vec<(String, std::fs::DirEntry)> = Vec::new();
             for e in rd {
+                if entries.len() > limits.max_files {
+                    return Err(Error::Refused(format!("{} holds more than {} entries; the toolkit lists at most that many", dir.display(), limits.max_files)));
+                }
                 let e = e.map_err(|e| Error::io(&dir, e))?;
                 match e.file_name().to_str() {
                     Some(n) if listable(n) => entries.push((n.to_string(), e)),

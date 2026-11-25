@@ -313,7 +313,7 @@ fn the_health_window_reports_a_loose_folder_and_recovers_an_interrupted_change()
     assert!(w.h.wait_until(WAIT, |h| h.app.app.loose_health.report().is_some_and(|r| r.unfinished.is_some())), "the unfinished change is reported");
     w.h.app.app.loose_health.ask_recover();
     w.h.frames(3);
-    assert!(w.h.text().contains("Recover an interrupted change") && w.h.text().contains("Changes"), "{}", w.h.text());
+    assert!(w.h.text().contains("puts the data folder back as it was before the interrupted change") && w.h.text().contains("Changes"), "{}", w.h.text());
     w.h.app.shell.inject_answer("toolkit-loose-recover", 0);
     assert!(w.h.wait_until(WAIT, |h| h.app.app.loose_health.report().is_some_and(|r| r.unfinished.is_none()) && h.app.app.loose_health.last.is_some()), "recovered");
     let mut now = tree(&data);
@@ -418,4 +418,40 @@ fn a_replacement_with_another_skeleton_asks_before_it_is_queued_on_a_loose_clien
         app.archive.replace_with_file(row, src.path().join("same.ANI"), cx)
     });
     assert!(w.h.wait_until(WAIT, |h| h.app.app.archive.pending.len() == 1), "a replacement with the same skeleton is queued");
+}
+
+#[test]
+fn a_change_that_is_running_is_not_offered_for_recovery_and_the_backup_folder_stays_while_one_did_not_finish() {
+    let mut w = open_loose("w17fix-running");
+    confirm_backups(&mut w);
+    let l = layout(&w);
+    let data = w.client.path().join("data");
+    // another program holds the lock of the backup folder (a change that is running now)
+    std::fs::create_dir_all(&w.backups).unwrap();
+    let holder = std::fs::OpenOptions::new().read(true).write(true).create(true).truncate(false).open(w.backups.join(loose_edit::LOCK_FILE)).unwrap();
+    holder.try_lock().unwrap();
+    let before = tree(&data);
+    with_cx(&mut w.h, |app, cx| app.open_health(Some(NAME), cx));
+    assert!(w.h.wait_until(WAIT, |h| h.app.app.loose_health.report().is_some_and(|r| r.running)), "the health window says a change is running");
+    w.h.frames(2);
+    let r = w.h.app.app.loose_health.report().unwrap().clone();
+    assert!(r.unfinished.is_none() && !r.is_clean(), "{r:?}");
+    let t = w.h.text().to_string();
+    assert!(t.contains("running now") && !t.contains("Recover..."), "{t}");
+    w.h.app.app.loose_health.ask_recover();
+    w.h.frames(3);
+    assert!(!w.h.text().contains("puts the data folder back as it was before the interrupted change"), "no recovery is offered while a change runs");
+    assert!(loose_edit::recover(&l, &LooseOptions { confirmed_unknown_busy: true, ..LooseOptions::default() }).unwrap_err().to_string().contains("is running now"));
+    assert_eq!(tree(&data), before);
+    drop(holder);
+    // an interrupted change in the current backup folder: the folder cannot be changed under it
+    let plan = loose_edit::plan(&l, loose_edit::LooseChange { puts: vec![loose_edit::LoosePut { rel: "Item/3DO/a.txt".into(), bytes: b"A2".to_vec() }, loose_edit::LoosePut { rel: "Item/3DO/c.txt".into(), bytes: b"C".to_vec() }], removes: vec![] }, &|_, _| Ok(())).unwrap();
+    loose_edit::apply(&l, plan, &LooseOptions { crash_after_puts: Some(1), confirmed_unknown_busy: true, ..LooseOptions::default() }, &|_, _| Ok(()), &shaiya_core::Job::silent()).unwrap_err();
+    let elsewhere = w.backups.parent().unwrap().join("other-backups");
+    let e = clients::set_backups(&mut w.h.app.shell, NAME, &elsewhere).unwrap_err().to_string();
+    assert!(e.contains("did not finish"), "{e}");
+    assert_eq!(w.h.app.shell.shared().clients[0].backups.as_deref(), Some(w.backups.to_str().unwrap()), "the saved folder is unchanged");
+    // after the recovery the folder may change
+    loose_edit::recover(&l, &LooseOptions { confirmed_unknown_busy: true, ..LooseOptions::default() }).unwrap();
+    clients::set_backups(&mut w.h.app.shell, NAME, &elsewhere).unwrap();
 }

@@ -102,7 +102,11 @@ fn go(ctx: &Ctx, cmd: &Cmd) -> Result<i32> {
                 let width = clients.iter().map(|c| c.name.chars().count()).max().unwrap_or(0).max(4);
                 let mut w = out();
                 for c in &clients {
-                    let kind = if c.kind == config::ClientKind::Loose { "  [loose]" } else { "" };
+                    let kind = match &c.kind {
+                        config::ClientKind::Loose => "  [loose]".to_string(),
+                        config::ClientKind::Other(k) => format!("  [unsupported: kind {k:?}, made by a newer version; kept, not opened]"),
+                        config::ClientKind::Archive => String::new(),
+                    };
                     outln!(w, "{:<width$}  {}  {}  {}{kind}", c.name, if c.path.is_dir() { "found  " } else { "missing" }, c.path.display(), c.note);
                 }
             }
@@ -127,6 +131,7 @@ fn go(ctx: &Ctx, cmd: &Cmd) -> Result<i32> {
                         kind: config::ClientKind::Loose,
                         data: (layout.data != layout.root).then(|| layout.data.clone()),
                         backups: a.backups.as_ref().map(|b| std::path::absolute(b).unwrap_or_else(|_| b.clone())),
+                        extra: Default::default(),
                     }
                 }
                 None => {
@@ -141,6 +146,17 @@ fn go(ctx: &Ctx, cmd: &Cmd) -> Result<i32> {
             config::update_clients(&root, &mut |list| {
                 if config::find_client(list, &a.name).is_some() {
                     return Err(Error::Refused(format!("a client named {:?} is already saved (shaiya clients remove it first)", a.name)));
+                }
+                // a backup folder that another saved client uses (or that is inside its data folder) would mix two clients' journals
+                if let Some(b) = &entry.backups {
+                    let others: Vec<shaiya_archive::loose::OtherClient> = list
+                        .iter()
+                        .filter(|c| c.kind == config::ClientKind::Loose)
+                        .map(|c| shaiya_archive::loose::OtherClient { name: c.name.clone(), data: c.data_folder().to_path_buf(), backups: c.backups.clone() })
+                        .collect();
+                    if let Some(why) = shaiya_archive::loose::backup_folder_shared_problem(b, &others) {
+                        return Err(Error::Refused(why));
+                    }
                 }
                 list.push(entry.clone());
                 Ok(())
@@ -179,6 +195,9 @@ fn go(ctx: &Ctx, cmd: &Cmd) -> Result<i32> {
             let clients = crate::config::load_clients(ctx.data_dir.as_deref())?;
             let c = config::find_client(&clients, name)
                 .ok_or_else(|| Error::io(PathBuf::from(format!("@{name}")), std::io::Error::new(std::io::ErrorKind::NotFound, "no saved client folder with this name (hint: shaiya clients list)")))?;
+            if !c.kind.is_supported() {
+                return Err(Error::Refused(crate::config::unsupported_text(c)));
+            }
             if c.kind == config::ClientKind::Loose {
                 return show_loose(ctx, c);
             }
@@ -235,6 +254,7 @@ fn parse_kind(s: &str) -> std::result::Result<Kind, String> {
 fn target(ctx: &Ctx, arg: &str) -> Result<PathBuf> {
     let clients = crate::config::load_clients(ctx.data_dir.as_deref())?;
     match config::find_client(&clients, strip(arg)) {
+        Some(c) if !c.kind.is_supported() => Err(Error::Refused(crate::config::unsupported_text(c))),
         Some(c) => {
             refuse_loose(arg, &c.path)?;
             Ok(c.path.clone())
@@ -348,8 +368,8 @@ fn clean_cmd(ctx: &Ctx, a: &CleanArgs) -> Result<i32> {
     Ok(0)
 }
 
-/// `clients show` of a loose client: where its folders are, how many files it lists, whether it is a Shaiya-GX layout (read from Shaiya-GX's
-/// data-format document), and whether a backup folder is confirmed.
+/// `clients show` of a loose client: where its folders are, how many files it lists, whether it is a Shaiya-GX layout (read from the Shaiya-GX repository, docs/data-formats.md lines 18, 79 and 89;
+/// cited, not copied), and whether a backup folder is confirmed.
 fn show_loose(ctx: &Ctx, c: &ClientFolder) -> Result<i32> {
     let layout = loose_layout(&c.path)?.ok_or_else(|| Error::Refused(format!("{} is no longer a loose data folder ({})", c.path.display(), shaiya_archive::loose::detect_hint())))?;
     let tree = shaiya_clientdata::LooseTree::open(&layout, &Job::silent())?;

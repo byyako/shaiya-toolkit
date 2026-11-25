@@ -5,6 +5,7 @@ use crate::error::{Error, Result};
 use crate::fs::write_atomic;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 #[derive(Clone, Debug, Default)]
@@ -81,27 +82,63 @@ pub struct ClientFolder {
     /// A loose client's confirmed backup folder (outside `data`); none until one is chosen.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub backups: Option<PathBuf>,
+    /// Keys of the entry that this version does not know (a newer version wrote them): kept and written back as they were.
+    #[serde(flatten, skip_serializing_if = "BTreeMap::is_empty")]
+    pub extra: BTreeMap<String, Value>,
 }
 
-/// How a saved client keeps its data.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
+/// How a saved client keeps its data. A `kind` this version does not know (a newer version wrote it, or the file was edited) is read as
+/// `Other` with the text as written and is written back as it was: the entry is listed, never opened or changed.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub enum ClientKind {
     #[default]
     Archive,
     Loose,
+    /// The `kind` text of an entry this version does not know (it is kept exactly).
+    Other(String),
 }
 
 impl ClientKind {
     pub fn is_archive(&self) -> bool {
         *self == ClientKind::Archive
     }
+
+    /// The text of the `kind` key.
+    pub fn as_str(&self) -> &str {
+        match self {
+            ClientKind::Archive => "archive",
+            ClientKind::Loose => "loose",
+            ClientKind::Other(s) => s,
+        }
+    }
+
+    /// Whether this version knows what to do with the entry (archive and loose are the only kinds it opens).
+    pub fn is_supported(&self) -> bool {
+        !matches!(self, ClientKind::Other(_))
+    }
+}
+
+impl Serialize for ClientKind {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> std::result::Result<S::Ok, S::Error> {
+        s.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for ClientKind {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> std::result::Result<ClientKind, D::Error> {
+        let text = String::deserialize(d)?;
+        Ok(match text.as_str() {
+            "archive" => ClientKind::Archive,
+            "loose" => ClientKind::Loose,
+            _ => ClientKind::Other(text),
+        })
+    }
 }
 
 impl ClientFolder {
     /// A saved archive client (`data.sah` + `data.saf` in `path`).
     pub fn archive(name: impl Into<String>, path: PathBuf, added_utc: impl Into<String>, note: impl Into<String>) -> ClientFolder {
-        ClientFolder { name: name.into(), path, added_utc: added_utc.into(), note: note.into(), kind: ClientKind::Archive, data: None, backups: None }
+        ClientFolder { name: name.into(), path, added_utc: added_utc.into(), note: note.into(), kind: ClientKind::Archive, data: None, backups: None, extra: BTreeMap::new() }
     }
 
     /// The folder that holds the files: `data` for a loose client that has one, else `path`.
@@ -128,9 +165,21 @@ fn read_shared(root: &Path) -> Result<Option<Map<String, Value>>> {
     }
 }
 
+/// The entries that parse as clients, and the entries that do not (or have no path) exactly as they were written: a write-back keeps those.
+fn split_clients(map: &Map<String, Value>) -> (Vec<ClientFolder>, Vec<Value>) {
+    let Some(Value::Array(a)) = map.get("clients") else { return (Vec::new(), Vec::new()) };
+    let (mut list, mut raw) = (Vec::new(), Vec::new());
+    for v in a {
+        match serde_json::from_value::<ClientFolder>(v.clone()) {
+            Ok(c) if !c.path.as_os_str().is_empty() => list.push(c),
+            _ => raw.push(v.clone()),
+        }
+    }
+    (list, raw)
+}
+
 fn clients_of(map: &Map<String, Value>) -> Vec<ClientFolder> {
-    let Some(Value::Array(a)) = map.get("clients") else { return Vec::new() };
-    a.iter().filter_map(|v| serde_json::from_value::<ClientFolder>(v.clone()).ok()).filter(|c| !c.path.as_os_str().is_empty()).collect()
+    split_clients(map).0
 }
 
 /// Reads `<root>/shared.json` "clients"; a missing file or key is an empty list.
@@ -138,17 +187,24 @@ pub fn load_clients(root: &Path) -> Result<Vec<ClientFolder>> {
     Ok(read_shared(root)?.map(|m| clients_of(&m)).unwrap_or_default())
 }
 
-/// Re-reads shared.json, lets `f` change only the clients list, writes back atomically keeping every other key as it was.
+/// Re-reads shared.json, lets `f` change only the clients list, writes back atomically keeping every other key as it was. An entry that does
+/// not parse as a client (a newer version's, or a damaged one) is written back exactly as it was, after the list; an entry of an unknown
+/// `kind` is in the list (as [`ClientKind::Other`]) and keeps its `kind` text.
 pub fn update_clients(root: &Path, f: &mut dyn FnMut(&mut Vec<ClientFolder>) -> Result<()>) -> Result<Vec<ClientFolder>> {
     let existing = read_shared(root)?;
     let fresh = existing.is_none();
     let mut map = existing.unwrap_or_default();
-    let mut list = clients_of(&map);
+    let (mut list, raw) = split_clients(&map);
     f(&mut list)?;
     if fresh {
         map.insert("format".into(), Value::from(1));
     }
-    map.insert("clients".into(), serde_json::to_value(&list).map_err(|e| Error::format("shared.json", None, e.to_string()))?);
+    let mut written = match serde_json::to_value(&list).map_err(|e| Error::format("shared.json", None, e.to_string()))? {
+        Value::Array(a) => a,
+        _ => Vec::new(),
+    };
+    written.extend(raw);
+    map.insert("clients".into(), Value::Array(written));
     std::fs::create_dir_all(root).map_err(|e| Error::io(root, e))?;
     let text = serde_json::to_string_pretty(&Value::Object(map)).map_err(|e| Error::format("shared.json", None, e.to_string()))?;
     write_atomic(&shared_path(root), text.as_bytes())?;
@@ -282,7 +338,7 @@ mod tests {
         std::fs::write(d.join("shared.json"), r#"{"format": 1, "clients": [{"name": "us", "path": "/games/us", "note": "n"}]}"#).unwrap();
         let list = load_clients(&d).unwrap();
         assert_eq!(list.len(), 1);
-        assert_eq!((list[0].kind, list[0].data.clone(), list[0].backups.clone()), (ClientKind::Archive, None, None));
+        assert_eq!((list[0].kind.clone(), list[0].data.clone(), list[0].backups.clone()), (ClientKind::Archive, None, None));
         assert!(list[0].kind.is_archive());
         let _ = std::fs::remove_dir_all(&d);
     }
@@ -320,6 +376,38 @@ mod tests {
         assert_eq!(load_clients(&d).unwrap()[1], loose);
         let _ = std::fs::remove_dir_all(&d);
     }
+    #[test]
+    fn an_entry_of_an_unknown_kind_or_shape_survives_an_unrelated_change_exactly() {
+        let d = tmp("unknown-kind");
+        let future = r#"{"name": "srv", "path": "/games/srv", "kind": "server", "extra": {"a": [1, 2]}}"#;
+        let cased = r#"{"name": "gx", "path": "/games/gx", "kind": "Loose"}"#;
+        let broken = r#"{"name": 5, "path": ["not", "text"], "kind": "loose"}"#;
+        std::fs::write(d.join("shared.json"), format!(r#"{{"format": 1, "clients": [{{"name": "us", "path": "/games/us"}}, {future}, {cased}, {broken}]}}"#)).unwrap();
+        let list = load_clients(&d).unwrap();
+        assert_eq!(list.iter().map(|c| c.name.as_str()).collect::<Vec<_>>(), ["us", "srv", "gx"], "the unknown kinds are listed");
+        assert_eq!(list[1].kind, ClientKind::Other("server".into()));
+        assert_eq!(list[2].kind, ClientKind::Other("Loose".into()), "letter case is not guessed");
+        assert!(list[0].kind.is_supported() && !list[1].kind.is_supported() && !list[2].kind.is_supported());
+        // an unrelated change: a note on the first entry and an added client
+        update_clients(&d, &mut |l| {
+            l[0].note = "n".into();
+            l.push(client("fr", "/games/fr"));
+            Ok(())
+        })
+        .unwrap();
+        let v: Value = serde_json::from_str(&std::fs::read_to_string(d.join("shared.json")).unwrap()).unwrap();
+        let a = v["clients"].as_array().unwrap();
+        assert_eq!(a.len(), 5, "nothing was dropped: {a:?}");
+        let by_name = |n: &str| a.iter().find(|c| c["name"] == n).unwrap().clone();
+        assert_eq!(by_name("srv")["kind"], "server", "the kind text of the unknown entry is as it was written");
+        assert_eq!(by_name("srv")["path"], "/games/srv");
+        assert_eq!(by_name("srv")["extra"], serde_json::json!({"a": [1, 2]}), "the keys this version does not know are kept");
+        assert_eq!(by_name("gx")["kind"], "Loose");
+        assert!(a.iter().any(|c| *c == serde_json::from_str::<Value>(broken).unwrap()), "an entry that does not parse is written back as it was");
+        assert_eq!(by_name("fr")["path"], "/games/fr");
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
     #[test]
     fn names_are_validated_and_found_without_case() {
         for ok in ["US 108", "x", &"a".repeat(40), "\u{C6D0}\u{BC14}"] {
