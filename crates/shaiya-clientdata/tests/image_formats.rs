@@ -247,3 +247,30 @@ fn a_damaged_picture_is_an_error_and_never_panics() {
     huge_png[16..24].copy_from_slice(&[0, 0, 0x9c, 0x40, 0, 0, 0x9c, 0x40]); // 40000 x 40000 (the CRC no longer matches)
     assert!(decode_png(&huge_png, "huge.png").is_err());
 }
+
+#[test]
+fn a_picture_over_64_mi_pixels_is_refused_by_the_pixel_cap_before_decoding() {
+    // 10000 x 10000 is inside the decoder's own side limit (16,384) and over 64 Mi pixels: the refusal must be ours, "out of range"
+    let mut big = JPG_RGB.to_vec();
+    let sof = big.windows(2).position(|w| w == [0xFF, 0xC0]).unwrap();
+    big[sof + 5..sof + 9].copy_from_slice(&[0x27, 0x10, 0x27, 0x10]);
+    let e = decode_jpg(&big, "big.jpg").unwrap_err().to_string();
+    assert!(e.contains("out of range"), "{e}");
+    // a PNG header of the same size with a correct CRC (the chunk checks pass; only the pixel count refuses it)
+    fn crc32(bytes: &[u8]) -> u32 {
+        let mut c = 0xFFFF_FFFFu32;
+        for &b in bytes {
+            c ^= u32::from(b);
+            for _ in 0..8 {
+                c = if c & 1 != 0 { (c >> 1) ^ 0xEDB8_8320 } else { c >> 1 };
+            }
+        }
+        !c
+    }
+    let mut png = encode_png(5, 3, png::ColorType::Rgba, png::BitDepth::Eight, &[3; 60], None, None);
+    png[16..24].copy_from_slice(&[0, 0, 0x27, 0x10, 0, 0, 0x27, 0x10]);
+    let crc = crc32(&png[12..29]);
+    png[29..33].copy_from_slice(&crc.to_be_bytes());
+    let e = decode_png(&png, "big.png").unwrap_err().to_string();
+    assert!(e.contains("out of range"), "{e}");
+}

@@ -104,7 +104,13 @@ pub(super) fn run(ctx: &Ctx, a: &ImportArgs) -> Res {
         return Err(Error::Refused(format!("{}: {problem}", a.out.display())).into());
     }
     // read, open, import
-    let bytes = read_capped(&in_path, Some(&in_path), MAX_MODEL_BYTES)?;
+    // the format's own cap (64 MiB for an OBJ and a BVH) bounds the read: the library would refuse a larger file only after it was read
+    let in_cap = match src {
+        Source::Gltf => MAX_MODEL_BYTES,
+        Source::Obj => shaiya_clientdata::interchange::obj::MAX_OBJ_BYTES as u64,
+        Source::Bvh => shaiya_clientdata::interchange::bvh::MAX_BVH_BYTES as u64,
+    };
+    let bytes = read_capped(&in_path, Some(&in_path), in_cap)?;
     let gltf = if src == Source::Gltf {
         let folder = in_path.parent().filter(|p| !p.as_os_str().is_empty()).map_or_else(|| PathBuf::from("."), Path::to_path_buf);
         let g = Gltf::open(&bytes, &mut |name| read_beside(&folder, name)).map_err(|(_, m)| Error::format(&a.input, None, m))?;

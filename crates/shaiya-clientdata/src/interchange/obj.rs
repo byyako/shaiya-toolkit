@@ -155,7 +155,8 @@ fn write_obj(meshes: &[Mesh3d], opts: &ObjOptions) -> (String, Option<String>) {
         for p in &m.positions {
             o.push_str(&format!("v {} {} {}\n", p[0], p[1], p[2]));
         }
-        // 1 - v in f64 is exact for an f32, so the import gives the stored value back
+        // 1 - v in f64 gives the stored f32 back for every v from about 1e-9 up (a v of -0 comes back as +0 and a smaller one may round to its
+        // neighbour; the texture coordinates of the US EP4.5 meshes are checked to the bit by the opt-in test)
         for uv in &m.uvs {
             o.push_str(&format!("vt {} {}\n", uv[0], 1.0f64 - f64::from(uv[1])));
         }
@@ -327,6 +328,11 @@ pub fn import_obj(bytes: &[u8], kind: ImportKind, cancel: Option<&shaiya_core::j
                     break 'lines;
                 }
                 match key {
+                    // `v x y z w` (exactly four numbers) is a rational position: a w other than 1 would move the vertex, so it is refused (six or
+                    // seven numbers are the colour extension, whose colours are not read)
+                    "v" if rest.len() == 4 && !rest[3].parse::<f64>().is_ok_and(|w| (w - 1.0).abs() <= 1e-9) => {
+                        refs.add(RefusalKind::Unsupported, format!("line {line_no}"), format!("vertex {} has a fourth number `{}`: only w = 1 is read", vs.len() + 1, rest[3]));
+                    }
                     "v" => match floats::<3>(&rest, 3) {
                         Some(p) if p.iter().all(|c| c.is_finite()) => vs.push([p[0] as f32, p[1] as f32, p[2] as f32]),
                         Some(_) => refs.add(RefusalKind::NotFinite, format!("line {line_no}"), format!("vertex {} holds NaN or an infinity", vs.len() + 1)),

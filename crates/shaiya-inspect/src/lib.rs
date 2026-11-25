@@ -269,11 +269,11 @@ pub fn inspect(path: &Path, opts: &Options, job: &Job) -> Result<Info> {
     } else if let Some((machine, timestamp)) = pe_header(&head) {
         let details = Details::Pe { machine, machine_name: machine_name(machine), timestamp, timestamp_utc: utc_iso_unix(timestamp as i64) };
         (Kind::Pe, details)
-    } else if head.starts_with(b"RIFF") && head.get(8..12) == Some(b"WAVE") {
+    } else if !has_ext(path, "saf") && head.starts_with(b"RIFF") && head.get(8..12) == Some(b"WAVE") {
         sound_details(path, size, &name, true, &mut problems)
-    } else if head.starts_with(b"OggS") {
+    } else if !has_ext(path, "saf") && head.starts_with(b"OggS") {
         sound_details(path, size, &name, false, &mut problems)
-    } else if head.starts_with(&[0xFF, 0xD8, 0xFF]) || head.starts_with(&shaiya_clientdata::texture::PNG_MAGIC) {
+    } else if !has_ext(path, "saf") && (head.starts_with(&[0xFF, 0xD8, 0xFF]) || head.starts_with(&shaiya_clientdata::texture::PNG_MAGIC)) {
         picture_details(&head, &name, &mut problems)
     } else if let Some(kind) = ["mlt", "mon", "itm"].into_iter().find(|e| has_ext(path, e)) {
         list_details(path, size, &head, &name, kind, &mut problems)
@@ -344,7 +344,12 @@ fn picture_details(head: &[u8], name: &str, problems: &mut Vec<String>) -> (Kind
     match shaiya_clientdata::texture::picture_info(head) {
         Some(p) => (kind, Details::Picture { what: p.what, width: p.width, height: p.height }),
         None => {
-            problems.push(format!("{name}: the {} header did not read", if kind == Kind::Jpg { "JPEG" } else { "PNG" }));
+            if kind == Kind::Jpg && head.len() >= HEAD {
+                // only the first 64 KiB are read: a frame header after a long APP segment is not seen
+                problems.push(format!("{name}: no JPEG frame header in the first {} KiB (the rest is not read)", HEAD >> 10));
+            } else {
+                problems.push(format!("{name}: the {} header did not read", if kind == Kind::Jpg { "JPEG" } else { "PNG" }));
+            }
             (kind, Details::Picture { what: if kind == Kind::Jpg { "JPEG".into() } else { "PNG".into() }, width: 0, height: 0 })
         }
     }

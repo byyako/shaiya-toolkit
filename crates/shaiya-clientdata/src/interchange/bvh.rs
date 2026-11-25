@@ -519,8 +519,9 @@ fn read_hierarchy<'a>(it: &mut std::str::SplitWhitespace<'a>) -> Result<Vec<Join
 /// a joint the rig lacks or names twice, a bone with no joint, a joint with another parent than the like file's, a channel order other than
 /// the ZXY the export writes (the root: `Xposition Yposition Zposition Zrotation Xrotation Yrotation`), a position channel on a joint that is
 /// not the root, a `Frame Time` that is not 1/30 within 1e-6, an offset that differs from the like file's reference translation, more than
-/// [`MAX_KEYS`] frames, a number that is not finite, a moved `Shaiya_Root`. A rotation or translation track equal to the like file's
-/// placement within 1e-5 at every frame is left out. Whether the result passes against `like` is the caller's check (`anim::passes`).
+/// [`MAX_KEYS`] frames, a number that is not finite, a moved `Shaiya_Root` or one with an offset other than 0. A rotation track equal to what the
+/// like file's bone is posed with (its matrix's rotation, or its unit key rotation when a scaled bone has keys) and a translation track
+/// equal to the like file's placement within 1e-5 at every frame are left out. Whether the result passes against `like` is the caller's check (`anim::passes`).
 pub fn import_bvh(bytes: &[u8], like: &Ani, cancel: Option<&shaiya_core::job::Cancel>) -> Result<(Ani, ImportReport), ImportError> {
     let one = |kind, what: &str, reason: String| Err(ImportError::one(kind, what, reason));
     if bytes.len() > MAX_BVH_BYTES {
@@ -685,6 +686,9 @@ pub fn import_bvh(bytes: &[u8], like: &Ani, cancel: Option<&shaiya_core::job::Ca
     let at = |f: usize, col: usize| values[f * total_cols + col];
     // a synthetic root that moves would be dropped with its motion
     if joint_bone[0].is_none() {
+        if joints[0].offset.iter().any(|v| v.abs() > OFFSET_TOL) {
+            return one(RefusalKind::Transform, SYNTHETIC_ROOT, format!("the synthetic root has an offset ({:.4} {:.4} {:.4}); the toolkit drops it, so a file that moved the whole rig cannot be read", joints[0].offset[0], joints[0].offset[1], joints[0].offset[2]));
+        }
         let moved = (0..frames).any(|f| (0..6).any(|c| at(f, cols[0] + c).abs() > 1e-6));
         if moved {
             return one(RefusalKind::Transform, SYNTHETIC_ROOT, "the synthetic root moves; the toolkit drops it, so a file that moves it cannot be read".to_string());
@@ -704,15 +708,21 @@ pub fn import_bvh(bytes: &[u8], like: &Ani, cancel: Option<&shaiya_core::job::Ca
             .collect();
         make_continuous(&mut qs);
         let game: Vec<[f32; 4]> = qs.iter().map(|q| s_quat(*q)).collect();
-        // the like file's own rotation (the rotation part of its reference matrix) leaves the track out
+        // the like file's own reference 3x3 leaves the track out
         let l = &locs[b];
+        // a bone of the like file with rotation keys is posed with the key's unit rotation (its matrix's scale is replaced), a bone with
+        // none is posed with the full matrix: a track is left out only when that same pose comes back, so a scaled matrix with constant
+        // keys keeps its track (leaving it out would put the scale back) and a scaled matrix with no keys keeps its matrix
         let rest = match decompose(l) {
-            Ok(t) => quat_matrix(t.q),
-            Err(_) => *l,
+            Ok(t) if t.has_scale() && !like.bones[b].rot.is_empty() => None,
+            Ok(t) => Some(quat_matrix(t.q)),
+            Err(_) => Some(*l),
         };
-        let same = game.iter().all(|q| {
-            let m = quat_matrix(*q);
-            (0..3).all(|r| (0..3).all(|c| f64::from((m[r * 4 + c] - rest[r * 4 + c]).abs()) <= 1e-5))
+        let same = rest.is_some_and(|rest| {
+            game.iter().all(|q| {
+                let m = quat_matrix(*q);
+                (0..3).all(|r| (0..3).all(|c| f64::from((m[r * 4 + c] - rest[r * 4 + c]).abs()) <= 1e-5))
+            })
         });
         if !same {
             out[b].rot = game.iter().enumerate().map(|(f, q)| RotKey { key: start + f as i32, q: *q }).collect();

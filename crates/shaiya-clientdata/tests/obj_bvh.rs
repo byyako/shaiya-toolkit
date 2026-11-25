@@ -337,9 +337,15 @@ fn malformed_obj_is_an_error_not_a_panic() {
         "f -9223372036854775808/1 1 1\n",
         "v 0 0 0 \\\nv 1 1 1\n",
         "usemtl\nv 0 0 0\n",
+        "v 0 0 0 2\nv 1 0 0\nv 0 1 0\nvt 0 0\nf 1/1 2/1 3/1\n",
+        "v 0 0 0 x\nv 1 0 0\nv 0 1 0\nvt 0 0\nf 1/1 2/1 3/1\n",
     ] {
         let r = import_obj(t.as_bytes(), ImportKind::Mesh3do, None);
         assert!(r.is_err(), "{t:?} was imported");
+    }
+    // a fourth number of exactly 1 is read, and a colour extension (six numbers) is read without its colours
+    for t in ["v 0 0 0 1\nv 1 0 0 1.0\nv 0 1 0\nvt 0 0\nf 1/1 2/1 3/1\n", "v 0 0 0 1 0 0\nv 1 0 0 0 1 0\nv 0 1 0 0 0 1\nvt 0 0\nf 1/1 2/1 3/1\n"] {
+        assert!(import_obj(t.as_bytes(), ImportKind::Mesh3do, None).is_ok(), "{t:?}");
     }
     // bytes that are not text, a byte order mark, a file of only comments
     assert!(import_obj(&[0xff, 0xfe, 0x00, 0x80], ImportKind::Mesh3do, None).is_err());
@@ -977,6 +983,38 @@ fn bvh_joints_that_do_not_match_the_rig_are_refused() {
     let moved = t.replacen("0.000000 0.000000 0.000000 0.000000 0.000000 0.000000", "1.000000 0.000000 0.000000 0.000000 0.000000 0.000000", 1);
     assert_ne!(moved, t);
     assert!(refused_bvh(&moved, &two).contains(SYNTHETIC_ROOT));
+    // a synthetic root with an offset (the whole rig moved by a tool) is refused, not dropped
+    let at = t.find("ROOT Shaiya_Root").expect("the synthetic root");
+    let off = at + t[at..].find("OFFSET 0.000000 0.000000 0.000000").expect("its offset");
+    let mut shifted = t.clone();
+    shifted.replace_range(off..off + "OFFSET 0.000000 0.000000 0.000000".len(), "OFFSET 0.000000 10.000000 0.000000");
+    let why = refused_bvh(&shifted, &two);
+    assert!(why.contains(SYNTHETIC_ROOT) && why.contains("offset"), "{why}");
+    assert!(import_bvh(t.as_bytes(), &two, None).is_ok());
+}
+
+#[test]
+fn a_scaled_bone_with_constant_rotation_keys_keeps_its_rotation_track() {
+    // the game poses a bone with rotation keys by the key's unit rotation (the matrix's scale is replaced); a track left out would pose it
+    // with the scale again, so the import keeps the track and the pose of the like file comes back
+    let mut scaled = place([0.1, 0.2, 0.3, 0.9], [1.0, 0.5, 0.25]);
+    for v in scaled.iter_mut().take(3) {
+        *v *= 2.0;
+    }
+    let q = unit4([0.1, 0.2, 0.3, 0.9]);
+    let ani = ani_of(
+        0,
+        6,
+        &[
+            B { parent: -1, local: place([0.0, 0.0, 0.0, 1.0], [0.0, 1.0, 0.0]), rot: vec![(0, about(2, 10.0)), (6, about(2, 40.0))], trans: vec![] },
+            B { parent: 0, local: scaled, rot: vec![(0, q), (6, q)], trans: vec![] },
+            B { parent: 1, local: place([0.0, 0.0, 0.0, 1.0], [0.0, 0.0, 2.0]), rot: vec![], trans: vec![] },
+        ],
+    );
+    let (back, _) = import_bvh(bvh_of(&ani).as_bytes(), &ani, None).unwrap();
+    assert!(!back.bones[1].rot.is_empty(), "the constant keys of a scaled bone stay");
+    assert!(passes(&back, &ani));
+    assert_poses_equal(&ani, &back, 0..=6, 1e-4);
 }
 
 #[test]

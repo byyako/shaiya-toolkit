@@ -115,3 +115,41 @@ fn a_jpg_and_a_png_are_described_by_their_headers() {
     assert_eq!(k.kind, Kind::Jpg);
     assert!(!k.problems.is_empty());
 }
+
+#[test]
+fn a_saf_whose_first_file_is_a_sound_or_a_picture_is_still_a_saf() {
+    // a data.saf with no data.sah beside it starts with the bytes of its first stored file: it must not be described as that file
+    let d = TempDir::new("inspect-saf-media");
+    let w = d.path().join("data.saf");
+    std::fs::write(&w, wav(1, 1, 8000, 16, &[0; 64])).unwrap();
+    assert_eq!(info(&w).kind, Kind::Saf);
+    let mut png = shaiya_clientdata::texture::PNG_MAGIC.to_vec();
+    png.extend([0u8; 40]);
+    let q = d.path().join("other.saf");
+    std::fs::write(&q, &png).unwrap();
+    assert_eq!(info(&q).kind, Kind::Saf);
+    let o = d.path().join("third.saf");
+    std::fs::write(&o, ogg_page(0, &[1, 2, 3])).unwrap();
+    assert_eq!(info(&o).kind, Kind::Saf);
+    // the same bytes under another name are still found by content
+    let n = d.path().join("data.bin");
+    std::fs::write(&n, wav(1, 1, 8000, 16, &[0; 64])).unwrap();
+    assert_eq!(info(&n).kind, Kind::Wav);
+}
+
+#[test]
+fn a_jpeg_whose_frame_header_lies_past_the_first_64_kib_says_so() {
+    let d = TempDir::new("inspect-jpg-long");
+    let mut jpg = vec![0xFF, 0xD8, 0xFF, 0xE1];
+    // one APP1 segment of 65,533 bytes (the largest), then a second, so that the frame header starts after 64 KiB
+    jpg.extend(65_535u16.to_be_bytes());
+    jpg.extend(vec![0u8; 65_533]);
+    jpg.extend([0xFF, 0xE1, 0x00, 0x10]);
+    jpg.extend([0u8; 14]);
+    jpg.extend([0xFF, 0xC2, 0x00, 0x0B, 0x08, 0x01, 0x00, 0x02, 0x00, 0x01, 0x01, 0x11, 0x00]);
+    let p = d.path().join("exif.jpg");
+    std::fs::write(&p, &jpg).unwrap();
+    let i = info(&p);
+    assert_eq!(i.kind, Kind::Jpg);
+    assert!(i.problems.iter().any(|m| m.contains("no JPEG frame header in the first 64 KiB")), "{:?}", i.problems);
+}

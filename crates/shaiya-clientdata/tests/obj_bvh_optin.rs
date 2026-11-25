@@ -119,8 +119,11 @@ fn every_us_client_mesh_exports_obj_and_a_3do_or_3de_comes_back() {
                     same_bytes += 1;
                 }
             }
-            // a mesh of more than 65,535 distinct corners cannot come back (the export keeps its vertices, the import unifies corners): counted
-            Err(_) => skipped_big += 1,
+            // every kind of import refusal is a failure here (on US EP4.5 none is expected, so the count is asserted to be 0 below)
+            Err(e) => {
+                skipped_big += 1;
+                println!("OBJ: {} did not come back: {e}", file.path);
+            }
         }
     }
     println!("OBJ: {files} .3DO, .3DE and .3DC files: {unreadable} not read by the toolkit's reader, {exported} exported, {refused} refused");
@@ -129,9 +132,18 @@ fn every_us_client_mesh_exports_obj_and_a_3do_or_3de_comes_back() {
     }
     println!("OBJ re-import of .3DO and .3DE: {same_mesh} give the same corners (positions, normals, texture coordinates to the bit), {same_bytes} give the same bytes (without frames), {skipped_big} could not be read back");
     assert_eq!(exported + refused + unreadable, files);
+    // what the docs say: every written .3DO and .3DE comes back (no import refusal of any kind), with the same triangle corners; the number
+    // that also has the same bytes is measured and printed
+    assert_eq!(skipped_big, 0, "an OBJ the toolkit wrote was refused by its own import");
+    assert!(same_bytes <= same_mesh);
 }
 
 fn max_pose_difference(a: &Ani, b: &Ani) -> f32 {
+    max_pose_difference_of(a, b, |_| true)
+}
+
+/// The largest difference of any matrix element over about 200 sampled keys, for the bones `only` accepts.
+fn max_pose_difference_of(a: &Ani, b: &Ani, only: impl Fn(usize) -> bool) -> f32 {
     let (la, lb) = (locals(a), locals(b));
     let end = a.end_key.min(b.end_key);
     let start = a.first_field.min(b.first_field).min(0);
@@ -139,7 +151,10 @@ fn max_pose_difference(a: &Ani, b: &Ani) -> f32 {
     let mut worst = 0f32;
     let mut k = start;
     while k <= end {
-        for (x, y) in pose(a, &la, k as f32).iter().zip(&pose(b, &lb, k as f32)) {
+        for (bone, (x, y)) in pose(a, &la, k as f32).iter().zip(&pose(b, &lb, k as f32)).enumerate() {
+            if !only(bone) {
+                continue;
+            }
             for e in 0..16 {
                 let d = (x[e] - y[e]).abs();
                 if d.is_finite() {
@@ -157,7 +172,8 @@ fn every_us_client_ani_exports_bvh_or_is_refused_by_kind_and_comes_back() {
     let Some(dir) = env_client() else { return };
     let a = Archive::open(&dir).unwrap();
     let (mut files, mut exported, mut refused, mut came_back, mut passed, mut not_read, mut dropped_files) = (0usize, 0usize, 0usize, 0usize, 0usize, 0usize, 0usize);
-    let mut worst = 0f32;
+    let (mut drop_came_back, mut drop_passed) = (0usize, 0usize);
+    let (mut worst, mut drop_root_worst) = (0f32, 0f32);
     let mut by_kind: BTreeMap<String, usize> = BTreeMap::new();
     let mut first_by_kind: BTreeMap<String, String> = BTreeMap::new();
     for file in a.index().visible() {
@@ -196,8 +212,22 @@ fn every_us_client_ani_exports_bvh_or_is_refused_by_kind_and_comes_back() {
                     first_by_kind.entry(key).or_insert_with(|| format!("{}: {e}", file.path));
                 }
                 // the same file with the motion of its translating bones left out is written
-                if export_bvh(&ani, &BvhOptions { drop_translation: true, ..BvhOptions::default() }).is_ok() {
+                if let Ok(o) = export_bvh(&ani, &BvhOptions { drop_translation: true, ..BvhOptions::default() }) {
                     dropped_files += 1;
+                    // ... and read back: it must come back and pass; the bones that were not dropped (the only root of a one-root rig) keep their pose
+                    match import_bvh(&o.text, &ani, None) {
+                        Ok((back, _)) => {
+                            drop_came_back += 1;
+                            if passes(&back, &ani) {
+                                drop_passed += 1;
+                            }
+                            let one_root = ani.bones.iter().filter(|b| b.parent < 0).count() == 1;
+                            if one_root {
+                                drop_root_worst = drop_root_worst.max(max_pose_difference_of(&ani, &back, |i| ani.bones[i].parent < 0));
+                            }
+                        }
+                        Err(e) => println!("BVH (drop-translation): {} was not read back: {e}", file.path),
+                    }
                 }
             }
         }
@@ -207,5 +237,13 @@ fn every_us_client_ani_exports_bvh_or_is_refused_by_kind_and_comes_back() {
         println!("BVH {k}: {n} (first: {})", first_by_kind.get(k).or_else(|| first_by_kind.get("import")).cloned().unwrap_or_default());
     }
     println!("BVH re-import of the {exported} written files: {came_back} read, {passed} pass against their source, {not_read} not read; the largest difference of any matrix element over the sampled keys: {worst:.6}");
+    println!("BVH re-import of the {dropped_files} files written with --drop-translation: {drop_came_back} read, {drop_passed} pass against their source; the largest difference of the root bone of a one-root rig: {drop_root_worst:.6}");
     assert_eq!(exported + refused, files);
+    // what the docs say: every written file comes back, passes against its source, and its poses agree with the source's
+    assert_eq!(came_back, exported, "a BVH the toolkit wrote was refused by its own import ({not_read})");
+    assert_eq!(passed, came_back);
+    assert!(worst < 1e-4, "the largest pose difference was {worst}");
+    assert_eq!(drop_came_back, dropped_files);
+    assert_eq!(drop_passed, drop_came_back);
+    assert!(drop_root_worst < 1e-3, "the root of a --drop-translation file differs by {drop_root_worst}");
 }

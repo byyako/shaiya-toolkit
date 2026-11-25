@@ -109,15 +109,22 @@ pub fn decode_png(data: &[u8], file: &str) -> Result<Image> {
     let size = reader.output_buffer_size().ok_or_else(|| picture_error(file, "PNG: size overflow"))?;
     let mut buf = vec![0u8; size];
     let frame = reader.next_frame(&mut buf).map_err(bad)?;
-    let px = &buf[..frame.buffer_size()];
-    let mut rgba = Vec::with_capacity(w as usize * h as usize * 4);
-    match frame.color_type {
-        png::ColorType::Rgba => rgba.extend_from_slice(px),
-        png::ColorType::Rgb => px.as_chunks::<3>().0.iter().for_each(|p| rgba.extend_from_slice(&[p[0], p[1], p[2], 255])),
-        png::ColorType::Grayscale => px.iter().for_each(|&g| rgba.extend_from_slice(&[g, g, g, 255])),
-        png::ColorType::GrayscaleAlpha => px.as_chunks::<2>().0.iter().for_each(|p| rgba.extend_from_slice(&[p[0], p[0], p[0], p[1]])),
-        png::ColorType::Indexed => return Err(picture_error(file, "PNG: indexed colour was not expanded")),
-    }
+    let used = frame.buffer_size();
+    let rgba = if frame.color_type == png::ColorType::Rgba {
+        // already RGBA: the one buffer is the result (a second one of the same size would double the peak)
+        buf.truncate(used);
+        buf
+    } else {
+        let px = &buf[..used];
+        let mut rgba = Vec::with_capacity(w as usize * h as usize * 4);
+        match frame.color_type {
+            png::ColorType::Rgb => px.as_chunks::<3>().0.iter().for_each(|p| rgba.extend_from_slice(&[p[0], p[1], p[2], 255])),
+            png::ColorType::Grayscale => px.iter().for_each(|&g| rgba.extend_from_slice(&[g, g, g, 255])),
+            png::ColorType::GrayscaleAlpha => px.as_chunks::<2>().0.iter().for_each(|p| rgba.extend_from_slice(&[p[0], p[0], p[0], p[1]])),
+            _ => return Err(picture_error(file, "PNG: indexed colour was not expanded")),
+        }
+        rgba
+    };
     if rgba.len() != (w as usize * h as usize * 4) {
         return Err(picture_error(file, format!("PNG: decoded {} bytes for {w}x{h}", rgba.len())));
     }

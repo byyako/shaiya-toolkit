@@ -182,7 +182,12 @@ pub fn run(archive: &Archive, path: &str, s: &Settings, cancel: shaiya_core::job
         return Err(one("Reduce keys and exact keys cannot be used together (exact keeps the file's own keys)"));
     }
     let io = |e: Error| one(e.to_string());
-    let bytes = read_capped(input, MAX_MODEL_BYTES).map_err(io)?;
+    let in_cap = match src {
+        Source::Gltf => MAX_MODEL_BYTES,
+        Source::Obj => shaiya_clientdata::interchange::obj::MAX_OBJ_BYTES as u64,
+        Source::Bvh => shaiya_clientdata::interchange::bvh::MAX_BVH_BYTES as u64,
+    };
+    let bytes = read_capped(input, in_cap).map_err(io)?;
     let g = if src == Source::Gltf {
         let folder = input.parent().filter(|p| !p.as_os_str().is_empty()).map_or_else(|| PathBuf::from("."), Path::to_path_buf);
         Some(Gltf::open(&bytes, &mut |name| read_beside(&folder, name)).map_err(|(_, m)| one(format!("{}: {m}", input.display())))?)

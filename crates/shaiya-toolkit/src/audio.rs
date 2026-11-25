@@ -87,7 +87,8 @@ impl Backend for Cpal {
         let format = supported.sample_format();
         let config = supported.config();
         let on_error = move |_e: cpal::Error| failed.store(true, Ordering::Relaxed);
-        let mut scratch: Vec<f32> = Vec::new();
+        // room for a large buffer up front: the callback resizes within it and does not allocate on the audio thread
+        let mut scratch: Vec<f32> = Vec::with_capacity(1 << 16);
         let stream = match format {
             cpal::SampleFormat::F32 => device.build_output_stream(config, move |data: &mut [f32], _: &cpal::OutputCallbackInfo| fill(data), on_error, None),
             cpal::SampleFormat::I16 => device.build_output_stream(
@@ -191,6 +192,11 @@ fn make_fill(pcm: Arc<Pcm>, out: Format, shared: Arc<Shared>) -> Fill {
         let vol = f32::from_bits(shared.volume.load(Ordering::Relaxed)).clamp(0.0, 1.0);
         let mut frame = [0f32; 2];
         for o in buf.chunks_mut(ch_out) {
+            // a buffer that is not a whole number of frames (a device never gives one): its tail is silence, never an out-of-range index
+            if o.len() < ch_out {
+                o.fill(0.0);
+                continue;
+            }
             if pos >= frames {
                 o.fill(0.0);
                 shared.finished.store(true, Ordering::Relaxed);
@@ -241,7 +247,11 @@ impl Player {
     pub fn load(&mut self, key: &str, pcm: Arc<Pcm>) {
         self.stop();
         self.track = Some((key.to_string(), pcm));
-        self.output = None;
+        // the device is asked once and the answer kept for the next track (asking opens the system's device, which can take a moment on the
+        // UI thread); a failed answer is asked again
+        if self.output.as_ref().is_some_and(Result::is_err) {
+            self.output = None;
+        }
         self.error = None;
     }
 
@@ -304,9 +314,11 @@ impl Player {
             self.shared.playing.store(true, Ordering::Relaxed);
             return;
         }
-        let fmt = match self.output.get_or_insert_with(|| self.backend.output()) {
-            Ok(f) => *f,
-            Err(_) => return,
+        // the format is asked fresh when a stream starts (the default device may have changed since the kept answer)
+        self.output = Some(self.backend.output());
+        let fmt = match &self.output {
+            Some(Ok(f)) => *f,
+            _ => return,
         };
         if f64::from_bits(self.shared.pos.load(Ordering::Relaxed)) >= pcm.frames() as f64 {
             self.shared.pos.store(0f64.to_bits(), Ordering::Relaxed);
@@ -377,6 +389,7 @@ mod tests {
         pub fill: Arc<Mutex<Option<Fill>>>,
         pub alive: Arc<AtomicBool>,
         pub starts: Arc<AtomicU32>,
+        pub probes: Arc<AtomicU32>,
     }
 
     struct Guard(Arc<AtomicBool>);
@@ -401,6 +414,7 @@ mod tests {
 
     impl Backend for Fake {
         fn output(&mut self) -> Result<Format, Unavailable> {
+            self.probes.fetch_add(1, Ordering::SeqCst);
             self.device.lock().unwrap().ok_or(Unavailable::NoDevice)
         }
         fn start(&mut self, fill: Fill, _failed: Arc<AtomicBool>) -> Result<Box<dyn Any>, Unavailable> {
@@ -449,6 +463,38 @@ mod tests {
         p.poll();
         assert_eq!((p.state(), fake.starts.load(Ordering::SeqCst), p.unavailable()), (PlayState::Stopped, 0, None));
         assert_eq!(p.track_key(), Some("a.wav"));
+    }
+
+    #[test]
+    fn the_device_is_asked_once_for_many_tracks_and_again_when_a_stream_starts() {
+        let fake = Fake::with_device(48000, 2);
+        let mut p = Player::new(Box::new(fake.clone()));
+        for key in ["a.wav", "b.wav", "c.wav"] {
+            p.load(key, tone(22050, 1, 100));
+            assert_eq!(p.unavailable(), None);
+        }
+        assert_eq!(fake.probes.load(Ordering::SeqCst), 1, "three tracks, one probe");
+        p.play();
+        assert_eq!(fake.probes.load(Ordering::SeqCst), 2, "a starting stream asks for the device's format again");
+        // an answer of no device is asked again for the next track
+        let none = Fake::default();
+        let mut q = Player::new(Box::new(none.clone()));
+        q.load("a.wav", tone(22050, 1, 100));
+        assert_eq!(q.unavailable(), Some(Unavailable::NoDevice));
+        q.load("b.wav", tone(22050, 1, 100));
+        assert_eq!(q.unavailable(), Some(Unavailable::NoDevice));
+        assert_eq!(none.probes.load(Ordering::SeqCst), 2);
+    }
+
+    #[test]
+    fn a_buffer_that_is_not_a_whole_number_of_frames_is_filled_not_indexed_out_of_range() {
+        let fake = Fake::with_device(22050, 2);
+        let mut p = Player::new(Box::new(fake.clone()));
+        p.load("a.wav", tone(22050, 1, 1000));
+        p.play();
+        let mut buf = vec![9.0f32; 7];
+        (fake.fill.lock().unwrap().as_mut().expect("a stream is running"))(&mut buf);
+        assert_eq!(buf[6], 0.0, "the tail that holds no whole frame is silence");
     }
 
     #[test]

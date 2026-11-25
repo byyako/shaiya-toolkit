@@ -99,7 +99,7 @@ pub enum Cmd {
     /// material; missing normals are computed (and said); a missing texture coordinate, a second material or more than 65,535 vertices are
     /// refused; the .mtl named by mtllib is never opened. With IN.bvh (laid out as `export --format bvh` writes it) -o must end in .ani and
     /// --like is required: a joint is a bone by its name Bone_NNN, the channels must be the ZXY order the export writes, Frame Time 1/30 and only
-    /// the root has position channels; a track equal to the like file's reference is left out; written only when it passes the rig check
+    /// the root has position channels, every OFFSET must be the like file's reference translation (a --scale other than 1 or a moved Shaiya_Root is refused); a track equal to the like file's reference is left out; written only when it passes the rig check
     /// (exit 1 otherwise), exit 2 without --like. OBJ and BVH are a lossy view of the game file as well.
     ///
     /// Example: shaiya anim import wave.glb -o new.ani --like "character/human/ani/huwm_117_x.ani" --from "@us" --keys exact

@@ -47,6 +47,9 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y libxkbcommon-dev libwayland-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libx11-dev libasound2-dev pkg-config
       - name: Build
         run: cargo build --workspace --locked
+      - name: Build without audio (Linux)
+        if: runner.os == 'Linux'
+        run: cargo build -p shaiya-toolkit --no-default-features --locked
       - name: Test
         run: cargo test --workspace --locked
       - name: Real window smoke (Windows, not blocking yet)
@@ -82,8 +85,5 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Build
         run: cargo build --workspace --locked
-      - name: Build without audio (Linux)
-        if: runner.os == 'Linux'
-        run: cargo build -p shaiya-toolkit --no-default-features --locked
       - name: Test
         run: cargo test --workspace --locked

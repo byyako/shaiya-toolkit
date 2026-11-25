@@ -2,12 +2,20 @@
 //!
 //! What is read: PCM 8 bit (unsigned), PCM 16 bit (signed) and IMA/DVI ADPCM (4 bit), mono or stereo. Every other format tag is refused by
 //! [`decode`] with `unsupported format (tag N, B bits)`; [`parse_header`] still reports its facts. A file over [`WAV_CAP`] is refused before
-//! anything is allocated. Chunks are walked with the odd-size pad byte, unknown chunks are skipped and `data` may come before or after `fmt `.
+//! anything is allocated; so is a sound that would decode to more than [`MAX_SAMPLES`] numbers (the ADPCM and 8 bit forms grow 4 to 8 times)
+//! or whose sample rate is outside [`MIN_RATE`]..=[`MAX_RATE`], and [`resample_linear`] refuses a result over the same limit. Chunks are walked with the odd-size pad byte, unknown chunks are skipped and `data` may come before or after `fmt `.
 
 use crate::error::{Cur, Error, Result};
 
 /// The largest file read or decoded (64 MiB). The client's longest sound file is under 20 MB.
 pub const WAV_CAP: usize = 64 << 20;
+
+/// The most samples (all channels) [`decode`] and [`resample_linear`] produce: 64 Mi numbers, 256 MiB of `f32`. The client's longest sound is
+/// about 5 million frames.
+pub const MAX_SAMPLES: usize = 64 << 20;
+/// The lowest and highest sample rate [`decode`] and [`resample_linear`] accept (Hz).
+pub const MIN_RATE: u32 = 1_000;
+pub const MAX_RATE: u32 = 384_000;
 
 const WHAT: &str = "WAV file";
 
@@ -268,25 +276,36 @@ pub fn decode(bytes: &[u8]) -> Result<Pcm> {
         };
         return Err(fail(what, info.data_offset));
     }
+    if !(MIN_RATE..=MAX_RATE).contains(&info.rate) {
+        return Err(fail(format!("sample rate {} Hz is outside {MIN_RATE}..={MAX_RATE}", info.rate), info.data_offset));
+    }
     let data = &bytes[info.data_offset..info.data_offset + info.data_len as usize];
     let ch = info.channels as usize;
+    // the decoded size is counted before anything is allocated (4 bit codes become 32 bit floats)
+    let wanted = match (info.tag, info.bits) {
+        (TAG_PCM, 8) => data.len() / ch * ch,
+        (TAG_PCM, _) => data.len() / (2 * ch) * ch,
+        _ => adpcm_frames(data.len(), info.block_align as usize, ch).unwrap_or(0).saturating_mul(ch),
+    };
+    if wanted > MAX_SAMPLES {
+        return Err(fail(format!("the sound decodes to {wanted} samples, over the limit of {MAX_SAMPLES}"), info.data_offset));
+    }
     let mut samples: Vec<f32>;
     match (info.tag, info.bits) {
         (TAG_PCM, 8) => {
-            samples = Vec::with_capacity(data.len() / ch * ch);
-            samples.extend(data[..data.len() / ch * ch].iter().map(|&b| (b as f32 - 128.0) / 128.0));
+            samples = Vec::with_capacity(wanted);
+            samples.extend(data[..wanted].iter().map(|&b| (b as f32 - 128.0) / 128.0));
         }
         (TAG_PCM, _) => {
-            let n = data.len() / (2 * ch) * ch;
-            samples = Vec::with_capacity(n);
-            samples.extend(data.as_chunks::<2>().0.iter().take(n).map(|b| i16::from_le_bytes(*b) as f32 / 32768.0));
+            samples = Vec::with_capacity(wanted);
+            samples.extend(data.as_chunks::<2>().0.iter().take(wanted).map(|b| i16::from_le_bytes(*b) as f32 / 32768.0));
         }
         _ => {
             let align = info.block_align as usize;
             if align < 4 * ch {
                 return Err(fail(format!("ADPCM block alignment {align} is too small for {ch} channels"), info.data_offset));
             }
-            samples = Vec::with_capacity(adpcm_frames(data.len(), align, ch).unwrap_or(0) * ch);
+            samples = Vec::with_capacity(wanted);
             for block in data.chunks(align) {
                 decode_adpcm(block, ch, &mut samples);
             }
@@ -296,14 +315,19 @@ pub fn decode(bytes: &[u8]) -> Result<Pcm> {
 }
 
 /// Linear resampling to `rate` Hz: the duration stays (the frame count scales by `rate / pcm.rate`, rounded). The same rate returns a copy; a
-/// rate of 0 returns a copy too.
-pub fn resample_linear(pcm: &Pcm, rate: u32) -> Pcm {
+/// rate of 0 returns a copy too. A rate above [`MAX_RATE`] and a result of more than [`MAX_SAMPLES`] numbers are refused before anything is
+/// allocated.
+pub fn resample_linear(pcm: &Pcm, rate: u32) -> Result<Pcm> {
     if rate == 0 || rate == pcm.rate || pcm.frames() == 0 {
-        return pcm.clone();
+        return Ok(pcm.clone());
     }
     let ch = pcm.channels.max(1) as usize;
     let n_in = pcm.frames();
-    let n_out = ((n_in as u128 * rate as u128 + pcm.rate as u128 / 2) / pcm.rate as u128) as usize;
+    let n_out = (n_in as u128 * rate as u128 + pcm.rate as u128 / 2) / pcm.rate.max(1) as u128;
+    if rate > MAX_RATE || n_out * ch as u128 > MAX_SAMPLES as u128 {
+        return Err(fail(format!("resampling {n_in} frames from {} to {rate} Hz would give {n_out} frames, over the limits", pcm.rate), 0));
+    }
+    let n_out = n_out as usize;
     let step = pcm.rate as f64 / rate as f64;
     let mut samples = Vec::with_capacity(n_out * ch);
     let mut frame = vec![0f32; ch];
@@ -311,7 +335,7 @@ pub fn resample_linear(pcm: &Pcm, rate: u32) -> Pcm {
         pcm.lerp_frame(i as f64 * step, &mut frame);
         samples.extend_from_slice(&frame);
     }
-    Pcm { rate, channels: pcm.channels, samples }
+    Ok(Pcm { rate, channels: pcm.channels, samples })
 }
 
 #[cfg(test)]
@@ -340,7 +364,7 @@ mod tests {
         f.extend_from_slice(&tag.to_le_bytes());
         f.extend_from_slice(&channels.to_le_bytes());
         f.extend_from_slice(&rate.to_le_bytes());
-        let byte_rate = if tag == TAG_PCM { rate * block_align as u32 } else { rate * block_align as u32 / 8 };
+        let byte_rate = if tag == TAG_PCM { rate.wrapping_mul(block_align as u32) } else { rate.wrapping_mul(block_align as u32) / 8 };
         f.extend_from_slice(&byte_rate.to_le_bytes());
         f.extend_from_slice(&block_align.to_le_bytes());
         f.extend_from_slice(&bits.to_le_bytes());
@@ -600,17 +624,47 @@ mod tests {
     fn resampling_keeps_the_duration() {
         let pcm = Pcm { rate: 22050, channels: 2, samples: (0..22050 * 2).map(|i| (i as f32 * 0.001).sin()).collect() };
         for rate in [8000, 44100, 48000, 96000] {
-            let r = resample_linear(&pcm, rate);
+            let r = resample_linear(&pcm, rate).unwrap();
             assert_eq!((r.rate, r.channels), (rate, 2));
             assert!((r.duration_s() - pcm.duration_s()).abs() < 1.0 / rate as f64, "{rate}: {} vs {}", r.duration_s(), pcm.duration_s());
             assert_eq!(r.samples.len() % 2, 0);
         }
-        assert_eq!(resample_linear(&pcm, 22050), pcm);
+        assert_eq!(resample_linear(&pcm, 22050).unwrap(), pcm);
         // linear: the midpoint of two frames is their mean, the first frame is kept and the last is held
         let ramp = Pcm { rate: 1000, channels: 1, samples: vec![0.0, 1.0, 0.0] };
-        let up = resample_linear(&ramp, 2000);
+        let up = resample_linear(&ramp, 2000).unwrap();
         assert_eq!(up.samples, vec![0.0, 0.5, 1.0, 0.5, 0.0, 0.0]);
         let empty = Pcm { rate: 1000, channels: 1, samples: vec![] };
-        assert!(resample_linear(&empty, 48000).samples.is_empty());
+        assert!(resample_linear(&empty, 48000).unwrap().samples.is_empty());
+    }
+
+    #[test]
+    fn a_decoded_size_or_a_rate_beyond_the_limits_is_refused_before_allocating() {
+        // a 1 Hz header with a PCM 8 body: it would resample to billions of frames; decode refuses the rate, resample the size
+        let tiny = riff(&[(b"fmt ", fmt_chunk(1, 1, 1, 8, 1, &[])), (b"data", vec![128; 4096])]);
+        assert!(parse_header(&tiny).is_ok());
+        let e = decode(&tiny).unwrap_err().to_string();
+        assert!(e.contains("sample rate 1 Hz"), "{e}");
+        let low = Pcm { rate: 1, channels: 1, samples: vec![0.0; 4096] };
+        let e = resample_linear(&low, 384_000).unwrap_err().to_string();
+        assert!(e.contains("over the limits"), "{e}");
+        let big = Pcm { rate: 8000, channels: 2, samples: vec![0.0; 16] };
+        assert!(resample_linear(&big, 384_001).is_err());
+        assert!(resample_linear(&big, 384_000).is_ok());
+        // a rate below 1,000 Hz or above 384,000 Hz in the header
+        for rate in [999u32, 384_001, u32::MAX] {
+            let w = riff(&[(b"fmt ", fmt_chunk(1, 1, rate, 16, 2, &[])), (b"data", vec![0; 8])]);
+            assert!(decode(&w).is_err(), "{rate}");
+        }
+        assert!(decode(&riff(&[(b"fmt ", fmt_chunk(1, 1, 1000, 16, 2, &[])), (b"data", vec![0; 8])])).is_ok());
+        // ADPCM of the largest file (64 MiB) decodes to about 128 Mi samples: refused by count, without a 512 MiB allocation
+        let mut adpcm = riff(&[(b"fmt ", fmt_chunk(17, 1, 22050, 4, 32768, &[])), (b"data", vec![0; 4])]);
+        let n = adpcm.len();
+        // the data chunk claims the rest of a 40 MiB file: the real file must hold the bytes, so build it
+        adpcm.resize(n + (40 << 20), 0);
+        let size = (4 + (40 << 20)) as u32;
+        adpcm[n - 8..n - 4].copy_from_slice(&size.to_le_bytes());
+        let e = decode(&adpcm).unwrap_err().to_string();
+        assert!(e.contains("over the limit of"), "{e}");
     }
 }
