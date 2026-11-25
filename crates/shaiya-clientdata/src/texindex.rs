@@ -337,7 +337,7 @@ mod tests {
         let mut files = empty(&["monster/3dc/mob_ape.3DC", "MONSTER/dds/MOB_APE.dds"]);
         files.push(("Monster/monster.mon", m));
         let (idx, _) = build(&files);
-        for q in ["Monster/3DC/Mob_Ape.3DC", "MONSTER\\3dc\\MOB_APE.3DC"] {
+        for q in ["Monster/3DC/Mob_Ape.3DC", r"MONSTER\3dc\MOB_APE.3DC"] {
             let t = idx.for_mesh(q);
             assert_eq!(t.len(), 1, "{q}");
             assert_eq!((t[0].by, t[0].texture.as_str()), (Found::OwnFolder, "MONSTER/dds/MOB_APE.dds"));

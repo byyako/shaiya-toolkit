@@ -245,11 +245,11 @@ pub(crate) fn write(scene: &Scene, opts: &GltfOptions, _input: &super::GltfInput
                 Err(_) => scene_nodes.push(i),
             }
         }
-        for i in 0..n {
+        for (i, kids) in children.iter().enumerate().take(n) {
             let mut node = json!({"name": bone_name(i, width)});
             trs_json(&mut node, &rig.rest[i]);
-            if !children[i].is_empty() {
-                node["children"] = json!(children[i]);
+            if !kids.is_empty() {
+                node["children"] = json!(kids);
             }
             nodes.push(node);
         }
