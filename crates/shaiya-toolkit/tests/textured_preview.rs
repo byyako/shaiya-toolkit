@@ -490,9 +490,10 @@ fn a_loose_folder_without_the_texture_file_draws_grey_and_says_so() {
     let da2 = TempDir::new("w17-tex-archive-missing");
     let gone = open(&da2, &[(TORSO, arm_mesh_3dc()), (MLT, mlt_bytes(&["huwm_torso001.3DC"], &["skin.dds"], &[(0, 0, 0)]))]);
     assert!(model(preview(&gone, TORSO, &Look::default())).notes.iter().any(|n| n == "texture skin.dds is not in the archive; drawn grey"));
-    // letter case of the folder and file names on disk does not matter
+    // letter case of a folder and a file name on disk does not matter (the upper folders keep one spelling: two spellings of one folder are
+    // case-only duplicates, which a loose tree leaves out on a case-sensitive disk)
     let dc = TempDir::new("w17-tex-case");
-    let at = dc.path().join("data/CHARACTER/HUMAN/dds/SKIN.DDS");
+    let at = dc.path().join("data/Character/Human/dds/SKIN.DDS");
     std::fs::create_dir_all(at.parent().unwrap()).unwrap();
     std::fs::write(at, skin()).unwrap();
     for (p, b) in [(TORSO, arm_mesh_3dc()), (MLT, mlt_bytes(&["huwm_torso001.3DC"], &["skin.dds"], &[(0, 0, 0)])), ("item/readme.txt", b"x".to_vec())] {
