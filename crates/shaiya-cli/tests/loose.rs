@@ -284,3 +284,27 @@ fn a_loose_patch_with_a_required_signature_is_checked_before_anything_is_written
     assert_eq!(code(&o), 0, "{}", err(&o));
     assert_eq!(std::fs::read(&a_txt).unwrap(), b"patched");
 }
+
+#[test]
+fn extracting_into_a_saved_client_folder_is_refused_exit_4() {
+    let (w, root) = loose_world();
+    let backups = w.tmp.path().join("bk");
+    std::fs::create_dir_all(&backups).unwrap();
+    let o = sh(&w.data, &["clients", "add", "gx", p(&root), "--backups", p(&backups)]);
+    assert_eq!(code(&o), 0, "{}", err(&o));
+    // the archive client's own folder holds data.sah; the loose client's data and backup folders are saved
+    for target in [root.join("data"), root.join("data").join("Item"), backups.clone(), w.client.join("sub")] {
+        for extra in [&["--force"][..], &[][..]] {
+            let mut args = vec!["archive", "extract", p(&w.client), "*.dds", "-o", p(&target)];
+            args.extend_from_slice(extra);
+            let o = sh(&w.data, &args);
+            assert_eq!(code(&o), 4, "{} {}", target.display(), err(&o));
+            assert!(err(&o).contains("is inside the client folder"), "{}", err(&o));
+        }
+    }
+    assert!(!root.join("data").join("interface").exists() && !backups.join("interface").exists() && !w.client.join("sub").exists(), "nothing was written");
+    // an ordinary folder still works
+    let fine = w.tmp.path().join("fine");
+    let o = sh(&w.data, &["archive", "extract", p(&w.client), "*.dds", "-o", p(&fine), "--force"]);
+    assert_eq!(code(&o), 0, "{}", err(&o));
+}

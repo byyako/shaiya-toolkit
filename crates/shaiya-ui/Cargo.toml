@@ -3,6 +3,7 @@ name = "shaiya-ui"
 description = "The GUI shell of the Shaiya toolkit programs: window, menus, settings, tasks, log, recovery, backups, undo, command palette, test harness"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 repository.workspace = true

@@ -3,6 +3,7 @@ name = "shaiya-svmap-tools"
 description = "The Shaiya SVMap Editor's engine without a GUI: map documents, pairing with client data, checks, spawn report, bulk planner, Map.ini, new map, install"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 repository.workspace = true

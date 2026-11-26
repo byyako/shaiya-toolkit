@@ -856,8 +856,13 @@ pub fn unfinished(layout: &LooseLayout) -> Option<String> {
 /// Makes `<backups>/<UTC stamp>-<NNNN>-<slug>/`: NNNN counts up within one stamp (one second), so the folder names sort in the order the changes
 /// were made whatever their labels are (the newest-only rule of the rollback relies on it).
 fn create_journal_dir(backups: &Path, label: &str) -> Result<PathBuf> {
+    create_journal_dir_at(backups, label, &shaiya_core::time::utc_stamp(SystemTime::now()))
+}
+
+/// `create_journal_dir` for a given stamp. The counter is read from the folder names, which anyone can write, so the next number is
+/// computed without overflow: a folder already numbered `u32::MAX` leaves no number to take and is refused.
+fn create_journal_dir_at(backups: &Path, label: &str, stamp: &str) -> Result<PathBuf> {
     std::fs::create_dir_all(backups).map_err(|e| Error::io(backups, e))?;
-    let stamp = shaiya_core::time::utc_stamp(SystemTime::now());
     let prefix = format!("{stamp}-");
     let mut seq = 0u32;
     for e in std::fs::read_dir(backups).map_err(|e| Error::io(backups, e))?.flatten() {
@@ -866,7 +871,7 @@ fn create_journal_dir(backups: &Path, label: &str) -> Result<PathBuf> {
             seq = seq.max(n);
         }
     }
-    for n in seq + 1.. {
+    for n in seq.saturating_add(1)..=u32::MAX {
         let dir = backups.join(format!("{prefix}{n:04}-{}", journal::slug(label)));
         match std::fs::create_dir(&dir) {
             Ok(()) => return Ok(dir),
@@ -874,7 +879,7 @@ fn create_journal_dir(backups: &Path, label: &str) -> Result<PathBuf> {
             Err(e) => return Err(Error::io(&dir, e)),
         }
     }
-    unreachable!()
+    Err(Error::Refused(format!("{} holds a journal folder numbered {}: no number is left for a new one", backups.display(), u32::MAX)))
 }
 
 // ---------------------------------------------------------------------------------------------- hashing and copying
@@ -1481,4 +1486,23 @@ pub fn top_folder_exists(layout: &LooseLayout, rel: &str) -> bool {
     let norm = rel.replace('\\', "/");
     let first = lower(norm.split('/').next().unwrap_or(""));
     std::fs::read_dir(&layout.data).is_ok_and(|rd| rd.flatten().any(|e| lower(&e.file_name().to_string_lossy()) == first && e.file_type().is_ok_and(|t| t.is_dir())))
+}
+
+#[cfg(test)]
+mod journal_dir_tests {
+    use super::*;
+
+    #[test]
+    fn a_huge_folder_number_does_not_overflow_the_counter() {
+        let d = shaiya_testkit::TempDir::new("t12-w29-journal-seq");
+        let stamp = "20260101T000000Z";
+        std::fs::create_dir(d.path().join(format!("{stamp}-4294967295-x"))).unwrap();
+        // a different label takes the last number; the same one has nothing left and is refused, neither panics
+        let ok = create_journal_dir_at(d.path(), "y", stamp).unwrap();
+        assert!(ok.ends_with(format!("{stamp}-4294967295-y")), "{}", ok.display());
+        let e = create_journal_dir_at(d.path(), "x", stamp).unwrap_err();
+        assert!(matches!(e, Error::Refused(_)), "{e}");
+        let normal = create_journal_dir_at(d.path(), "z", "20260101T000001Z").unwrap();
+        assert!(normal.ends_with("20260101T000001Z-0001-z"), "{}", normal.display());
+    }
 }

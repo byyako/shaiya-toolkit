@@ -656,7 +656,23 @@ fn index(ctx: &Ctx, a: &IndexArgs) -> Result<i32> {
 
 // ---------------------------------------------------------------------------------------------------------- extract
 
+/// An extract folder must not be (inside) a saved client's folder, data folder or backup folder, nor hold `data.sah` itself: files written
+/// there would change game data with no journal and no undo.
+fn extract_folder_check(ctx: &Ctx, out: &std::path::Path) -> Result<()> {
+    let mut saved: Vec<PathBuf> = Vec::new();
+    for c in crate::config::load_clients(ctx.data_dir.as_deref())? {
+        saved.push(c.data_folder().to_path_buf());
+        saved.extend(c.backups.clone());
+        saved.push(c.path);
+    }
+    match shaiya_core::fs::client_folder_for_new(out, &saved) {
+        Some(client) => Err(Error::Refused(format!("{} is inside the client folder {}: extract to another folder", out.display(), client.display()))),
+        None => Ok(()),
+    }
+}
+
 fn extract_cmd(ctx: &Ctx, a: &ExtractArgs, job: &Job) -> Result<i32> {
+    extract_folder_check(ctx, &a.out)?;
     let archive = open_full(ctx, &a.archive)?;
     let filter = make_filter(&a.patterns, &a.select)?;
     let opts = ExtractOptions {

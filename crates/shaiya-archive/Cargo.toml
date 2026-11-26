@@ -3,6 +3,7 @@ name = "shaiya-archive"
 description = "Shaiya data.sah/data.saf archives: index parsing and editing, read access, compaction, safe in-place edits with undo, pack, diff, swap"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 repository.workspace = true

@@ -153,6 +153,12 @@ pub fn guard_paths(clients: &[Client]) -> Vec<PathBuf> {
     v
 }
 
+/// The saved clients this version knows how to treat. An entry of an unknown kind (a newer version wrote it) is listed and kept, and
+/// never offered to a tool that writes: every picker of clients for a write goes through this.
+pub fn known_kinds(clients: &[Client]) -> impl Iterator<Item = &Client> {
+    clients.iter().filter(|c| c.kind.is_supported())
+}
+
 /// What a folder offered to the Add dialog is.
 #[derive(Clone, Debug)]
 pub enum FolderKind {
@@ -1017,4 +1023,22 @@ fn gx_cached(data: &str) -> bool {
         m.insert(data.to_string(), v);
     }
     v
+}
+
+#[cfg(test)]
+mod known_kind_tests {
+    use super::*;
+    use shaiya_core::config::ClientKind;
+
+    #[test]
+    fn an_entry_of_an_unknown_kind_is_skipped_even_when_its_folder_holds_data_sah() {
+        let d = shaiya_testkit::TempDir::new("t12-w29-known-kinds");
+        std::fs::write(d.path().join("data.sah"), b"x").unwrap();
+        let mk = |name: &str, kind: ClientKind| Client { name: name.into(), path: d.path().display().to_string(), kind, ..Client::default() };
+        let all = vec![mk("a", ClientKind::Archive), mk("l", ClientKind::Loose), mk("future", ClientKind::Other("cloud".into()))];
+        let names: Vec<&str> = known_kinds(&all).map(|c| c.name.as_str()).collect();
+        assert_eq!(names, ["a", "l"]);
+        let apply: Vec<String> = crate::multi_apply::candidates(&all).into_iter().map(|(n, _, _)| n).collect();
+        assert_eq!(apply, ["a"], "the several-clients dialog offers the archive client only: not the loose one, not the unknown kind");
+    }
 }

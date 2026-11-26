@@ -3,6 +3,7 @@ name = "shaiya-seed"
 description = "KISA SEED as used by Shaiya SData files: decrypt, encrypt, CRC, a wrapper that round-trips byte for byte, and batch work over folders and archives"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 repository.workspace = true

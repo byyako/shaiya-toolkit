@@ -774,6 +774,12 @@ fn plan_loose(tree: &LooseTree, filter: &Filter, out: &Path, flat: bool) -> Vec<
     }
     v
 }
+/// The refusal text when an extract folder is (inside) a saved client's folder, data folder or backup folder, or the open client's folder:
+/// an extract there would write game data without the journal. The folder may not exist yet (it is made).
+pub(crate) fn extract_refusal(out: &Path, client_dir: Option<&Path>, saved: &[PathBuf]) -> Option<String> {
+    crate::export_json::folder_refusal(out, client_dir, saved)
+}
+
 
 /// Copies the planned files out of a loose folder, each atomically; the original files are only read.
 fn extract_loose(tree: &LooseTree, plan: &[LoosePlanned], out: &Path, existing: Existing, keep_times: bool, job: &shaiya_core::Job) -> Result<ExtractReport> {
@@ -2132,6 +2138,11 @@ impl ArchiveView {
         if loose.is_none() && archive.is_none() {
             return;
         }
+        let saved = crate::clients::guard_paths(&cx.shell.shared().clients);
+        if let Some(text) = extract_refusal(&out, self.client_dir(), &saved) {
+            cx.shell.error("Extract refused", &Error::Refused(text));
+            return;
+        }
         let filter = if whole_archive { Filter::default() } else { self.selection_filter(all_shown) };
         if !whole_archive && filter.include.is_empty() {
             cx.shell.status("Select something to extract first");
@@ -2367,7 +2378,7 @@ impl ArchiveView {
         let mut siblings: Vec<String> = l.files_in(r.folder()).iter().map(|&i| &l.rows[i]).filter(|x| !x.shadowed && is_ani_path(&x.path) && x.path != path).map(|x| x.path.clone()).collect();
         siblings.sort_by_key(|p| lower_key(p));
         let open_dir = l.client_dir.clone();
-        let clients: Vec<(String, PathBuf)> = cx.shell.shared().clients.iter().map(|c| (c.name.clone(), PathBuf::from(&c.path))).filter(|(_, d)| has_sah_file(d) && Some(d) != open_dir.as_ref()).collect();
+        let clients: Vec<(String, PathBuf)> = cx.shell.shared().clients.iter().filter(|c| c.kind.is_supported()).map(|c| (c.name.clone(), PathBuf::from(&c.path))).filter(|(_, d)| has_sah_file(d) && Some(d) != open_dir.as_ref()).collect();
         self.anim_compare = Some(crate::anim_compare::AnimCompare::new(path, a, siblings, clients));
     }
 
@@ -3694,7 +3705,7 @@ impl ArchiveView {
                         let shown = if is_right { c.right.as_ref() } else { c.left.as_ref() }.map(|s| s.label()).unwrap_or_else(|| "(choose a client or archive file)".to_string());
                         egui::ComboBox::from_id_salt(if is_right { "toolkit-compare-right" } else { "toolkit-compare-left" }).selected_text(shown).width(260.0).show_ui(ui, |ui| {
                             for cl in &saved {
-                                if !has_sah_file(Path::new(&cl.path)) {
+                                if !cl.kind.is_supported() || !has_sah_file(Path::new(&cl.path)) {
                                     continue;
                                 }
                                 let side = CompareSide::Client { name: cl.name.clone(), dir: PathBuf::from(&cl.path) };
@@ -4193,4 +4204,30 @@ fn picture_view(ui: &mut egui::Ui, fit: &mut bool, alpha: Option<&mut bool>, tex
             o.input(ui, &resp);
         }
     });
+}
+
+#[cfg(test)]
+mod extract_guard_tests {
+    use super::*;
+
+    #[test]
+    fn extracting_into_a_saved_client_folder_is_refused() {
+        let archive = shaiya_testkit::TempDir::new("t12-w29-extract-archive");
+        std::fs::write(archive.path().join("data.sah"), b"x").unwrap();
+        let loose = shaiya_testkit::TempDir::new("t12-w29-extract-loose");
+        let data = loose.path().join("data");
+        let backups = loose.path().join("backups");
+        std::fs::create_dir_all(data.join("Character")).unwrap();
+        std::fs::create_dir_all(&backups).unwrap();
+        let saved = vec![data.clone(), backups.clone()];
+        let refused = |p: &Path, c: Option<&Path>, s: &[PathBuf]| extract_refusal(p, c, s).is_some_and(|t| t.starts_with("Choose a folder outside the client:"));
+        assert!(refused(archive.path(), None, &[]), "an archive client's folder (it holds data.sah)");
+        assert!(refused(&archive.path().join("deeper").join("out"), None, &[]), "a new folder inside an archive client");
+        assert!(refused(&data, None, &saved), "a saved loose client's data folder");
+        assert!(refused(&data.join("Character"), None, &saved), "a folder inside it");
+        assert!(refused(&backups, None, &saved), "its backup folder");
+        assert!(refused(loose.path(), Some(loose.path()), &[]), "the open client's folder");
+        let other = shaiya_testkit::TempDir::new("t12-w29-extract-ok");
+        assert!(extract_refusal(&other.path().join("new"), None, &saved).is_none(), "an ordinary folder is fine");
+    }
 }

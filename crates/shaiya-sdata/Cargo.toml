@@ -3,6 +3,7 @@ name = "shaiya-sdata"
 description = "Reads SData tables (Item, Skill, Monster, NpcQuest) into rows and columns from layout files, and writes them as CSV or JSON"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 repository.workspace = true

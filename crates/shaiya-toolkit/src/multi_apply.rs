@@ -141,7 +141,7 @@ impl MultiApply {
             return;
         }
         self.patches = patches.into_iter().map(|p| (p, true)).collect();
-        self.clients = cx.shell.shared().clients.iter().filter(|c| has_sah(Path::new(&c.path))).map(|c| (c.name.clone(), PathBuf::from(&c.path), false)).collect();
+        self.clients = candidates(&cx.shell.shared().clients);
         self.last = None;
         self.open = true;
     }
@@ -435,6 +435,11 @@ fn confirm_rows(plans: &[Plan], files: Result<ClientFiles, Error>) -> Result<Row
 /// The files of the client's journal folder (best effort: none when it does not exist yet).
 fn journal_files(dir: &Path) -> BTreeSet<PathBuf> {
     std::fs::read_dir(dir.join(shaiya_archive::journal::DEFAULT_DIR)).map(|r| r.flatten().map(|e| e.path()).collect()).unwrap_or_default()
+}
+
+/// The saved clients the dialog offers: an archive client whose folder holds `data.sah` (an unknown kind is skipped even then).
+pub(crate) fn candidates(clients: &[shaiya_ui::Client]) -> Vec<(String, PathBuf, bool)> {
+    clients::known_kinds(clients).filter(|c| c.kind.is_archive() && has_sah(Path::new(&c.path))).map(|c| (c.name.clone(), PathBuf::from(&c.path), false)).collect()
 }
 
 fn has_sah(dir: &Path) -> bool {

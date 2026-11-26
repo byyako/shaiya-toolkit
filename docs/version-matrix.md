@@ -126,7 +126,7 @@ Run it on your own copies: [dev/testing.md](dev/testing.md#the-version-matrix).
 
 ## Shaiya-GX
 
-Shaiya-GX (EP5.4) is not a column of the table above: no Shaiya-GX file contents were opened, so no count is asserted. The row and the table below say what is known and from where; the page [Works with Shaiya-GX](guides/shaiya-gx.md) has the same labels in full.
+Shaiya-GX (EP5.4) is not a column of the table above: no Shaiya-GX file contents were opened, so no count is asserted. The row and the table below say what is known and from where; the page [Shaiya-GX folders](guides/shaiya-gx.md) has the same labels in full.
 
 | Capability | Shaiya-GX (EP5.4): layout reference, no file contents |
 |---|---|

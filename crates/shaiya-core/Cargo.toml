@@ -3,6 +3,7 @@ name = "shaiya-core"
 description = "Shared basics for the Shaiya toolkit: errors, jobs and progress, safe file writing, a bounds-checked reader, text encodings, hashing, UTC time"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 repository.workspace = true

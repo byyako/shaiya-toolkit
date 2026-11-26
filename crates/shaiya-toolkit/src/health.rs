@@ -193,7 +193,7 @@ impl HealthView {
 
     fn window(&mut self, ctx: &egui::Context, cx: &mut ToolkitCx<'_>) {
         let pal = cx.shell.pal();
-        let clients = cx.shell.shared().clients.clone();
+        let clients: Vec<shaiya_ui::Client> = crate::clients::known_kinds(&cx.shell.shared().clients).cloned().collect();
         let busy = self.is_busy();
         let locked = !self.write_actions_enabled();
         let mut open = self.open;

@@ -9,7 +9,7 @@ use std::process::Command;
 
 const MAX_SIZE: u64 = 1 << 20;
 const FIXTURE_MAX: u64 = 64 << 10;
-const BAD_EXTENSIONS: &[&str] = &["sah", "saf", "sdata", "exe", "dll", "patch", "pdb", "mdf", "bak", "ani", "3dc", "3do", "3de", "vani", "mani", "smod", "mlt", "mon", "itm", "gltf", "glb", "bvh", "obj", "wav", "ogg"];
+const BAD_EXTENSIONS: &[&str] = &["sah", "saf", "sdata", "exe", "dll", "patch", "pdb", "mdf", "bak", "ani", "3dc", "3do", "3de", "vani", "mani", "smod", "mlt", "mon", "itm", "gltf", "glb", "bvh", "obj", "wav", "ogg", "bin", "dds", "tga", "jpg", "wld", "svmap", "eft", "seff"];
 const SEED_SIGNATURE: &[u8] = b"0001CBCEBC5B2784D3FC9A2A9DB84D1C3FEB6E99";
 
 const MODEL_EXTENSIONS: [&str; 6] = ["ani", "3dc", "vani", "mani", "3do", "3de"];
@@ -160,6 +160,17 @@ mod tests {
     }
 
     #[test]
+    fn textures_maps_effects_and_export_buffers_are_refused_by_the_guard() {
+        for ext in ["bin", "dds", "tga", "jpg", "wld", "svmap", "eft", "seff"] {
+            for name in [format!("a/b.{ext}"), format!("a/B.{}", ext.to_ascii_uppercase()), format!("x.{ext}")] {
+                assert_eq!(check_file(&name, 10, b"x", &none).len(), 1, "{name}");
+            }
+        }
+        // the screenshots and icons of the repository are PNG files and stay allowed
+        assert!(check_file("docs/img/archive.png", 10, b"x", &none).is_empty());
+    }
+
+    #[test]
     fn exported_model_json_is_refused() {
         for ext in ["ani", "3dc", "vani", "mani", "3do", "3de"] {
             let head = format!("{{
@@ -187,11 +198,11 @@ mod tests {
 
     #[test]
     fn fixtures_need_a_listing() {
-        let listed = |_: &str, name: &str| Some(name == "ok.bin");
-        assert!(check_file("crates/c/tests/fixtures/ok.bin", 100, b"x", &listed).is_empty());
-        assert_eq!(check_file("crates/c/tests/fixtures/other.bin", 100, b"x", &listed).len(), 1);
-        assert_eq!(check_file("crates/c/tests/fixtures/ok.bin", 100_000, b"x", &listed).len(), 1, "over 64 KiB");
-        assert_eq!(check_file("crates/c/tests/fixtures/a.bin", 100, b"x", &none).len(), 1, "no README");
+        let listed = |_: &str, name: &str| Some(name == "ok.dat");
+        assert!(check_file("crates/c/tests/fixtures/ok.dat", 100, b"x", &listed).is_empty());
+        assert_eq!(check_file("crates/c/tests/fixtures/other.dat", 100, b"x", &listed).len(), 1);
+        assert_eq!(check_file("crates/c/tests/fixtures/ok.dat", 100_000, b"x", &listed).len(), 1, "over 64 KiB");
+        assert_eq!(check_file("crates/c/tests/fixtures/a.dat", 100, b"x", &none).len(), 1, "no README");
         assert!(check_file("crates/c/tests/fixtures/README.md", 100, b"#", &none).is_empty());
     }
 }

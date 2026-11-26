@@ -505,7 +505,6 @@ mod tests {
         d.set_key(1, "ExtraZoneKey", "7").unwrap();
         assert_eq!(d.own_value(1, "ExtraZoneKey").as_deref(), Some("7"));
         assert!(String::from_utf8_lossy(&d.ini.to_bytes()).contains("ExtraZoneKey = 7 // note"), "the value changed and the comment stayed");
-        assert!(String::from_utf8_lossy(&d.ini.to_bytes()).contains("ExtraZoneKey = 7 // note"), "the value changed and the comment stayed");
         d.undo();
         d.undo();
         assert_eq!(d.ini.to_bytes(), raw);

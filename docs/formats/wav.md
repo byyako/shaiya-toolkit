@@ -1,6 +1,6 @@
 # Sounds (`.wav`)
 
-Every sound file in the client archive is a RIFF/WAVE file. No other sound format is in any of the nine matrix clients (measured offline from the index of each client for this release, not asserted by a test: only `.wav` files are listed, no mp3, ogg or wma).
+Every sound file of US EP4.5 is a RIFF/WAVE file (all 1,019 headers read; test `every_wav_of_the_us_client_reads_its_header`). The indexes of the nine matrix clients list only `.wav` sound files (names only; no mp3, ogg or wma); the other eight clients' files were not read.
 
 All numbers are little-endian.
 

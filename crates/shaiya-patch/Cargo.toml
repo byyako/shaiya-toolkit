@@ -3,6 +3,7 @@ name = "shaiya-patch"
 description = "Shaiya psNNNN.patch files: build (streaming), list, verify, plan, apply with journal, and Ed25519 signatures"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 repository.workspace = true

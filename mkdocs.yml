@@ -76,7 +76,7 @@ nav:
       - Models and animations in glTF: guides/interchange.md
       - Undo and recovery: guides/undo-and-recovery.md
       - Client health and clean-up: guides/client-health.md
-      - Works with Shaiya-GX: guides/shaiya-gx.md
+      - Shaiya-GX folders: guides/shaiya-gx.md
   - Formats:
       - Overview: formats/README.md
       - Archive: formats/archive.md

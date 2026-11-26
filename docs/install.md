@@ -43,7 +43,7 @@ Shaiya SVMap Editor keeps its settings, log, recovery files and backups of saved
 cargo build --release
 ```
 
-with stock Rust (`rustup`, stable). The programs are in `target/release`.
+with stock Rust (`rustup`, stable; Rust 1.89 or newer, the `rust-version` of the workspace). The programs are in `target/release`.
 
 On Linux the GUI needs development packages (the names are those CI installs on Ubuntu):
 

@@ -3,6 +3,7 @@ name = "shaiya-matrix-tests"
 description = "Opt-in version-matrix tests: what the toolkit parses on which Shaiya client (needs the test clients; no game data in the repository)"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 repository.workspace = true

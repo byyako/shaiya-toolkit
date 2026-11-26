@@ -3,6 +3,7 @@ name = "shaiya-svmap-editor"
 description = "Shaiya SVMap Editor: edit server map files (.svmap) over the client's terrain; paired client .wld edits, Map.ini, new maps, patch export"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 repository.workspace = true

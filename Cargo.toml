@@ -5,6 +5,7 @@ members = ["crates/*", "xtask"]
 [workspace.package]
 version = "0.5.0"
 edition = "2021"
+rust-version = "1.89"
 license = "MIT"
 authors = ["byyako"]
 repository = "https://github.com/byyako/shaiya-toolkit"

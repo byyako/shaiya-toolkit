@@ -3,6 +3,7 @@ name = "shaiya-inspect"
 description = "Identify a Shaiya file (SAH index, SAF data, SData, patch, game.exe) and describe it"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 repository.workspace = true

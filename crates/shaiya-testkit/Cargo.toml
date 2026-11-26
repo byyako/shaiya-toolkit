@@ -3,6 +3,7 @@ name = "shaiya-testkit"
 description = "Dev-only test helpers for the Shaiya toolkit: temp folders, a synthetic demo client, hand-written SAH/SAF and PE fixtures, opt-in data variables (no game data)"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 repository.workspace = true

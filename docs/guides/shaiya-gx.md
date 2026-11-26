@@ -1,4 +1,4 @@
-# Works with Shaiya-GX
+# Shaiya-GX folders
 
 [Shaiya-GX](https://github.com/Spelunkern/Shaiya-GX) is a separate project: a client and a server that read their game data from plain folders (EP5.4). This page says what Shaiya Toolkit does with folders laid out the way Shaiya-GX documents them, and what each statement rests on.
 
@@ -13,7 +13,7 @@ The labels used in the tables:
 
 ## Before you change anything
 
-- Stop the game and the server first. Shaiya-GX documents that its client reads the data folder once at start and that assets need a restart after editing (docs/data-formats.md line 18), so a change, or the undo of one, shows after the restart. For the server the toolkit knows nothing about when its files are read: stop it too.
+- Stop the game and the server first. Shaiya-GX documents that its client reads the data folder once at start and that assets need a restart after editing (docs/data-formats.md line 18), so restart the game after a change or an undo (read from Shaiya-GX docs; not tried). For the server the toolkit knows nothing about when its files are read: stop it too.
 - A Shaiya-GX `data` folder is not an extracted original client. Its images and sounds were converted (interface pictures and icons are PNG, `_dds.png` marks an atlas that was a DDS, audio is Ogg Vorbis; docs/data-formats.md lines 22-36 and 79-89), and the documentation says the original clients cannot use that layout without their own loader (line 73). The folder can hold the only copy of those converted files. The toolkit refuses to write them (see below) and never converts anything.
 - Keep your own copy of anything you cannot download again. A change to a loose folder is undone by copying files back, and only while the files are as the change left them ([undo and recovery](undo-and-recovery.md), "Loose data folders").
 
